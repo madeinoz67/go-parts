@@ -193,6 +193,37 @@ func TestEditUpdatesDetail(t *testing.T) {
 	}
 }
 
+func TestStockAdjustUpdatesQty(t *testing.T) {
+	srv := newTestServer(t)
+	p := &parts.Part{MPN: "STK1", PartType: "local", QtyOnHand: 100}
+	srv.store.Create(p)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/ui/parts/"+p.ID+"/stock", strings.NewReader("delta=-5"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("stock = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	got, _ := srv.store.Get(p.ID)
+	if got.QtyOnHand != 95 {
+		t.Errorf("after -5, QtyOnHand = %d, want 95", got.QtyOnHand)
+	}
+	if !strings.Contains(rr.Body.String(), ">95<") && !strings.Contains(rr.Body.String(), "95") {
+		t.Errorf("detail fragment should show updated qty 95; body=%s", rr.Body.String())
+	}
+}
+
+func TestStockAdjustUnknownIs404(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/ui/parts/nope/stock", strings.NewReader("delta=-5"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("stock on unknown part = %d, want 404; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestEditStaleVersionReturns409(t *testing.T) {
 	srv := newTestServer(t)
 	p := &parts.Part{MPN: "EDIT2", PartType: "local"}

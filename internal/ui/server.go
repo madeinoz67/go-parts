@@ -53,11 +53,12 @@ func (s *Server) routes() {
 	staticSub, _ := fs.Sub(embedded, "static")
 	s.mux.Handle("GET /ui/static/", http.StripPrefix("/ui/static/", http.FileServer(http.FS(staticSub))))
 	// Fragment handlers.
-	s.mux.HandleFunc("GET /ui/parts/search", s.handleSearch)  // live-filter + sort + initial-load
-	s.mux.HandleFunc("GET /ui/parts/new", s.handleCreateForm) // create form (literal wins over {id})
-	s.mux.HandleFunc("GET /ui/parts/{id}", s.handleDetail)    // row-select → detail-panel fragment
-	s.mux.HandleFunc("POST /ui/parts", s.handleCreate)        // create → new-row fragment
-	s.mux.HandleFunc("POST /ui/parts/{id}", s.handleEdit)     // inline edit → updated detail (409 on stale version)
+	s.mux.HandleFunc("GET /ui/parts/search", s.handleSearch)     // live-filter + sort + initial-load
+	s.mux.HandleFunc("GET /ui/parts/new", s.handleCreateForm)    // create form (literal wins over {id})
+	s.mux.HandleFunc("GET /ui/parts/{id}", s.handleDetail)       // row-select → detail-panel fragment
+	s.mux.HandleFunc("POST /ui/parts", s.handleCreate)           // create → new-row fragment
+	s.mux.HandleFunc("POST /ui/parts/{id}", s.handleEdit)        // inline edit → updated detail (409 on stale version)
+	s.mux.HandleFunc("POST /ui/parts/{id}/stock", s.handleStock) // inline stock-adjust → updated detail (404 on miss)
 }
 
 // handleShell renders the full shell page.

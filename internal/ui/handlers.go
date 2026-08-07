@@ -168,6 +168,44 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleStock applies a commutative stock delta inline from the detail panel
+// (the inline stock form wired into detail.html: hx-post="/ui/parts/{id}/stock"
+// with a delta field). It calls store.AdjustStock IN-PROCESS (PRD §5.2 — the
+// web UI is a 5th surface over the core, never over REST), then re-renders the
+// detail.html fragment with the updated QtyOnHand. AdjustStock does not bump
+// Version (§5.14 — stock is authoritative), so the round-tripped *Part from
+// store.Get carries the post-delta QtyOnHand and the unchanged Version, which
+// keeps the inline edit form's hidden version field consistent on the next
+// submit. parts.ErrNotFound maps to HTTP 404, matching handleDetail/handleEdit.
+func (s *Server) handleStock(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var delta int
+	fmt.Sscanf(r.PostFormValue("delta"), "%d", &delta)
+	if err := s.store.AdjustStock(id, delta, "ui"); err != nil {
+		if errors.Is(err, parts.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	p, err := s.store.Get(id)
+	if err != nil {
+		// AdjustStock succeeded but the record is now unreadable — treat as
+		// not-found (the canonical not-found recovery for a single-part read).
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{"P": p}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 // applySort re-orders pts in place by the requested key/direction. No-op when
 // key is unrecognized (the default BM25 relevance order from FTS.Search is
 // preserved).

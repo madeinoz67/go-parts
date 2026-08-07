@@ -20,4 +20,9 @@
   <input type="hidden" name="version" value="{{.P.Version}}">
   <button class="btn btn-primary" type="button" onclick="this.closest('.detail').classList.add('editing')">edit</button>
 </form>
+<form class="inline stock" hx-post="/ui/parts/{{.P.ID}}/stock" hx-target="#detail-panel">
+  <button class="btn" name="delta" value="-1">−</button>
+  <input name="delta" type="number" value="0" style="width:4em">
+  <button class="btn" type="submit">apply</button>
+</form>
 {{end}}
