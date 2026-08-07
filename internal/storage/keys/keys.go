@@ -40,6 +40,16 @@ func metaSchemaVersionKey() []byte {
 func MetaSchemaVersionKey() []byte { return metaSchemaVersionKey() }
 
 // --- FTS (verbatim shape from go-rag internal/storage/keys) ---
+//
+// The four constructors mirror go-rag's FTS key shapes exactly so the ported
+// internal/index/fts.go (BM25) reads/writes the same layout it was proven
+// against. Three prefix bytes are go-parts' own allocation (keyspace-registry:
+// 0x05/0x07/0x06) but the payload shapes are byte-identical to go-rag.
+//
+// ftsPostingTermPrefix deliberately returns kind|ws|term WITHOUT the 0x00
+// terminator — the terminator belongs only on the full posting key. The BM25
+// scanner pairs this prefix with an exclusive upper bound (kind|ws|term|0x01)
+// to cover every chunkID under that term.
 
 func ftsPostingKey(ws [8]byte, term, id string) []byte {
 	// kind | ws | term | 0x00 | id
@@ -51,9 +61,9 @@ func ftsPostingKey(ws [8]byte, term, id string) []byte {
 }
 
 func ftsPostingTermPrefix(ws [8]byte, term string) []byte {
+	// kind | ws | term  (NO terminator — see comment above)
 	b := scopedBytes(ftsPostingPrefix, ws)
 	b = append(b, term...)
-	b = append(b, 0x00)
 	return b
 }
 
@@ -64,6 +74,14 @@ func ftsIndexedKey(ws [8]byte, id string) []byte {
 func ftsGlobalStatsKey(ws [8]byte) []byte {
 	return scopedBytes(ftsGlobalStatsPrefix, ws)
 }
+
+// Exported aliases for cross-package callers (internal/index). Same pattern as
+// PartsKey/MetaSchemaVersionKey: the lowercase constructors stay canonical,
+// these are the public seam.
+func FTSPostingKey(ws [8]byte, term, id string) []byte    { return ftsPostingKey(ws, term, id) }
+func FTSPostingTermPrefix(ws [8]byte, term string) []byte { return ftsPostingTermPrefix(ws, term) }
+func FTSIndexedKey(ws [8]byte, id string) []byte          { return ftsIndexedKey(ws, id) }
+func FTSGlobalStatsKey(ws [8]byte) []byte                 { return ftsGlobalStatsKey(ws) }
 
 func scopedString(kind byte, ws [8]byte, payload string) []byte {
 	b := scopedBytes(kind, ws)
