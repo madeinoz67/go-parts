@@ -235,9 +235,6 @@ func applyPatch(dst, src *parts.Part) {
 	if src.ReorderPoint != 0 {
 		dst.ReorderPoint = src.ReorderPoint
 	}
-	if src.ReorderThreshold != 0 {
-		dst.ReorderThreshold = src.ReorderThreshold
-	}
 	if len(src.Tags) > 0 {
 		dst.Tags = src.Tags
 	}
