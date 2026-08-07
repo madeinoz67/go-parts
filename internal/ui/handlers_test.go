@@ -50,6 +50,24 @@ func TestShellServes(t *testing.T) {
 	}
 }
 
+func TestShellStructure(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/", nil))
+	body := rr.Body.String()
+	for _, want := range []string{
+		`id="search"`,               // search input
+		`id="parts-tbody"`,          // table body target for htmx
+		`id="detail-panel"`,         // detail panel target
+		`hx-get="/ui/parts/search"`, // htmx live-filter wiring
+		`<nav`,                      // top nav
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("shell missing %q", want)
+		}
+	}
+}
+
 func TestCSSServes(t *testing.T) {
 	srv := newTestServer(t)
 	rr := httptest.NewRecorder()

@@ -2,11 +2,58 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>go-parts</title>
   <link rel="stylesheet" href="/ui/static/css/styles.css">
   <script src="/ui/static/js/htmx.min.js"></script>
 </head>
 <body>
-  <main><h1>go-parts</h1><p>{{.Count}} parts</p></main>
+<div class="shell">
+  <nav class="nav">
+    <span class="wordmark">go-parts<span class="cursor"></span></span>
+    <a class="nav-item active" href="/ui/">Parts</a>
+    <a class="nav-item disabled" title="later slice">Storage</a>
+    <a class="nav-item disabled" title="later slice">Projects</a>
+    <a class="nav-item disabled" title="later slice">Purchasing</a>
+    <a class="nav-item disabled" title="later slice">Builds</a>
+    <a class="nav-item disabled" title="later slice">Reports</a>
+  </nav>
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="search">
+      <span class="search-icon">&gt;</span>
+      <input id="search" class="search-input" type="text" name="q" placeholder="search parts…"
+             hx-get="/ui/parts/search" hx-trigger="keyup changed delay:0ms"
+             hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML"
+             hx-include="this" autocomplete="off">
+      <span class="search-kbd">/</span>
+    </div>
+    <table class="parts">
+      <thead>
+        <tr>
+          <th role="columnheader"><a hx-get="/ui/parts/search?sort=mpn&dir=asc" hx-target="#parts-tbody">MPN <span class="sort-ind">↕</span></a></th>
+          <th>Description</th>
+          <th>Category</th>
+          <th role="columnheader"><a hx-get="/ui/parts/search?sort=qty&dir=asc" hx-target="#parts-tbody">Qty <span class="sort-ind">↕</span></a></th>
+        </tr>
+      </thead>
+      <tbody id="parts-tbody">
+        <!-- rows.html fragment renders here; initial load fetches via htmx onload -->
+        <tr hx-get="/ui/parts/search" hx-trigger="load" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML"></tr>
+      </tbody>
+    </table>
+  </main>
+  <section class="detail" id="detail-panel">
+    <p class="hint">select a part</p>
+  </section>
+  <footer class="statusbar">
+    <span class="seg rec"><span class="num">{{.Count}} parts</span></span>
+    <span class="seg ver">{{.Version}}</span>
+  </footer>
+</div>
+<script>
+// `/` focuses search (style guide §6/§8 — keyboard-first).
+document.addEventListener('keydown', e => { if (e.key === '/' && document.activeElement.id !== 'search') { e.preventDefault(); document.getElementById('search').focus(); } });
+</script>
 </body>
 </html>
