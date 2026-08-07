@@ -70,6 +70,11 @@ services, multiple protocol surfaces over a shared embedded store.
   TDD (`/tdd`), with `/systematic-debugging` when something breaks. Specs and
   plans live in `docs/superpowers/` (gitignored, local-only — same convention as
   the MuninnDB contribution). Verify before completion; request code review.
+- **Branching: `develop` is the integration trunk; `main` stays pristine.** All
+  feature and bug-fix work lands on `develop` and merges there; `main` receives
+  only release-ready merges (Stephen's directive, 2026-08-07). This **deliberately
+  diverges from go-rag's** single-author "commit straight to main" model — go-parts
+  uses a develop/main split. Default working branch is `develop`.
 - **Conventional commits** (parsed by `cliff.toml` → CHANGELOG).
 
 ## 4. Findings that outlive the session
