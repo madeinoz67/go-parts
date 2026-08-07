@@ -23,6 +23,21 @@ func newTestServer(t *testing.T) *Server {
 	return NewServer(parts.NewStore(db, fts), fts)
 }
 
+func TestStaticAssetsServe(t *testing.T) {
+	srv := newTestServer(t)
+	for _, path := range []string{
+		"/ui/static/js/htmx.min.js",
+		"/ui/static/fonts/jetbrains-mono-400.woff2",
+		"/ui/static/fonts/ibm-plex-mono-600.woff2",
+	} {
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, httptest.NewRequest("GET", path, nil))
+		if rr.Code != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, rr.Code)
+		}
+	}
+}
+
 func TestShellServes(t *testing.T) {
 	srv := newTestServer(t)
 	rr := httptest.NewRecorder()
