@@ -21,6 +21,19 @@ import (
 	"github.com/madeinoz67/go-parts/internal/storage/keys"
 )
 
+// BaselineVersion is the schema version a fresh go-parts store is bootstrapped
+// to before any registered step-migration runs. v1 ships with zero
+// step-migrations (the schema is v1 from first run), so this is 1. A binary
+// that registers step-migrations up to version N has LatestVersion() == N as
+// long as N > BaselineVersion.
+//
+// This constant exists because MaxRegisteredVersion() alone is not the binary's
+// actual schema version: in v1 it returns 0 (no migrations registered) yet the
+// binary still writes version 1 on fresh install. The refuse-newer guard in
+// Runner.Run and the open-path bootstrap in storage.Open both need the binary's
+// actual version, not just the highest registered migration.
+const BaselineVersion = 1
+
 var migrationVersionKey = keys.MetaSchemaVersionKey()
 
 // Migration is a single numbered schema step. Version is unique within a
@@ -55,8 +68,11 @@ func RegisterMigrations(r *Runner) {
 }
 
 // MaxRegisteredVersion returns the highest Version RegisterMigrations would
-// register. Used by open paths to refuse a newer store before opening
-// (CurrentVersion > MaxRegisteredVersion ⇒ hard fail).
+// register, or 0 when no step-migrations are registered (the v1 case). Used
+// by callers that care about registered migrations specifically.
+//
+// For the binary's actual schema version (what a fresh install is bootstrapped
+// to), use LatestVersion — that folds BaselineVersion in.
 func MaxRegisteredVersion() int {
 	r := &Runner{}
 	RegisterMigrations(r)
@@ -67,6 +83,18 @@ func MaxRegisteredVersion() int {
 		}
 	}
 	return max
+}
+
+// LatestVersion returns the schema version this binary writes on a fresh
+// install — the max of BaselineVersion and any registered step-migration.
+// storage.Open uses this to (a) bootstrap a fresh store, (b) refuse a store
+// written by a newer binary (stored > LatestVersion ⇒ hard fail), and (c)
+// detect when migrations must be applied (stored < LatestVersion).
+func LatestVersion() int {
+	if max := MaxRegisteredVersion(); max > BaselineVersion {
+		return max
+	}
+	return BaselineVersion
 }
 
 // Run applies every registered migration with Version > current stored version,
@@ -84,7 +112,12 @@ func (r *Runner) Run() (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("migrate: read version: %w", err)
 	}
-	maxRegistered := 0
+	// maxRegistered starts at BaselineVersion: a v1 binary with no registered
+	// step-migrations still understands schema version 1, so reopening a v1
+	// store is a no-op (current == maxRegistered), not a refusal
+	// (current > maxRegistered). A binary that registers higher versions
+	// raises maxRegistered accordingly.
+	maxRegistered := BaselineVersion
 	for _, m := range r.migrations {
 		if m.Version > maxRegistered {
 			maxRegistered = m.Version
@@ -136,3 +169,12 @@ func writeMigrationVersion(db *pebble.DB, v int) error {
 	binary.BigEndian.PutUint64(buf, uint64(v))
 	return db.Set(migrationVersionKey, buf, pebble.Sync)
 }
+
+// ReadVersion is the exported wrapper around readMigrationVersion for the
+// open-path bootstrap in storage.Open. Package-internal callers (Task 5's
+// tests) keep using the lowercase name; the wrapper is additive.
+func ReadVersion(db *pebble.DB) (int, error) { return readMigrationVersion(db) }
+
+// WriteVersion is the exported wrapper around writeMigrationVersion for the
+// open-path bootstrap in storage.Open.
+func WriteVersion(db *pebble.DB, v int) error { return writeMigrationVersion(db, v) }
