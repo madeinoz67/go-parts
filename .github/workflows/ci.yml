@@ -26,13 +26,18 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version-file: go.mod
           cache: true
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        # @v7 is required for golangci-lint v2: @v6 is v1-only (which is why
+        # `version: latest` resolved to the ancient v1.64.8, built with go1.24 —
+        # it can't load config for a go1.26.x target). v2.12.2 is built with
+        # go1.26.2 and lints go1.26.5 cleanly. Bump this pin alongside go.mod's
+        # `go` directive. Mirrors the go-rag fix for the same failure.
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: latest
+          version: v2.12.2
 
   security:
     name: Security Scan
@@ -46,7 +51,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version-file: go.mod
           cache: true
 
       - name: Run govulncheck
@@ -75,7 +80,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version-file: go.mod
           cache: true
 
       - name: Run go vet
@@ -97,7 +102,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version-file: go.mod
           cache: true
 
       - name: Build
@@ -119,7 +124,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version-file: go.mod
           cache: true
 
       - name: Run GoReleaser
