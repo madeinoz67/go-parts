@@ -37,6 +37,9 @@ Thumbs.db
 # MkDocs site build output
 /site/
 
+# Superpowers spec/plan workspace (brainstorm/spec/plan artifacts; local-only)
+/docs/superpowers/
+
 # Claude Code local settings (per-developer; never commit)
 .claude/settings.local.json
 

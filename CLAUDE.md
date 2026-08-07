@@ -65,6 +65,11 @@ services, multiple protocol surfaces over a shared embedded store.
   top-level verbs; `<area> <subsystem> <verb>` for feature areas; guided `init`
   wizards with `--non-interactive`; `--dry-run` on anything that mutates;
   `--json` on every `status`; `.go-parts/config.json` (non-secret) like `.go-rag/`.
+- **Spec-driven workflow: superpowers** (not SpecKit). Brainstorm (`/brainstorm`)
+  → write a plan (`/writing-plans`) → execute via subagent-driven-development +
+  TDD (`/tdd`), with `/systematic-debugging` when something breaks. Specs and
+  plans live in `docs/superpowers/` (gitignored, local-only — same convention as
+  the MuninnDB contribution). Verify before completion; request code review.
 - **Conventional commits** (parsed by `cliff.toml` → CHANGELOG).
 
 ## 4. Findings that outlive the session
