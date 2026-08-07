@@ -141,7 +141,20 @@ func (s *Store) Update(p *Part, expectedVersion int) error {
 // Delete removes a part record and its FTS entry. Idempotent at the FTS layer;
 // the parts-keyspace delete is a Pebble no-op if the record is already gone
 // (but a prior Get means we error on missing records before reaching the delete).
+//
+// The entire read-modify-write (Get → fts.Delete → db.Delete) is serialized
+// under lockFor(id) so Delete cannot interleave with Update/AdjustStock on the
+// same id (§5.14). Without this lock, Update could read the part (v), Delete
+// could remove record + FTS, then Update's version check still passes and it
+// writes the record back (v+1) → the deleted part is resurrected. Under the
+// lock, either Delete runs last (part gone, stays gone) or Update runs last
+// (Update's Get sees not-found → Update errors, no resurrection). The lock is
+// the OUTERMOST lock held; under it the code takes fts.mu (one direction, no
+// cycle — see Store doc).
 func (s *Store) Delete(id string) error {
+	mu := s.lockFor(id)
+	mu.Lock()
+	defer mu.Unlock()
 	cur, err := s.Get(id)
 	if err != nil {
 		return err

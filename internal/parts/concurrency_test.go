@@ -138,3 +138,53 @@ func TestConcurrentUpdateNoLostUpdate(t *testing.T) {
 		seen[tag] = true
 	}
 }
+
+// TestConcurrentUpdateVsDeleteNoResurrection pins §5.14's prohibition against
+// silent loss under a Delete-vs-Update race on the same id. Without Delete
+// holding lockFor(id), the interleaving
+//
+//	Update reads part (v) ──┐
+//	                        ├── Delete erases record + FTS ── Update's version check passes → writes (v+1)
+//	leads to the deleted part being RESURRECTED (the §5.14 prohibition: never
+//	silently overwrite/lose). Under lockFor, either Delete runs last (part gone,
+//	stays gone) or Update runs last (its Get sees not-found → Update errors, no
+//	resurrection).
+//
+// The invariant asserted: if Delete succeeded, the part MUST be absent — no
+// exception. Update may legitimately error under contention (stale version or
+// not-found), which is the correct loud-failure behavior.
+//
+// Probabilistic — run with -race -count to stress. 200 iterations × -count=3
+// reliably reproduces resurrection on pre-fix code within the first few iters.
+func TestConcurrentUpdateVsDeleteNoResurrection(t *testing.T) {
+	const iterations = 200
+	for i := 0; i < iterations; i++ {
+		s := newStore(t)
+		p := &Part{MPN: "RACE", PartType: "local", Description: "orig", Tags: []string{"t"}}
+		if err := s.Create(p); err != nil {
+			t.Fatal(err)
+		}
+		id, ver := p.ID, p.Version
+
+		var wg sync.WaitGroup
+		var delErr, updErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			pp := &Part{ID: id, MPN: "RACE", PartType: "local", Description: "edited", Tags: []string{"t"}, Version: ver}
+			updErr = s.Update(pp, ver)
+		}()
+		go func() {
+			defer wg.Done()
+			delErr = s.Delete(id)
+		}()
+		wg.Wait()
+
+		_, getErr := s.Get(id)
+		// Invariant: if Delete succeeded, the part MUST be gone (no resurrection).
+		if delErr == nil && getErr == nil {
+			t.Fatalf("iteration %d: resurrection — Delete succeeded but part %q is still present", i, id)
+		}
+		_ = updErr // Update may legitimately error (stale version / not-found) under contention
+	}
+}
