@@ -22,7 +22,7 @@
 import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { validate, explain, CANONICAL_SHAPE } from './memory-schema.mjs'
+import { validate, explain, PROPOSAL_SHAPE } from './memory-schema.mjs'
 import { paths } from './memory-ledger.mjs'
 
 const MAX_REPORTED = 8
@@ -76,7 +76,7 @@ try {
     'The shape:',
     '',
     '```jsonc',
-    CANONICAL_SHAPE,
+    PROPOSAL_SHAPE,
     '```',
   ].join('\n')
 

@@ -24,7 +24,7 @@
 // Exit 0 = every record appended. Exit 1 = nothing appended, and the reason names the field.
 
 import { readFileSync } from 'node:fs'
-import { DEFAULT_VAULT, validate, explain, CANONICAL_SHAPE } from './memory-schema.mjs'
+import { DEFAULT_VAULT, validate, explain, PROPOSAL_SHAPE } from './memory-schema.mjs'
 import { paths, acquireLock, appendRecords } from './memory-ledger.mjs'
 
 const P = paths()
@@ -59,7 +59,7 @@ const raw = readFileSync(0, 'utf8')
 const { records, error } = parseInput(raw)
 if (error) {
   console.error(`memory-propose: ${error}`)
-  console.error(`\nThe shape:\n${CANONICAL_SHAPE}`)
+  console.error(`\nThe shape:\n${PROPOSAL_SHAPE}`)
   process.exit(1)
 }
 
@@ -79,7 +79,7 @@ for (const [i, r] of records.entries()) {
 if (problems.length) {
   console.error(`memory-propose: ${problems.length} of ${records.length} record(s) rejected — NOTHING was appended.`)
   for (const p of problems) console.error(`  ${p}`)
-  console.error(`\nThe shape:\n${CANONICAL_SHAPE}`)
+  console.error(`\nThe shape:\n${PROPOSAL_SHAPE}`)
   console.error('\nFix and re-send the whole batch. The bar for what qualifies is in .claude/memory-protocol.md.')
   process.exit(1)
 }

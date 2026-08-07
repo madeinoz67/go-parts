@@ -36,7 +36,7 @@ export const WRITTEN_FIELDS = [
   'vault', 'concept', 'content', 'summary', 'type', 'tags', 'entities', 'importance',
 ]
 
-export const CANONICAL_SHAPE = [
+export const PROPOSAL_SHAPE = [
   '{',
   `  "vault":      ${JSON.stringify(DEFAULT_VAULT).padEnd(22)}// required (memory-propose.mjs fills this in)`,
   '  "concept":    "short label",         // required',
