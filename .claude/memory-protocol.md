@@ -4,8 +4,9 @@ Durable findings from building go-parts go to the **`go-parts` memory vault** �
 important is lost when a session ends. This document is the bar for what belongs there.
 
 > **Vault: `go-parts`, reached via the `muninndb-goparts` MCP server.** go-parts dev memory
-> goes through the project-local `muninndb-goparts` connection (`.claude/settings.local.json`,
-> gitignored) — its key is scoped to `go-parts`, so its tools (`mcp__muninndb-goparts__*`)
+> goes through the project-local `muninndb-goparts` connection (registered at local scope via
+> `claude mcp add -s local` → `~/.claude.json`, per-project, not committed) — its key is scoped
+> to `go-parts`, so its tools (`mcp__muninndb-goparts__*`)
 > default to that vault with **no `vault` arg**. Do **not** use the global `muninndb` server
 > for go-parts memory — that is the default/LifeOS vault, and its key is scoped there.
 

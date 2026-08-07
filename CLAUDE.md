@@ -85,8 +85,9 @@ services, multiple protocol surfaces over a shared embedded store.
 
 Durable findings — a measured number, a decision and why it beat the alternative,
 a trap that looks safe — get written to the **`go-parts` memory vault**, reached via the
-project-local **`muninndb-goparts`** MCP server (`.claude/settings.local.json`, gitignored;
-key scoped to `go-parts`). Findings flow through a ledger + drain: append a proposal
+project-local **`muninndb-goparts`** MCP server (registered at local scope via
+`claude mcp add -s local` → `~/.claude.json`, per-project and not committed; key scoped to
+`go-parts`). Findings flow through a ledger + drain: append a proposal
 (`.claude/hooks/memory-propose.mjs`) and it flushes to the vault on PreCompact/SessionEnd/Stop.
 The bar — what qualifies, atomicity, evolve-vs-remember, privacy — is in
 `.claude/memory-protocol.md`. Nothing important is lost when a session ends.
