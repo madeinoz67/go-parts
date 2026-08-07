@@ -106,6 +106,14 @@ func (s *Store) Get(id string) (*Part, error) {
 // (Index's idempotency guard would otherwise treat a still-indexed id as a
 // no-op and leave stale postings in place).
 //
+// Stock contract: QtyOnHand is preserved from the in-lock stored record on
+// every Update — the caller's p.QtyOnHand is IGNORED. Stock is AdjustStock's
+// exclusive domain (§5.14: commutative delta, no version bump); a full-record
+// edit must not touch it. Without this, a Get→modify→Update caller carrying a
+// stale QtyOnHand from their outer Get would silently overwrite a concurrent
+// AdjustStock delta (the F3 race: AdjustStock doesn't bump Version, so the
+// caller's version check still passes). Stock changes go through AdjustStock.
+//
 // The entire read-check-write (Get → version-check → Delete FTS → write) is
 // serialized under lockFor(p.ID) so two concurrent Updates on the same part
 // cannot both pass the version check and silently overwrite each other (the
@@ -130,6 +138,10 @@ func (s *Store) Update(p *Part, expectedVersion int) error {
 	// call's idempotency guard doesn't no-op on the still-indexed id.
 	var ws [8]byte
 	s.fts.Delete(ws, p.ID, cur.indexContent())
+	// Preserve authoritative stock: ignore the caller's p.QtyOnHand (which may
+	// be stale from an outer Get) and write the in-lock current value. Stock is
+	// AdjustStock's exclusive domain (§5.14); Update must not touch it.
+	p.QtyOnHand = cur.QtyOnHand
 	p.Version = cur.Version + 1
 	p.UpdatedAt = time.Now().UTC()
 	if p.UpdatedBy == "" {

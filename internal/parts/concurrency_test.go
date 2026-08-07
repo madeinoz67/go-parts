@@ -188,3 +188,91 @@ func TestConcurrentUpdateVsDeleteNoResurrection(t *testing.T) {
 		_ = updErr // Update may legitimately error (stale version / not-found) under contention
 	}
 }
+
+// TestUpdatePreservesStockAcrossConcurrentAdjustStock pins the §5.14 invariant
+// that Update must NOT touch authoritative stock. Stock is AdjustStock's
+// exclusive domain (delta, no version bump); a full-record Update must not
+// overwrite it.
+//
+// The race (F3, deterministic): a caller following the documented
+// Get→modify→Update pattern carries a stale QtyOnHand from their outer Get. A
+// concurrent AdjustStock(id, -1) commits in between — but AdjustStock does NOT
+// bump Version (§5.14), so the caller's Update version check still passes and
+// the stale QtyOnHand overwrites the stock delta → the sale/movement is
+// silently lost. The per-id striped lock can't reach it (the caller's RMW spans
+// two Store calls; only Update is under the lock).
+//
+// The contract fix: Update preserves QtyOnHand from the in-lock stored record
+// on every write; the caller's p.QtyOnHand is ignored. Stock changes go
+// through AdjustStock only.
+//
+// Construction is deterministic (channel-barrier — no retry loop, no -count):
+// the caller goroutine publishes its stale snapshot, the stock goroutine
+// commits AdjustStock, then the caller's Update runs against a version check
+// that still passes. Pre-fix the stale QtyOnHand=1000 overwrites the delta
+// (FAIL); post-fix the in-lock cur.QtyOnHand=999 is preserved (PASS).
+func TestUpdatePreservesStockAcrossConcurrentAdjustStock(t *testing.T) {
+	s := newStore(t)
+	p := &Part{MPN: "F3", PartType: "local", Description: "orig", QtyOnHand: 1000}
+	if err := s.Create(p); err != nil {
+		t.Fatal(err)
+	}
+	id := p.ID
+
+	// callerReady: caller has captured the stale snapshot (QtyOnHand=1000,
+	// version=1) and is about to wait for the stock goroutine.
+	// stockCommitted: AdjustStock(-1) has committed (QtyOnHand→999, version
+	// still 1 — §5.14).
+	callerReady := make(chan struct{})
+	stockCommitted := make(chan struct{})
+
+	var callerErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Caller: Get→shallow-copy→edit non-stock field→Update with stale snapshot.
+	go func() {
+		defer wg.Done()
+		cur, err := s.Get(id)
+		if err != nil {
+			callerErr = fmt.Errorf("caller Get: %w", err)
+			close(callerReady)
+			return
+		}
+		cp := *cur // shallow copy; carries stale QtyOnHand=1000, version=1
+		cp.Description = "edited"
+		close(callerReady)
+		<-stockCommitted
+		// Update's version check passes: AdjustStock did not bump Version.
+		callerErr = s.Update(&cp, cur.Version)
+	}()
+
+	// Stock: AdjustStock(-1) — commits QtyOnHand→999, version unchanged.
+	go func() {
+		defer wg.Done()
+		<-callerReady
+		if err := s.AdjustStock(id, -1, "sale"); err != nil {
+			t.Errorf("AdjustStock: %v", err)
+		}
+		close(stockCommitted)
+	}()
+
+	wg.Wait()
+
+	if callerErr != nil {
+		t.Fatalf("caller Update: %v", callerErr)
+	}
+	got, err := s.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	// F3 invariant: the AdjustStock delta must survive the concurrent Update.
+	// Pre-fix: 1000 (the stale overwrite). Post-fix: 999.
+	if got.QtyOnHand != 999 {
+		t.Fatalf("QtyOnHand = %d, want 999 (F3: Update overwrote authoritative stock with the caller's stale snapshot)", got.QtyOnHand)
+	}
+	// Sanity: Update still applies non-stock fields.
+	if got.Description != "edited" {
+		t.Fatalf("Description = %q, want %q (Update must still apply non-stock fields)", got.Description, "edited")
+	}
+}
