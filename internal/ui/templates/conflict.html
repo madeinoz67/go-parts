@@ -1,0 +1,5 @@
+{{define "conflict.html"}}
+<div class="conflict">
+  <p>edited elsewhere — <a hx-get="/ui/parts/{{.ID}}" hx-target="#detail-panel">reload</a></p>
+</div>
+{{end}}

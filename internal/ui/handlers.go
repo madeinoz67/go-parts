@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 
 	"github.com/madeinoz67/go-parts/internal/parts"
 )
@@ -106,6 +107,63 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "row.html", map[string]any{"P": p}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleEdit applies an inline edit to a single part (the detail-panel form
+// wired into detail.html: hx-post="/ui/parts/{id}" with a hidden version field
+// for optimistic concurrency). It follows the Get-then-edit contract required
+// by store.Update (PRD §5.14): the current record is loaded, the patched
+// fields are applied onto it, then store.Update(cur, expectedVersion) is
+// called. Constructing a fresh Part from the form would zero CreatedAt/
+// CreatedBy and — per store.Update's stock contract — would still see
+// QtyOnHand reset to the in-lock current value, but the create-time audit
+// fields cannot be reconstructed from a form post. Get-then-edit round-trips
+// them. Calls store IN-PROCESS (PRD §5.2 — the web UI is a 5th surface over
+// the core, never over REST).
+//
+// On version conflict the response is 409 + the conflict.html fragment ("edited
+// elsewhere — reload") so the client can re-fetch the canonical record. Not-
+// found maps to 404 (parts.ErrNotFound), matching handleDetail.
+func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Get-then-edit (T8 contract): load current, apply patched fields, Update.
+	cur, err := s.store.Get(id)
+	if err != nil {
+		if errors.Is(err, parts.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	expected, _ := strconv.Atoi(r.PostFormValue("version"))
+	if v := r.PostFormValue("description"); v != "" {
+		cur.Description = v
+	}
+	if v := r.PostFormValue("category"); v != "" {
+		cur.Category = v
+	}
+	if v := r.PostFormValue("footprint"); v != "" {
+		cur.Footprint = v
+	}
+	if err := s.store.Update(cur, expected); err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusConflict)
+		if tErr := s.tmpl.ExecuteTemplate(w, "conflict.html", map[string]any{"ID": id}); tErr != nil {
+			// Header already sent (409); the best we can do is nothing — the
+			// fragment is short and the template engine doesn't error mid-write.
+			_ = tErr
+		}
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{"P": cur}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

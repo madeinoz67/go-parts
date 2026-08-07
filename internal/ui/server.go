@@ -57,6 +57,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /ui/parts/new", s.handleCreateForm) // create form (literal wins over {id})
 	s.mux.HandleFunc("GET /ui/parts/{id}", s.handleDetail)    // row-select → detail-panel fragment
 	s.mux.HandleFunc("POST /ui/parts", s.handleCreate)        // create → new-row fragment
+	s.mux.HandleFunc("POST /ui/parts/{id}", s.handleEdit)     // inline edit → updated detail (409 on stale version)
 }
 
 // handleShell renders the full shell page.

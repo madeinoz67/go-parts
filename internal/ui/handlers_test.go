@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -172,5 +173,44 @@ func TestCreateFormRenders(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("create form missing %q; body=%s", want, body)
 		}
+	}
+}
+
+func TestEditUpdatesDetail(t *testing.T) {
+	srv := newTestServer(t)
+	p := &parts.Part{MPN: "EDIT1", Description: "orig", PartType: "local"}
+	srv.store.Create(p)
+	form := strings.NewReader("version=" + fmt.Sprintf("%d", p.Version) + "&description=edited")
+	req := httptest.NewRequest("POST", "/ui/parts/"+p.ID, form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("edit = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "edited") {
+		t.Errorf("edit response should show edited description; body=%s", rr.Body.String())
+	}
+}
+
+func TestEditStaleVersionReturns409(t *testing.T) {
+	srv := newTestServer(t)
+	p := &parts.Part{MPN: "EDIT2", PartType: "local"}
+	srv.store.Create(p)
+	// Bump the stored version out from under the form (simulate a concurrent edit).
+	p2, _ := srv.store.Get(p.ID)
+	p2.Description = "winner"
+	srv.store.Update(p2, p.Version) // stored now at version 2
+	// The stale form still believes version 1.
+	form := strings.NewReader("version=1&description=loser")
+	req := httptest.NewRequest("POST", "/ui/parts/"+p.ID, form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("stale edit = %d, want 409; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "edited elsewhere") {
+		t.Errorf("conflict fragment should say 'edited elsewhere'; body=%s", rr.Body.String())
 	}
 }
