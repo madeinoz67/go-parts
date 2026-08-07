@@ -34,8 +34,6 @@ Thumbs.db
 /.tokensave/
 /.codanna/
 
-# MkDocs site build output
-/site/
 
 # Superpowers spec/plan workspace (brainstorm/spec/plan artifacts; local-only)
 /docs/superpowers/
