@@ -15,6 +15,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 
 	"github.com/cockroachdb/pebble"
@@ -146,6 +147,18 @@ func (r *Runner) Run() (int, error) {
 // readMigrationVersion returns the stored schema version, or 0 with no error
 // when no version key exists yet (fresh store). A short / corrupt value is an
 // error, never silently zero.
+//
+// The marker is encoded as uint64 (8 bytes, big-endian) but the in-memory
+// representation is signed int. A high-bit-set value (e.g. 0xFFFFFFFFFFFFFFFF)
+// would decode to a negative int and bypass both refuse-newer guards
+// (db.go's `cur > latest` and Runner.Run's `current > maxRegistered`, both
+// with latest/maxRegistered small positives). A negative cur never trips
+// either, so Open would fall into the cur < latest branch and run registered
+// migrations against data NOT in the source state they were authored for —
+// silent corruption. Reject any value outside [0, math.MaxInt32] at the
+// source; both guards inherit readMigrationVersion, so the bypass is closed
+// here, once. Platform-independent: bound against MaxInt32, not MaxInt, so a
+// 32-bit build is not silently re-exposed.
 func readMigrationVersion(db *pebble.DB) (int, error) {
 	val, closer, err := db.Get(migrationVersionKey)
 	if err == pebble.ErrNotFound {
@@ -158,13 +171,25 @@ func readMigrationVersion(db *pebble.DB) (int, error) {
 	if len(val) < 8 {
 		return 0, fmt.Errorf("migrate: corrupt version value (len=%d)", len(val))
 	}
-	return int(binary.BigEndian.Uint64(val)), nil
+	v := int64(binary.BigEndian.Uint64(val))
+	if v < 0 || v > math.MaxInt32 {
+		return 0, fmt.Errorf("migrate: corrupt schema version marker (value=%d)", v)
+	}
+	return int(v), nil
 }
 
 // writeMigrationVersion persists v as the stored schema version with
 // pebble.Sync — durability is mandatory between migration steps (a crash here
 // must not leave the store at an unknown version).
+//
+// v must be a sane non-negative version; a negative v would cast to a
+// high-bit-set uint64 and, on the next Open, decode back to a negative int
+// that bypasses the refuse-newer guard (see readMigrationVersion). Reject at
+// the write side too so a future caller cannot persist the bad marker.
 func writeMigrationVersion(db *pebble.DB, v int) error {
+	if v < 0 {
+		return fmt.Errorf("migrate: negative version %d not allowed", v)
+	}
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, uint64(v))
 	return db.Set(migrationVersionKey, buf, pebble.Sync)

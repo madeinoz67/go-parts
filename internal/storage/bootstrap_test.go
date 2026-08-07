@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"encoding/binary"
 	"path/filepath"
 	"testing"
 
+	"github.com/cockroachdb/pebble"
+	"github.com/madeinoz67/go-parts/internal/storage/keys"
 	"github.com/madeinoz67/go-parts/internal/storage/migrate"
 )
 
@@ -77,5 +80,37 @@ func TestOpenRefusesNewerStore(t *testing.T) {
 	}
 	if _, err := Open(filepath.Join(dir, "data")); err == nil {
 		t.Fatal("Open succeeded against newer-version store; want refuse error")
+	}
+}
+
+// TestOpenRefusesHighBitVersionMarker pins the §5.13 invariant that a
+// corrupt (uninterpretable) schema-version marker is a hard startup failure,
+// never a silent bypass of the refuse-newer guard. The version marker is
+// encoded uint64 but decoded as signed int; a high-bit-set value decodes
+// negative and would slip past both `cur > latest` guards in db.go and
+// migrate.go, dropping the store into the migration branch against data the
+// migration was not authored for. Today (zero registered migrations) the
+// corruption is latent; the first real migration turns it into silent data
+// corruption. Seed the exact bytes a future `WriteVersion(-1)` caller or a
+// corrupt restore would leave, and require Open to refuse.
+func TestOpenRefusesHighBitVersionMarker(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("seed Open: %v", err)
+	}
+	highBit := make([]byte, 8)
+	binary.BigEndian.PutUint64(highBit, 0xFFFFFFFFFFFFFFFF)
+	if err := s.DB.Set(keys.MetaSchemaVersionKey(), highBit, pebble.Sync); err != nil {
+		t.Fatalf("seed high-bit: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	// PRD §5.13 invariant 1: a corrupt version marker MUST refuse — not
+	// fall through to the migration branch against unknown source state.
+	if reopened, err := Open(dir); err == nil {
+		reopened.Close()
+		t.Fatal("refuse-newer BYPASS: Open succeeded against uint64-max version marker")
 	}
 }
