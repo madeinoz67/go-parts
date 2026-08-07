@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -12,18 +13,52 @@ import (
 	"github.com/madeinoz67/go-parts/internal/storage/keys"
 )
 
-// Store is the Part entity's CRUD authority. It owns no locks of its own in
-// Task 8 — the parts keyspace is written serially per-call. Task 9 EXTENDS this
-// struct to add a striped-lock pool ([64]sync.Mutex) for AdjustStock's
-// commutative stock deltas; do not pre-add it here.
+// stripeShards is the size of the per-id striped-lock pool. 64 is coarse enough
+// to spread contention across a typical single-vault parts corpus and fine
+// enough that distinct ids only rarely collide on the same shard. A collision
+// over-serializes (two distinct ids hashing to the same shard serialize against
+// each other for no semantic reason) but NEVER under-serializes — that's the
+// only invariant the lock has to uphold (all ops on the SAME id take the same
+// lock).
+const stripeShards = 64
+
+// Store is the Part entity's CRUD authority (PRD §6.1, §5.14). The parts
+// keyspace is written serially per-call through Pebble; optimistic concurrency
+// on Version backs Update (§5.14 — reject stale expectedVersion, never silently
+// overwrite), and a per-id striped-lock pool serializes the read-check-write
+// RMW of Update AND the commutative stock delta of AdjustStock so two
+// concurrent writers on one part cannot both pass the version check (silent
+// overwrite) and two concurrent AdjustStock calls always net their sum.
+//
+// Lock ordering: lockFor(id) is the OUTERMOST lock for any part operation.
+// Under it the code calls Get/write/writePartsKey, and write calls
+// fts.Index/fts.Delete which take the FTS's internal mu. So the order is
+// parts.lockFor(id) → fts.mu, one direction. The FTS never calls back into
+// parts, so there is no cycle.
 type Store struct {
-	db  *pebble.DB
-	fts *index.FTS
+	db    *pebble.DB
+	fts   *index.FTS
+	locks [stripeShards]sync.Mutex
 }
 
-// NewStore returns a Part store over db whose writes keep fts in sync.
+// NewStore returns a Part store over db whose writes keep fts in sync. The
+// striped-lock pool is zero-initialized (unlocked) — NewStore does not need to
+// prime it.
 func NewStore(db *pebble.DB, fts *index.FTS) *Store {
 	return &Store{db: db, fts: fts}
+}
+
+// lockFor returns the mutex governing operations on id. All Store ops that
+// touch a single part's record (Update, AdjustStock) MUST take this lock so
+// their read-modify-write critical sections serialize per-id. Byte-sum hashing
+// is allocation-free and collision-tolerant (collisions over-serialize, never
+// under-serialize — see stripeShards).
+func (s *Store) lockFor(id string) *sync.Mutex {
+	var sum int
+	for i := 0; i < len(id); i++ {
+		sum += int(id[i])
+	}
+	return &s.locks[sum%stripeShards]
 }
 
 // Create writes a new part record, assigns id/via_code if absent, sets the
@@ -71,10 +106,19 @@ func (s *Store) Get(id string) (*Part, error) {
 // (Index's idempotency guard would otherwise treat a still-indexed id as a
 // no-op and leave stale postings in place).
 //
+// The entire read-check-write (Get → version-check → Delete FTS → write) is
+// serialized under lockFor(p.ID) so two concurrent Updates on the same part
+// cannot both pass the version check and silently overwrite each other (the
+// §5.14 prohibition). The lock is the OUTERMOST lock held; under it the code
+// takes fts.mu (one direction, no cycle — see Store doc).
+//
 // Update DOES NOT preserve CreatedAt/CreatedBy if the caller passes a Part
 // missing them — the caller (typically REST T10) is expected to Get-then-edit
 // so the create-time audit fields round-trip. Documented as a T10 concern.
 func (s *Store) Update(p *Part, expectedVersion int) error {
+	mu := s.lockFor(p.ID)
+	mu.Lock()
+	defer mu.Unlock()
 	cur, err := s.Get(p.ID)
 	if err != nil {
 		return err
@@ -131,9 +175,51 @@ func (s *Store) Count() int {
 	return n
 }
 
+// AdjustStock applies a commutative stock delta (§5.14) to QtyOnHand under a
+// per-id striped lock. Two concurrent -10 calls always net -20 regardless of
+// interleaving; the read-modify-write on QtyOnHand is atomic per-id.
+//
+// Stock is authoritative: AdjustStock does NOT bump Version (§5.14) and does
+// NOT touch the FTS — QtyOnHand is not an indexed field, so the FTS content is
+// unchanged. (Stock changes write the parts keyspace only via writePartsKey.)
+//
+// The `reason` parameter is accepted for a future stock-movement audit log
+// (PRD §5.14 envisions a movement history); it is not persisted in v1.
+//
+// The lock is the OUTERMOST lock held; under it the code calls writePartsKey
+// (no further locks) — there is no fts.mu interaction here because the FTS is
+// untouched. AdjustStock-vs-Update on the same id serialize via lockFor; an
+// AdjustStock running concurrently on the same id as an Update cannot see a
+// half-written FTS or a stale Version.
+func (s *Store) AdjustStock(id string, delta int, reason string) error {
+	mu := s.lockFor(id)
+	mu.Lock()
+	defer mu.Unlock()
+	p, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+	p.QtyOnHand += delta
+	return s.writePartsKey(p)
+}
+
 // write serializes p and writes it under the parts key, then indexes its field
 // map into the FTS. Called by Create and Update.
 func (s *Store) write(p *Part) error {
+	if err := s.writePartsKey(p); err != nil {
+		return err
+	}
+	var ws [8]byte
+	s.fts.Index(ws, p.ID, p.indexText())
+	return nil
+}
+
+// writePartsKey serializes p and writes it under the parts key (no FTS, no
+// version bump). Used by write (Create/Update — which then indexes) and by
+// AdjustStock (where the FTS content is unchanged because QtyOnHand is not an
+// indexed field). Extracted so AdjustStock does not rely on the FTS
+// idempotency guard to no-op an unchanged index.
+func (s *Store) writePartsKey(p *Part) error {
 	var ws [8]byte
 	val, err := json.Marshal(p)
 	if err != nil {
@@ -142,7 +228,6 @@ func (s *Store) write(p *Part) error {
 	if err := s.db.Set(keys.PartsKey(ws, p.ID), val, pebble.Sync); err != nil {
 		return fmt.Errorf("parts: write %s: %w", p.ID, err)
 	}
-	s.fts.Index(ws, p.ID, p.indexText())
 	return nil
 }
 
