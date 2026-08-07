@@ -1,9 +1,7 @@
 # Memory protocol — how a finding survives the session
 
-go-parts dogfoods **MuninnDB** for its own development memory (PRD §5.20 dogfooding note):
-durable findings from building go-parts go to the dedicated **`go-parts` vault**, the way
-MuninnDB's own maintainer persists findings for MuninnDB. This document is the bar for what
-belongs there.
+Durable findings from building go-parts go to the **`go-parts` memory vault** — so nothing
+important is lost when a session ends. This document is the bar for what belongs there.
 
 > **Vault: `go-parts`, reached via the `muninndb-goparts` MCP server.** go-parts dev memory
 > goes through the project-local `muninndb-goparts` connection (`.claude/settings.local.json`,
@@ -43,17 +41,27 @@ The bar exists because **a noisy vault is worse than a small one.**
 
 ## How to write
 
-Use the **`muninndb-goparts`** server's tools (`mcp__muninndb-goparts__*`) — no `vault` arg,
-since its key is go-parts-scoped:
+Two paths, same vault (`go-parts`):
 
-- **Recall first.** Before adding a fact, `muninn_recall` what's related. If the new
-  knowledge *corrects, sharpens, or supersedes* an existing memory, `muninn_evolve` that one
-  — don't add a rival copy. Evolve supersedes and retires the old version; a second
-  `muninn_remember` leaves a stale duplicate competing in recall.
-- **`muninn_remember`** for genuinely new facts. One concept each. Include `entities` (Part,
-  Location, Pebble, go-rag, …) and `tags` (`go-parts`, the subsystem) so they recall cleanly.
-- **Atomic and self-contained.** A memory that only makes sense next to the conversation
-  that produced it is not a memory — it's a comment. Write it readable in a year.
+- **Preferred — the ledger + drain (automatic).** Append a proposal with
+  `node "$CLAUDE_PROJECT_DIR/.claude/hooks/memory-propose.mjs"` (validates against the schema;
+  refuses a bad batch rather than queueing it). It lands in `.claude/memory-proposals.jsonl`
+  and `memory-drain.mjs` flushes it to the go-parts vault on `PreCompact` / `SessionEnd` / `Stop`
+  (idempotent, concurrency-safe). This is the path that does not depend on remembering to
+  remember — the whole reason the machinery exists.
+- **Immediate — the `muninndb-goparts` MCP tools** (`mcp__muninndb-goparts__*`), for a finding
+  that must land right now. No `vault` arg; the key is go-parts-scoped.
+
+Either way:
+
+- **Recall first.** Before adding a fact, recall what's related. If the new knowledge
+  *corrects, sharpens, or supersedes* an existing memory, `evolve` that one — don't add a
+  rival copy. Evolve supersedes and retires the old version; a second `remember` leaves a
+  stale duplicate competing in recall.
+- **One concept per memory, atomic.** Include `entities` (Part, Location, Pebble, go-rag, …)
+  and `tags` (`go-parts`, the subsystem) so they recall cleanly.
+- **Self-contained.** A memory that only makes sense next to the conversation that produced
+  it is not a memory — it's a comment. Write it readable in a year.
 
 ## Privacy — this repo is public
 
@@ -61,11 +69,15 @@ go-parts is a **public** MIT repo. Memories are an internal artifact but the sam
 as §5.18 applies: **no secrets, no real vendor API keys, no personal customer data** in any
 memory. Measurements are welcome ("sub-100ms over 30k parts"); a real credential is not.
 
-## What is deliberately not ported from MuninnDB
+## How it's wired
 
-MuninnDB's own repo has a file-ledger + hook-drain machinery (`memory-propose.mjs`,
-`memory-drain.mjs`, etc.) that auto-persists proposals on `PreCompact`/`SessionEnd`. That is
-**MuninnDB's internal dogfooding tooling, written against its own daemon** — not ported here.
-go-parts uses **direct MCP writes** against the `go-parts` vault for now. If the volume ever
-justifies it, a ledger/drain can be added later; until then, direct writes with the bar
-above is the protocol.
+The ledger + drain loop lives in `.claude/hooks/`: `memory-schema.mjs` (the one proposal
+shape), `memory-propose.mjs` (validates + appends), `memory-ledger.mjs` (paths + lock +
+safe-touch), `memory-drain.mjs` (flushes ledger → vault on PreCompact/SessionEnd/Stop),
+`memory-freshness.mjs` (SessionStart health), and `ledger-guard.mjs` (catches a bad append
+in-session). Hook wiring is in `.claude/settings.json`; the connection env (`MUNINN_MCP_URL`,
+`MUNINN_MCP_TOKEN`, `MUNINN_PROPOSAL_VAULT`) is in `.claude/settings.local.json` (gitignored).
+For an immediate write, use the `muninndb-goparts` MCP tools directly.
+
+Intentionally absent: a one-time ledger-repair step (go-parts is greenfield — no pre-schema
+legacy) and a cross-surface code-drift guard (that's source-code drift, not memory).

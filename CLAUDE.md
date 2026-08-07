@@ -80,17 +80,17 @@ services, multiple protocol surfaces over a shared embedded store.
 ## 4. Findings that outlive the session
 
 Durable findings — a measured number, a decision and why it beat the alternative,
-a trap that looks safe — get written to **MuninnDB**, in the dedicated **`go-parts`
-vault**, reached via the project-local **`muninndb-goparts`** MCP server
-(`.claude/settings.local.json`, gitignored; key scoped to `go-parts` — PRD §5.20 dogfooding
-note: go-parts uses MuninnDB for its own dev memory the way MuninnDB's maintainer does for
-MuninnDB). The bar — what qualifies, atomicity, evolve-vs-remember, privacy — is in
+a trap that looks safe — get written to the **`go-parts` memory vault**, reached via the
+project-local **`muninndb-goparts`** MCP server (`.claude/settings.local.json`, gitignored;
+key scoped to `go-parts`). Findings flow through a ledger + drain: append a proposal
+(`.claude/hooks/memory-propose.mjs`) and it flushes to the vault on PreCompact/SessionEnd/Stop.
+The bar — what qualifies, atomicity, evolve-vs-remember, privacy — is in
 `.claude/memory-protocol.md`. Nothing important is lost when a session ends.
 
 ## 5. The review agents
 
-Two repo-local subagents (mirroring MuninnDB's core reviewer setup), invoked before
-opening a PR — not auto-triggered CI gates; the developer chooses to run them:
+Two repo-local subagents, invoked before opening a PR — not auto-triggered CI gates;
+the developer chooses to run them:
 
 - **`.claude/agents/code-reviewer.md`** (`/code-review`) — reviews a change against the
   go-parts constitution and PRD §5.x invariants, routing by subsystem. Builds/tests the
@@ -99,10 +99,9 @@ opening a PR — not auto-triggered CI gates; the developer chooses to run them:
   (concurrency §5.14, on-disk/migration §5.13, secrets §5.18, auth seams §5.8). Tries to
   break things under an executable-finding standard, or enumerates what it failed to break.
 
-(MuninnDB's `increment-builder`/`designer`/`mechanism-critic`/`vault-measurer` agents are
-not ported — superpowers covers the design/build increment flow, and vault-measurer is
-MuninnDB-internal.)
+Build-loop orchestration (design → plan → implement) is the superpowers workflow; the two
+agents above are the review surface on top of it.
 
 ## 6. Attribution
 
-No "Generated with Claude" line on commits or PRs — matching MuninnDB's convention.
+No "Generated with Claude" line on commits or PRs.
