@@ -100,7 +100,10 @@ the developer chooses to run them:
   break things under an executable-finding standard, or enumerates what it failed to break.
 
 Build-loop orchestration (design → plan → implement) is the superpowers workflow; the two
-agents above are the review surface on top of it.
+agents above are the review surface on top of it. For a genuine design fork — two defensible
+shapes, or a Tier-3/doctrine decision (`docs/superpowers/` design couldn't pick one) — the
+**`panel`** skill (`.claude/skills/panel/`) runs a bounded judge-panel: independent panelists,
+a decision rule written before anyone runs, a judge that may not invent a new option.
 
 ## 6. Attribution
 
