@@ -25,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/madeinoz67/go-parts/internal/index"
 	"github.com/madeinoz67/go-parts/internal/parts"
 )
@@ -122,8 +121,9 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	p, err := s.store.Get(r.PathValue("id"))
 	if err != nil {
-		// Store wraps pebble.ErrNotFound with %w, so errors.Is unwraps cleanly.
-		if errors.Is(err, pebble.ErrNotFound) {
+		// Store wraps parts.ErrNotFound with %w, so errors.Is unwraps cleanly
+		// without REST needing to import the storage engine (§5.1).
+		if errors.Is(err, parts.ErrNotFound) {
 			http.NotFound(w, r)
 			return
 		}
@@ -164,7 +164,7 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	loaded, err := s.store.Get(id)
 	if err != nil {
-		if errors.Is(err, pebble.ErrNotFound) {
+		if errors.Is(err, parts.ErrNotFound) {
 			http.NotFound(w, r)
 			return
 		}
@@ -183,10 +183,16 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	}
 	applyPatch(loaded, &patch)
 	if err := s.store.Update(loaded, expectedVersion); err != nil {
-		// Update's only recoverable error path is a version conflict (the
-		// expectedVersion no longer matches the in-lock stored version). The
-		// race window between our outer Get and Update is exactly the §5.14
-		// case optimistic concurrency exists for — surface it as 409.
+		// Update calls Get under the striped lock, so a part deleted between
+		// our outer Get and Update surfaces here as parts.ErrNotFound → 404
+		// (mirrors handleDelete/handleStock's not-found handling). The only
+		// other recoverable path is a version conflict (the expectedVersion no
+		// longer matches the in-lock stored version) — the §5.14 race window
+		// optimistic concurrency exists for → 409.
+		if errors.Is(err, parts.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
 		http.Error(w, "version conflict: "+err.Error(), http.StatusConflict)
 		return
 	}
@@ -244,12 +250,12 @@ func applyPatch(dst, src *parts.Part) {
 }
 
 // handleDelete removes a part. 204 on success; 404 if the part is missing (the
-// store's Get-inside-Delete returns wrapped pebble.ErrNotFound, which we
+// store's Get-inside-Delete returns wrapped parts.ErrNotFound, which we
 // unwrap). Store.Delete is serialized under the per-id striped lock, so a
 // concurrent Update cannot resurrect a just-deleted record (§5.14).
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.Delete(r.PathValue("id")); err != nil {
-		if errors.Is(err, pebble.ErrNotFound) {
+		if errors.Is(err, parts.ErrNotFound) {
 			http.NotFound(w, r)
 			return
 		}
@@ -274,7 +280,7 @@ func (s *Server) handleStock(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if err := s.store.AdjustStock(id, body.Delta, "rest"); err != nil {
-		if errors.Is(err, pebble.ErrNotFound) {
+		if errors.Is(err, parts.ErrNotFound) {
 			http.NotFound(w, r)
 			return
 		}

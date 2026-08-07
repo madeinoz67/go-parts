@@ -2,6 +2,7 @@ package parts
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +13,14 @@ import (
 	"github.com/madeinoz67/go-parts/internal/index"
 	"github.com/madeinoz67/go-parts/internal/storage/keys"
 )
+
+// ErrNotFound is the parts package's not-found sentinel. Store.Get wraps this
+// (with %w) when the underlying Pebble lookup misses, so callers can
+// `errors.Is(err, parts.ErrNotFound)` WITHOUT importing the storage engine —
+// the §5.1 storage-encapsulation boundary (a Pebble swap must not leak through
+// REST/RPC/MCP/Web). Delete/AdjustStock/Update call Get, so they propagate
+// parts.ErrNotFound automatically — no per-method translation needed.
+var ErrNotFound = errors.New("parts: not found")
 
 // stripeShards is the size of the per-id striped-lock pool. 64 is coarse enough
 // to spread contention across a typical single-vault parts corpus and fine
@@ -83,12 +92,17 @@ func (s *Store) Create(p *Part) error {
 	return s.write(p)
 }
 
-// Get reads a single part record by id. Returns a wrapped pebble.ErrNotFound
-// when the record is absent.
+// Get reads a single part record by id. Returns a wrapped parts.ErrNotFound
+// (which itself wraps pebble.ErrNotFound) when the record is absent — callers
+// outside the package test with errors.Is(err, parts.ErrNotFound) so the
+// storage engine does not leak past the §5.1 boundary.
 func (s *Store) Get(id string) (*Part, error) {
 	var ws [8]byte
 	val, closer, err := s.db.Get(keys.PartsKey(ws, id))
 	if err != nil {
+		if errors.Is(err, pebble.ErrNotFound) {
+			return nil, fmt.Errorf("parts: get %s: %w", id, ErrNotFound)
+		}
 		return nil, fmt.Errorf("parts: get %s: %w", id, err)
 	}
 	defer closer.Close()
