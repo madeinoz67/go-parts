@@ -1,0 +1,4 @@
+# Gortex project manifest — go-parts
+# Auto-detects Go; daemon holds the index keyed by repo path.
+project: go-parts
+workspace: go-parts

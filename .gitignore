@@ -1,0 +1,45 @@
+# Compiled binaries / build output
+/bin/
+/go-parts
+/go-parts.exe
+*.exe
+*.test
+*.out
+*.prof
+
+# Go workspace
+/go.work
+/go.work.sum
+/vendor/
+
+# Test coverage
+coverage.out
+coverage.html
+
+# go-parts runtime data — never commit local databases, datasheets, images, or config
+/.go-parts/
+/data/
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local code-graph indexes (regenerable; keep out of git)
+/.tokensave/
+/.codanna/
+
+# MkDocs site build output
+/site/
+
+# Claude Code local settings (per-developer; never commit)
+.claude/settings.local.json
+
+# Secrets — env-var only, never on disk; a .env here is gitignored as a backstop
+.env
+.env.*
