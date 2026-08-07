@@ -20,6 +20,7 @@ func partsKey(ws [8]byte, id string) []byte {
 // keys package can iterate without touching raw bytes.
 func PartsPrefixBound(ws [8]byte) (lower, upper []byte) {
 	lower = scopedBytes(partsPrefix, ws)
+	// NOTE: partsPrefix+1 relies on partsPrefix (0x10) being < 0xFF; a future prefix of 0xFF would wrap uint8 to 0x00.
 	upper = scopedBytes(partsPrefix+1, ws)
 	return lower, upper
 }

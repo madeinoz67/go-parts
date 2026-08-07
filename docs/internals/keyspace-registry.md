@@ -6,35 +6,39 @@ entire store — parts, locations, projects, search index, jobs, stock history, 
 prefix, they silently corrupt each other's scans — the bug class this registry exists to make
 unrepresentable.
 
-> **Pre-v1 charter.** go-parts has no Pebble code yet — Phase 1 builds `internal/storage`. This
-> document is the source of truth for the **planned** keyspaces (from PRD §5.1 / §5.10);
-> byte-prefix assignment happens in Phase 1's storage design, and **every assignment must be
-> registered here as it lands**. Once `internal/storage` exists, the Go prefix constants and
-> this doc are the joint source of truth, and a disjointness test derived from the same table
-> enforces it in CI (the single-table, no-bound-to-bump pattern).
+> **Pre-v1 charter — first allocations landed.** Phase 1's `internal/storage` has now allocated
+> the first prefixes (Task 2 / commit 0cfbed0); the Go prefix constants in
+> `internal/storage/keys/keys.go` and this doc are the **joint source of truth**, enforced by the
+> single-table disjointness test in `internal/storage/keys/disjoint_test.go` (the no-bound-to-bump
+> pattern — add every public prefix to the slice; a duplicate is a blocking review finding).
+> Remaining keyspaces are still planned (PRD §5.1 / §5.10); **every new assignment must be
+> registered here as it lands**.
 
 **Rule for any change that adds or changes a Pebble key:** the new prefix must be **disjoint**
 from every registered keyspace and **added to this registry**. The `code-reviewer` agent treats
 an unregistered or colliding prefix as a **blocking** finding.
 
-## Planned keyspaces (PRD §5.1 / §5.10)
+## Keyspaces (PRD §5.1 / §5.10)
 
-| Keyspace | Purpose | PRD | Status |
-|---|---|---|---|
-| `parts` | Part records (mpn, specs, stock, `via_code`, `version`, …) | §6.1 | planned — prefix TBD |
-| `categories` | category / subcategory (plain-string taxonomy facet, not an enum) | §5.1, §6.2 | planned |
-| `locations` | Location records (nested storage, `via_code`) | §6.1, §5.17 | planned |
-| `suppliers` | Supplier records + part-number mapping conventions | §6.1 | planned |
-| `projects/boms` | Project + BOM (`part_refs[]`) | §6.1 | planned |
-| `datasheets` | datasheet ref (local path, or go-rag vault doc-id when that gateway is on) | §5.1, §5.6 | planned |
-| `search_index` | BM25 postings (+ optional vector index) | §5.1 | planned — fully derived/rebuildable (§5.15) |
-| `stock_history` | stock-adjust history log (commutative deltas, §5.14) | §5.1, §5.14 | planned |
-| `meta` | `schema_version` marker + migration cursors | §5.1, §5.13 | planned |
-| `jobs` | background job queue (`embed_part`, `enrich_part_*`) | §5.10 | planned |
+| Keyspace | Purpose | PRD | Byte | Status |
+|---|---|---|---|---|
+| `parts` | Part records (mpn, specs, stock, `via_code`, `version`, …) | §6.1 | `0x10` | **allocated** |
+| `categories` | category / subcategory (plain-string taxonomy facet, not an enum) | §5.1, §6.2 | — | planned |
+| `locations` | Location records (nested storage, `via_code`) | §6.1, §5.17 | — | planned |
+| `suppliers` | Supplier records + part-number mapping conventions | §6.1 | — | planned |
+| `projects/boms` | Project + BOM (`part_refs[]`) | §6.1 | — | planned |
+| `datasheets` | datasheet ref (local path, or go-rag vault doc-id when that gateway is on) | §5.1, §5.6 | — | planned |
+| `search_index` FTS postings | BM25 postings (term→id); optional vector index is additive/future | §5.1 | `0x05` | **allocated** (verbatim, go-rag) |
+| `search_index` FTS indexed-set | ids already indexed | §5.1 | `0x07` | **allocated** (verbatim, go-rag) |
+| `search_index` FTS global stats | doc-frequency stats | §5.1 | `0x06` | **allocated** (verbatim, go-rag) |
+| `stock_history` | stock-adjust history log (commutative deltas, §5.14) | §5.1, §5.14 | — | planned |
+| `meta` (schema_version) | `schema_version` marker + migration cursors | §5.1, §5.13 | `0xF0` | **allocated** |
+| `jobs` | background job queue (`embed_part`, `enrich_part_*`) | §5.10 | — | planned |
 
-**Prefix assignment is deferred to Phase 1.** When `internal/storage` allocates the first
-prefix, it lands here as a row with its byte, key shape, value, and notes — and the
-disjointness test is added in the same change.
+`search_index` is fully derived/rebuildable from `parts` (§5.15) — a reindex loses no data; that
+makes index corruption recoverable, but a prefix collision between `search_index` and a record
+keyspace is still blocking. The three `search_index` prefixes are imported verbatim from go-rag's
+`internal/storage/keys` to keep the FTS implementation portable (PRD §5.1).
 
 ## Scope notes
 
@@ -50,8 +54,12 @@ disjointness test is added in the same change.
 
 ## Free / reserved
 
-No bytes allocated yet. Phase 1's first allocation establishes the table; this section then
-tracks free ranges alongside it (so a new prefix picks a free byte, not one in use).
+Allocated: `0x05`, `0x06`, `0x07` (FTS), `0x10` (parts), `0xF0` (meta).
+
+Free ranges: `0x00-0x04`, `0x08-0x0F`, `0x11-0xEF`, `0xF1-0xFF`. A new prefix picks a free
+byte, not one in use. (The task-4 brief noted `0x00-0x04, 0x08-0x0F, 0x11-0xEF`; `0xF1-0xFF`
+is also free — `meta` sub-keys are differentiated by payload after the single `0xF0` prefix,
+not by adjacent prefixes, so the top nybble above `0xF0` is not reserved.)
 
 ## Reviewer obligation
 
