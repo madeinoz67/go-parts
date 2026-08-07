@@ -39,7 +39,8 @@ func (s *Server) routes() {
 	// Serve embedded static files (css/js/fonts) under /ui/static/.
 	staticSub, _ := fs.Sub(embedded, "static")
 	s.mux.Handle("GET /ui/static/", http.StripPrefix("/ui/static/", http.FileServer(http.FS(staticSub))))
-	// Fragment handlers added in later tasks: search, detail, create, edit, stock.
+	// Fragment handlers.
+	s.mux.HandleFunc("GET /ui/parts/search", s.handleSearch) // live-filter + sort + initial-load
 }
 
 // handleShell renders the full shell page.

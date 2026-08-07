@@ -214,6 +214,31 @@ func (s *Store) Count() int {
 	return n
 }
 
+// List returns every part record via a prefix scan over the parts keyspace, in
+// Pebble key order (ULID-ordered by part ID). Used by the web UI's empty-query
+// search (the table's initial-load + cleared-search cases). Encapsulates the
+// scan + decode so the UI does not import pebble or reach into unexported state.
+// A failed scan or decode reports a partial result (the records decoded so far)
+// rather than failing the whole call — the UI is best-effort read-only.
+func (s *Store) List() []*Part {
+	var ws [8]byte
+	lower, upper := keys.PartsPrefixBound(ws)
+	it, err := s.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
+	if err != nil {
+		return nil
+	}
+	defer it.Close()
+	var out []*Part
+	for it.First(); it.Valid(); it.Next() {
+		var p Part
+		if err := json.Unmarshal(it.Value(), &p); err != nil {
+			continue // skip undecodable record rather than failing the whole list
+		}
+		out = append(out, &p)
+	}
+	return out
+}
+
 // AdjustStock applies a commutative stock delta (§5.14) to QtyOnHand under a
 // per-id striped lock. Two concurrent -10 calls always net -20 regardless of
 // interleaving; the read-modify-write on QtyOnHand is atomic per-id.

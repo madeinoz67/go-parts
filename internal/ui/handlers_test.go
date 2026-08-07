@@ -82,3 +82,37 @@ func TestCSSServes(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchReturnsMatchingRow(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "RC0805FR-0710KL", Description: "10k resistor", PartType: "linked", Tags: []string{"resistor"}})
+	srv.store.Create(&parts.Part{MPN: "STM32F401", Description: "mcu", PartType: "linked"})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search?q=10k", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, "RC0805FR-0710KL") {
+		t.Errorf("search missing the 10k resistor; body=%s", body)
+	}
+	if strings.Contains(body, "STM32F401") {
+		t.Errorf("search leaked the non-matching mcu")
+	}
+}
+
+func TestSearchEmptyQueryReturnsAll(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "X1", PartType: "local"})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search", nil)) // no q
+	if !strings.Contains(rr.Body.String(), "X1") {
+		t.Errorf("empty-query search should list all parts")
+	}
+}
+
+func TestSearchNoMatchesMessage(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search?q=zzzz", nil))
+	if !strings.Contains(rr.Body.String(), `no matches for "zzzz"`) {
+		t.Errorf("missing no-matches empty state; body=%s", rr.Body.String())
+	}
+}
