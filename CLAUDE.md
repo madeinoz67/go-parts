@@ -46,6 +46,10 @@ services, multiple protocol surfaces over a shared embedded store.
   in `GOPARTS_*` / `GORAG_TOKEN` / `MUNINNDB_TOKEN` env vars and is never written
   to disk by go-parts. After a restore, secrets must be re-supplied — that's the
   deliberate trade.
+- **Pebble prefixes are registered in `docs/internals/keyspace-registry.md`** — the single
+  source of truth for the keyspaces. A new prefix is disjoint + registered, or it's a blocking
+  review finding (prefix collision = silent corruption). Pre-v1 the registry is a charter;
+  Phase 1's `internal/storage` fills it and adds a disjointness test.
 - **Single-operator in v1, shaped for multi-user later (§5.8).** No auth in v1
   (no-op middleware seam), but `created_by`/`updated_by` and a single interceptor
   point are there now so makerspace auth is additive, not a rewrite.

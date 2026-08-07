@@ -93,8 +93,11 @@ A change often touches more than one. Apply every group whose files appear in th
   Non-negotiables: **BM25 is default-on with zero config and zero external calls**; vector
   search is additive and only activates once `GOPARTS_EMBED_URL` is set — a fresh install
   must never require a model. `search_index` is fully derived from `parts` (rebuildable, zero
-  data loss). Reindex reuses the §5.10 job queue, not a new mechanism. A new Pebble prefix
-  must be disjoint from existing keyspaces and journaled.
+  data loss). Reindex reuses the §5.10 job queue, not a new mechanism. **A new Pebble prefix
+  must be registered in `docs/internals/keyspace-registry.md` (the source of truth) and
+  disjoint from every existing prefix** — an unregistered or colliding prefix is blocking.
+  Until Phase 1 allocates bytes the registry is a charter; once `internal/storage` lands, a
+  disjointness test (one table, no bound to bump) enforces it.
 
 - **Vendor plugins / enrichment (§5.4, §5.9)** — the `VendorPlugin`/`EnrichmentModel`
   registries, retry logic, the background job types. Non-negotiables: retry is
