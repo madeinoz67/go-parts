@@ -5,9 +5,11 @@ durable findings from building go-parts go to the dedicated **`go-parts` vault**
 MuninnDB's own maintainer persists findings for MuninnDB. This document is the bar for what
 belongs there.
 
-> **Vault: `go-parts`.** All go-parts development memory targets the `go-parts` vault
-> (`vault: "go-parts"` on every muninn call). A session's default vault is often something
-> else — name it explicitly or the finding lands in the wrong place.
+> **Vault: `go-parts`, reached via the `muninndb-goparts` MCP server.** go-parts dev memory
+> goes through the project-local `muninndb-goparts` connection (`.claude/settings.local.json`,
+> gitignored) — its key is scoped to `go-parts`, so its tools (`mcp__muninndb-goparts__*`)
+> default to that vault with **no `vault` arg**. Do **not** use the global `muninndb` server
+> for go-parts memory — that is the default/LifeOS vault, and its key is scoped there.
 
 ## The bar — what qualifies
 
@@ -41,7 +43,8 @@ The bar exists because **a noisy vault is worse than a small one.**
 
 ## How to write
 
-Use the muninn MCP tools directly against the `go-parts` vault:
+Use the **`muninndb-goparts`** server's tools (`mcp__muninndb-goparts__*`) — no `vault` arg,
+since its key is go-parts-scoped:
 
 - **Recall first.** Before adding a fact, `muninn_recall` what's related. If the new
   knowledge *corrects, sharpens, or supersedes* an existing memory, `muninn_evolve` that one

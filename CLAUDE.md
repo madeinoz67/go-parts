@@ -81,9 +81,10 @@ services, multiple protocol surfaces over a shared embedded store.
 
 Durable findings — a measured number, a decision and why it beat the alternative,
 a trap that looks safe — get written to **MuninnDB**, in the dedicated **`go-parts`
-vault** (`vault: "go-parts"` on every muninn call — PRD §5.20 dogfooding note: go-parts
-uses MuninnDB for its own dev memory the way MuninnDB's maintainer does for MuninnDB).
-The bar — what qualifies, atomicity, evolve-vs-remember, privacy — is in
+vault**, reached via the project-local **`muninndb-goparts`** MCP server
+(`.claude/settings.local.json`, gitignored; key scoped to `go-parts` — PRD §5.20 dogfooding
+note: go-parts uses MuninnDB for its own dev memory the way MuninnDB's maintainer does for
+MuninnDB). The bar — what qualifies, atomicity, evolve-vs-remember, privacy — is in
 `.claude/memory-protocol.md`. Nothing important is lost when a session ends.
 
 ## 5. The review agents
