@@ -34,6 +34,7 @@ import (
 	"github.com/madeinoz67/go-parts/internal/parts"
 	"github.com/madeinoz67/go-parts/internal/rest"
 	"github.com/madeinoz67/go-parts/internal/storage"
+	"github.com/madeinoz67/go-parts/internal/ui"
 )
 
 // stateFileName is the single source of truth for the running daemon's state.
@@ -72,7 +73,16 @@ func Run(cfg config.Config) error {
 
 	fts := index.NewFTS(storeDB.DB)
 	store := parts.NewStore(storeDB.DB, fts)
-	srv := &http.Server{Addr: cfg.Bind, Handler: rest.NewServer(store, fts)}
+	// Compose: UI at /ui/, REST at root, GET / → /ui/ redirect.
+	restSrv := rest.NewServer(store, fts)
+	uiSrv := ui.NewServer(store, fts)
+	mux := http.NewServeMux()
+	mux.Handle("/ui/", uiSrv)
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+	})
+	mux.Handle("/", restSrv)
+	srv := &http.Server{Addr: cfg.Bind, Handler: mux}
 
 	// Bind before publishing the state file: a port-in-use error must surface
 	// BEFORE we tell the world we're running. ln.Addr().String() captures the
