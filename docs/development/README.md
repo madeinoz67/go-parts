@@ -3,6 +3,12 @@
 How we work here. For what we're building, see the [PRD](../internals/go-parts-prd.md); for the
 non-negotiables, see [CLAUDE.md](../../CLAUDE.md).
 
+## Setup
+
+First time here? See [setup.md](setup.md) for the Claude Code agent/hooks config and the
+MuninnDB memory connection (the go-parts vault key) — both are needed for the review + memory
+substrate to work.
+
 ## Build & test
 
 go-parts uses Go 1.26+ and the standard `cmd/` + `internal/` layout.
