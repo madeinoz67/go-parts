@@ -80,17 +80,27 @@ services, multiple protocol surfaces over a shared embedded store.
 ## 4. Findings that outlive the session
 
 Durable findings — a measured number, a decision and why it beat the alternative,
-a trap that looks safe — get written to **MuninnDB** (the canonical memory system;
-see the MuninnDB gateway §5.5 and the dogfooding note in PRD §5.20). Nothing
-important is lost when a Claude Code session ends. Tag go-parts findings so they
-recall cleanly.
+a trap that looks safe — get written to **MuninnDB**, in the dedicated **`go-parts`
+vault** (`vault: "go-parts"` on every muninn call — PRD §5.20 dogfooding note: go-parts
+uses MuninnDB for its own dev memory the way MuninnDB's maintainer does for MuninnDB).
+The bar — what qualifies, atomicity, evolve-vs-remember, privacy — is in
+`.claude/memory-protocol.md`. Nothing important is lost when a session ends.
 
-## 5. The code-review agent
+## 5. The review agents
 
-`.claude/agents/code-reviewer.md` — a repo-local subagent invoked via `/code-review`,
-**before** opening a PR. It checks a change against the principles in this file,
-not generic style feedback. Same mechanism MuninnDB uses (PRD §5.20). Not an
-auto-triggered CI gate; the developer chooses to run it.
+Two repo-local subagents (mirroring MuninnDB's core reviewer setup), invoked before
+opening a PR — not auto-triggered CI gates; the developer chooses to run them:
+
+- **`.claude/agents/code-reviewer.md`** (`/code-review`) — reviews a change against the
+  go-parts constitution and PRD §5.x invariants, routing by subsystem. Builds/tests the
+  real change (`-race` where it matters) and RED-sanity-checks bug fixes.
+- **`.claude/agents/adversary.md`** — the mandatory second pass on Tier-3 changes
+  (concurrency §5.14, on-disk/migration §5.13, secrets §5.18, auth seams §5.8). Tries to
+  break things under an executable-finding standard, or enumerates what it failed to break.
+
+(MuninnDB's `increment-builder`/`designer`/`mechanism-critic`/`vault-measurer` agents are
+not ported — superpowers covers the design/build increment flow, and vault-measurer is
+MuninnDB-internal.)
 
 ## 6. Attribution
 
