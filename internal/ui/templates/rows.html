@@ -3,14 +3,7 @@
 {{if not .Parts}}
   <tr class="empty"><td colspan="4">no matches for "{{.Q}}"</td></tr>
 {{else}}
-{{range .Parts}}
-  <tr hx-get="/ui/parts/{{.ID}}" hx-target="#detail-panel" hx-swap="innerHTML">
-    <td>{{.MPN}}</td>
-    <td>{{.Description}}</td>
-    <td>{{.Category}}</td>
-    <td class="num">{{.QtyOnHand}}</td>
-  </tr>
-{{end}}
+{{range .Parts}}{{template "row.html" (dict "P" .)}}{{end}}
 {{end}}
 </tbody>
 {{end}}

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 
@@ -63,6 +64,48 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{"P": p}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleCreateForm renders the create.html form fragment (the "+ new" nav
+// button's target). The form POSTs to /ui/parts (handleCreate). Renders into
+// the detail panel — same target as row-select, so the create form and the
+// detail view share one swap surface by design.
+func (s *Server) handleCreateForm(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "create.html", nil); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleCreate parses the create form, calls store.Create IN-PROCESS (PRD §5.2
+// — the web UI is a 5th surface over the core, never over REST), and renders
+// the single new row as a fragment. The form's hx-swap="afterbegin" prepends
+// the row to #parts-tbody. store.Create assigns ID/ViaCode/timestamps and
+// indexes the FTS — the row template reads them straight off the populated
+// *Part, so the response carries the canonical ULID for subsequent row-select.
+func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	p := &parts.Part{
+		MPN:         r.PostFormValue("mpn"),
+		Description: r.PostFormValue("description"),
+		PartType:    r.PostFormValue("part_type"),
+		Category:    r.PostFormValue("category"),
+		Footprint:   r.PostFormValue("footprint"),
+	}
+	if v := r.PostFormValue("qty"); v != "" {
+		fmt.Sscanf(v, "%d", &p.QtyOnHand)
+	}
+	if err := s.store.Create(p); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "row.html", map[string]any{"P": p}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

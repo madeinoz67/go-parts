@@ -139,3 +139,38 @@ func TestDetailUnknownIs404(t *testing.T) {
 		t.Fatalf("unknown part = %d, want 404", rr.Code)
 	}
 }
+
+func TestCreateReturnsNewRow(t *testing.T) {
+	srv := newTestServer(t)
+	form := strings.NewReader("mpn=NEW123&description=created&part_type=local")
+	req := httptest.NewRequest("POST", "/ui/parts", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("create = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "NEW123") {
+		t.Errorf("create response should contain the new row's MPN; body=%s", rr.Body.String())
+	}
+	// And the part was actually created in the store.
+	hits := srv.fts.Search([8]byte{}, "NEW123", 10)
+	if len(hits) != 1 {
+		t.Errorf("create did not index the new part (hits=%d)", len(hits))
+	}
+}
+
+func TestCreateFormRenders(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/new", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /ui/parts/new = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{`hx-post="/ui/parts"`, `name="mpn"`, `name="description"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("create form missing %q; body=%s", want, body)
+		}
+	}
+}

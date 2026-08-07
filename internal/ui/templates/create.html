@@ -1,0 +1,14 @@
+{{define "create.html"}}
+<form class="create" hx-post="/ui/parts" hx-target="#parts-tbody" hx-swap="afterbegin">
+  <input name="mpn" placeholder="MPN" required>
+  <input name="description" placeholder="description">
+  <select name="part_type">
+    <option value="linked">linked</option>
+    <option value="local">local</option>
+  </select>
+  <input name="category" placeholder="category">
+  <input name="footprint" placeholder="footprint">
+  <input name="qty" placeholder="qty" type="number" min="0">
+  <button class="btn btn-primary" type="submit">create</button>
+</form>
+{{end}}

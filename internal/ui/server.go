@@ -26,7 +26,20 @@ type Server struct {
 }
 
 func NewServer(store *parts.Store, fts *index.FTS) *Server {
-	tmpl := template.Must(template.ParseFS(embedded, "templates/*.html"))
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		// dict builds a map[string]any from key/value pairs so a child template
+		// invoked via {{template "x" (dict "P" .)}} receives named fields
+		// instead of bearing the caller's full pipeline context. Used by
+		// rows.html to invoke the shared row.html per-row fragment.
+		"dict": func(pairs ...any) map[string]any {
+			m := make(map[string]any, len(pairs)/2)
+			for i := 0; i+1 < len(pairs); i += 2 {
+				k, _ := pairs[i].(string)
+				m[k] = pairs[i+1]
+			}
+			return m
+		},
+	}).ParseFS(embedded, "templates/*.html"))
 	s := &Server{store: store, fts: fts, tmpl: tmpl, mux: http.NewServeMux()}
 	s.routes()
 	return s
@@ -40,8 +53,10 @@ func (s *Server) routes() {
 	staticSub, _ := fs.Sub(embedded, "static")
 	s.mux.Handle("GET /ui/static/", http.StripPrefix("/ui/static/", http.FileServer(http.FS(staticSub))))
 	// Fragment handlers.
-	s.mux.HandleFunc("GET /ui/parts/search", s.handleSearch) // live-filter + sort + initial-load
-	s.mux.HandleFunc("GET /ui/parts/{id}", s.handleDetail)   // row-select → detail-panel fragment
+	s.mux.HandleFunc("GET /ui/parts/search", s.handleSearch)  // live-filter + sort + initial-load
+	s.mux.HandleFunc("GET /ui/parts/new", s.handleCreateForm) // create form (literal wins over {id})
+	s.mux.HandleFunc("GET /ui/parts/{id}", s.handleDetail)    // row-select → detail-panel fragment
+	s.mux.HandleFunc("POST /ui/parts", s.handleCreate)        // create → new-row fragment
 }
 
 // handleShell renders the full shell page.
