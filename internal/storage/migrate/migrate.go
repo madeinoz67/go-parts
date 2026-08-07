@@ -1,0 +1,138 @@
+// Package migrate runs sequential, idempotent Pebble schema migrations for
+// go-parts. Mirrors muninndb's internal/storage/migrate: a registered set of
+// numbered steps, applied in order, with per-step pebble.Sync version writes
+// and a refuse-newer guard (a store written by a newer binary is never silently
+// downgraded — startup fails loud).
+//
+// v1 ships ZERO real step-migrations; the schema is v1 from first run. The
+// runner exists and is proven by synthetic tests so the path is ready before
+// real data exists. RegisterMigrations is the single source of truth, called
+// by every open path so library and daemon cannot drift on which migrations
+// exist.
+package migrate
+
+import (
+	"encoding/binary"
+	"fmt"
+	"log/slog"
+	"sort"
+
+	"github.com/cockroachdb/pebble"
+	"github.com/madeinoz67/go-parts/internal/storage/keys"
+)
+
+var migrationVersionKey = keys.MetaSchemaVersionKey()
+
+// Migration is a single numbered schema step. Version is unique within a
+// Runner's registered set; Up runs inside a per-step Sync'd version write.
+type Migration struct {
+	Version     int
+	Description string
+	Up          func(db *pebble.DB) error
+}
+
+// Runner owns a registered set of migrations and applies them against one
+// Pebble handle. Not safe for concurrent Register/Run on the same Runner —
+// callers wire a Runner once at open and run it once.
+type Runner struct {
+	migrations []Migration
+	db         *pebble.DB
+}
+
+// NewRunner returns a Runner bound to db with no migrations registered.
+func NewRunner(db *pebble.DB) *Runner { return &Runner{db: db} }
+
+// Register adds a migration to the set. Registrations need not be in version
+// order; Run sorts before applying.
+func (r *Runner) Register(m Migration) { r.migrations = append(r.migrations, m) }
+
+// RegisterMigrations is the single source of truth, called by every open
+// path so library and daemon cannot drift on which migrations exist.
+// v1 ships ZERO real migrations (schema is v1 from first run).
+func RegisterMigrations(r *Runner) {
+	// Add numbered migrations here as they are written, e.g.:
+	// r.Register(Migration{1, "description", v1_some_step.Up})
+}
+
+// MaxRegisteredVersion returns the highest Version RegisterMigrations would
+// register. Used by open paths to refuse a newer store before opening
+// (CurrentVersion > MaxRegisteredVersion ⇒ hard fail).
+func MaxRegisteredVersion() int {
+	r := &Runner{}
+	RegisterMigrations(r)
+	max := 0
+	for _, m := range r.migrations {
+		if m.Version > max {
+			max = m.Version
+		}
+	}
+	return max
+}
+
+// Run applies every registered migration with Version > current stored version,
+// in ascending version order, persisting the new version after each step with
+// pebble.Sync. Returns the count of migrations applied.
+//
+// If the stored version is newer than the highest registered migration, Run
+// refuses (hard error) rather than silently downgrade-writing the store.
+func (r *Runner) Run() (int, error) {
+	if len(r.migrations) == 0 {
+		return 0, nil
+	}
+	sort.Slice(r.migrations, func(i, j int) bool { return r.migrations[i].Version < r.migrations[j].Version })
+	current, err := readMigrationVersion(r.db)
+	if err != nil {
+		return 0, fmt.Errorf("migrate: read version: %w", err)
+	}
+	maxRegistered := 0
+	for _, m := range r.migrations {
+		if m.Version > maxRegistered {
+			maxRegistered = m.Version
+		}
+	}
+	if current > maxRegistered {
+		return 0, fmt.Errorf("migrate: stored version %d newer than this binary knows (%d); refusing to start", current, maxRegistered)
+	}
+	applied := 0
+	for _, m := range r.migrations {
+		if m.Version <= current {
+			continue
+		}
+		slog.Info("applying migration", "version", m.Version, "description", m.Description)
+		if err := m.Up(r.db); err != nil {
+			return applied, fmt.Errorf("migrate v%d (%s): %w", m.Version, m.Description, err)
+		}
+		if err := writeMigrationVersion(r.db, m.Version); err != nil {
+			return applied, fmt.Errorf("migrate persist v%d: %w", m.Version, err)
+		}
+		applied++
+	}
+	return applied, nil
+}
+
+// readMigrationVersion returns the stored schema version, or 0 with no error
+// when no version key exists yet (fresh store). A short / corrupt value is an
+// error, never silently zero.
+func readMigrationVersion(db *pebble.DB) (int, error) {
+	val, closer, err := db.Get(migrationVersionKey)
+	if err == pebble.ErrNotFound {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer closer.Close()
+	if len(val) < 8 {
+		return 0, fmt.Errorf("migrate: corrupt version value (len=%d)", len(val))
+	}
+	return int(binary.BigEndian.Uint64(val)), nil
+}
+
+// writeMigrationVersion persists v as the stored schema version with
+// pebble.Sync — durability is mandatory between migration steps (a crash here
+// must not leave the store at an unknown version).
+func writeMigrationVersion(db *pebble.DB, v int) error {
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(v))
+	return db.Set(migrationVersionKey, buf, pebble.Sync)
+}

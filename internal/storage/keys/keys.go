@@ -15,6 +15,10 @@ func partsKey(ws [8]byte, id string) []byte {
 	return scopedString(partsPrefix, ws, id)
 }
 
+// PartsKey is the exported alias for partsKey, for cross-package callers
+// (e.g. internal/storage/migrate tests).
+func PartsKey(ws [8]byte, id string) []byte { return partsKey(ws, id) }
+
 // PartsPrefixBound returns the [lower, upper) key range covering every parts
 // record, for prefix scans (e.g. Store.Count). Exported so callers outside the
 // keys package can iterate without touching raw bytes.
@@ -29,6 +33,11 @@ func metaSchemaVersionKey() []byte {
 	var ws [8]byte
 	return scopedString(metaPrefix, ws, "schemaver")
 }
+
+// MetaSchemaVersionKey is the exported alias for metaSchemaVersionKey, for
+// cross-package callers (e.g. internal/storage/migrate pins the migration
+// version key against the same bytes).
+func MetaSchemaVersionKey() []byte { return metaSchemaVersionKey() }
 
 // --- FTS (verbatim shape from go-rag internal/storage/keys) ---
 
