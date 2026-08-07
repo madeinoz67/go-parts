@@ -49,3 +49,18 @@ func TestShellServes(t *testing.T) {
 		t.Fatal("shell response is not an HTML document")
 	}
 }
+
+func TestCSSServes(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/static/css/styles.css", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET styles.css = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, token := range []string{"--bg", "--copper", "--phosphor", "--surface", "--text"} {
+		if !strings.Contains(body, token) {
+			t.Errorf("styles.css missing token %q", token)
+		}
+	}
+}

@@ -1,1 +1,508 @@
-/* go-parts UI styles — populated in Task 2/3. */
+/* go-parts UI styles — bench-equipment aesthetic (style guide v1.0).
+ * Tokens §2, typography §3, layout §4, components §6, motion §7, a11y §8.
+ * Hand-written static file (PRD §5.2 — no build chain); served via go:embed.
+ */
+
+/* ── §2 Color tokens (verbatim from style guide) ─────────────────────────── */
+:root{
+  --bg:#0b1411;          /* PCB solder mask */
+  --bg-grid:#0d1713;     /* faint background grid lines */
+  --surface:#0f1c17;     /* panel / shell background */
+  --surface-alt:#142720; /* hover / active row */
+  --border:#223229;      /* default hairlines */
+  --border-soft:#1a2820; /* subtle row dividers */
+  --copper:#c98a4b;      /* primary accent — actions + trace lines */
+  --copper-bright:#e6a868;/* copper hover / active */
+  --phosphor:#6fd9c9;    /* live data values */
+  --text:#e8ede8;        /* silkscreen white */
+  --text-dim:#82998d;    /* secondary text */
+  --text-faint:#4d6459;  /* labels, meta, tertiary */
+  --ok:#7cc48f;          /* success / in-stock */
+  --ok-bg:rgba(124,196,143,0.08);
+  --warn:#e2574c;        /* warn / low-stock / error */
+  --warn-bg:rgba(226,87,76,0.10);
+}
+
+/* ── §3 Typography — @font-face (woff2 vendored in Task 2) ───────────────── */
+@font-face{
+  font-family:"IBM Plex Mono";
+  font-weight:600;
+  font-style:normal;
+  font-display:swap;
+  src:url(/ui/static/fonts/ibm-plex-mono-600.woff2) format("woff2");
+}
+@font-face{
+  font-family:"IBM Plex Mono";
+  font-weight:400;
+  font-style:normal;
+  font-display:swap;
+  src:url(/ui/static/fonts/ibm-plex-mono-400.woff2) format("woff2");
+}
+@font-face{
+  font-family:"JetBrains Mono";
+  font-weight:400;
+  font-style:normal;
+  font-display:swap;
+  src:url(/ui/static/fonts/jetbrains-mono-400.woff2) format("woff2");
+}
+@font-face{
+  font-family:"JetBrains Mono";
+  font-weight:500;
+  font-style:normal;
+  font-display:swap;
+  src:url(/ui/static/fonts/jetbrains-mono-500.woff2) format("woff2");
+}
+
+/* ── Base / reset ────────────────────────────────────────────────────────── */
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:"JetBrains Mono","Menlo","Consolas",monospace;
+  font-size:13px;
+  line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+}
+/* faint PCB-trace grid behind everything; stays quiet (§4 — border, not fill) */
+body::before{
+  content:"";
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  background-image:
+    linear-gradient(var(--bg-grid) 1px,transparent 1px),
+    linear-gradient(90deg,var(--bg-grid) 1px,transparent 1px);
+  background-size:40px 40px;
+  opacity:0.5;
+  z-index:0;
+}
+a{color:inherit;text-decoration:none}
+h1,h2,h3,h4{margin:0;font-weight:600;font-family:"IBM Plex Mono","JetBrains Mono",monospace}
+hr{border:none;border-top:1px solid var(--border-soft);margin:8px 0}
+
+/* Monospace runs already inherit; keep inputs/buttons from doing anything fancy. */
+input,button,select,textarea{font:inherit;color:inherit}
+
+/* ── §8 A11y — focus-visible border-color shift, never just an outline ──── */
+:focus{outline:none}
+:focus-visible{
+  border-color:var(--copper-bright);
+  transition:border-color 150ms ease;
+}
+/* ── §7 Motion — color/border only, ~150ms; reduced-motion block at EOF ── */
+button,a,input,th[role="columnheader"],tr{transition:background-color 150ms ease,border-color 150ms ease,color 150ms ease}
+
+/* ── §4 Layout — three-column shell ──────────────────────────────────────── */
+.shell{
+  position:relative;
+  z-index:1;
+  display:grid;
+  grid-template-columns:220px 1fr 300px;
+  grid-template-rows:auto 1fr auto;
+  grid-template-areas:
+    "nav    nav     nav"
+    "side   main    detail"
+    "status status  status";
+  min-height:100vh;
+}
+.nav{grid-area:nav}
+.sidebar{grid-area:side}
+.main{grid-area:main}
+.detail{grid-area:detail}
+.statusbar{grid-area:status}
+.shell > *{min-width:0} /* let grid children shrink + scroll correctly */
+
+/* ── §1 Signature — copper hairlines + via dots at structural junctions ─── */
+.trace-line{border:0;height:1px;background:var(--copper);opacity:0.7}
+.via-dot{
+  display:inline-block;
+  width:5px;height:5px;
+  border-radius:50%;
+  background:var(--copper);
+  vertical-align:middle;
+  /* sits on a 1px hairline as the junction dot */
+}
+/* junction under the nav row: copper hairline with a via-dot at each column edge */
+.nav-junction{
+  grid-area:nav;
+  border-bottom:1px solid var(--copper);
+  position:relative;
+}
+.nav-junction::before,.nav-junction::after{
+  content:"";
+  position:absolute;
+  bottom:-3px;
+  width:5px;height:5px;
+  border-radius:50%;
+  background:var(--copper);
+}
+.nav-junction::before{left:220px}
+.nav-junction::after{right:300px}
+
+/* ── §6 Top navigation ───────────────────────────────────────────────────── */
+.nav{
+  border-bottom:1px solid var(--border);
+  padding:0 14px;
+  background:var(--surface);
+}
+.nav-list{
+  display:flex;
+  gap:0;
+  list-style:none;
+  margin:0;padding:0;
+  align-items:stretch;
+}
+.nav-item{
+  display:inline-flex;
+  align-items:center;
+  padding:10px 14px;
+  font-family:"IBM Plex Mono","JetBrains Mono",monospace;
+  font-weight:600;
+  font-size:11px;
+  letter-spacing:0.06em;
+  text-transform:uppercase;
+  color:var(--text-faint);
+  border-bottom:2px solid transparent;
+  cursor:pointer;
+  background:none;
+  border-top:none;border-left:none;border-right:none;
+}
+.nav-item:hover{color:var(--text-dim)}
+.nav-item.active{
+  color:var(--copper-bright);
+  border-bottom-color:var(--copper);
+}
+.nav-spacer{flex:1}
+.wordmark{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:8px 14px;
+  font-family:"IBM Plex Mono",monospace;
+  font-weight:600;
+  font-size:13px;
+  letter-spacing:0.04em;
+  color:var(--text);
+  text-transform:none;
+}
+.wordmark .cursor{
+  display:inline-block;
+  width:7px;
+  height:13px;
+  background:var(--phosphor);
+  margin-left:2px;
+  vertical-align:-2px;
+  /* blink animation lives in motion section; it is the only ambient motion */
+}
+
+/* ── §6 Sidebar (Categories — hidden until the Locations slice, but styled) ─ */
+.sidebar{
+  border-right:1px solid var(--border);
+  background:var(--surface);
+  padding:8px 0;
+  overflow:auto;
+}
+.sidebar h3{
+  padding:8px 14px 4px;
+  font-size:10px;
+  font-weight:600;
+  text-transform:uppercase;
+  letter-spacing:0.12em;
+  color:var(--text-faint);
+}
+.sidebar a,.sidebar .nav-link{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:6px 14px;
+  color:var(--text-dim);
+  font-size:12px;
+  border-left:2px solid transparent;
+}
+.sidebar a:hover,.sidebar .nav-link:hover{
+  background:var(--surface-alt);
+  color:var(--text);
+}
+.sidebar a.active,.sidebar .nav-link.active{
+  color:var(--copper-bright);
+  border-left-color:var(--copper);
+  background:var(--surface-alt);
+}
+
+/* ── Main / detail panels ────────────────────────────────────────────────── */
+.main{
+  padding:14px 18px;
+  overflow:auto;
+  background:var(--bg);
+}
+.detail{
+  border-left:1px solid var(--border);
+  background:var(--surface);
+  padding:14px 18px;
+  overflow:auto;
+}
+.panel-title{
+  font-family:"IBM Plex Mono",monospace;
+  font-weight:600;
+  font-size:15px;
+  color:var(--text);
+  margin-bottom:10px;
+}
+
+/* ── §6 Search — terminal-prompt style, live filter (no submit) ──────────── */
+.search{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:8px 10px;
+  border:1px solid var(--border);
+  background:var(--surface);
+  margin-bottom:10px;
+}
+.search:focus-within{border-color:var(--phosphor)}
+.search-icon{color:var(--text-faint);flex:none}
+.search-input{
+  flex:1;
+  background:transparent;
+  border:none;
+  outline:none;
+  padding:0;
+  color:var(--text);
+  font-family:"JetBrains Mono",monospace;
+  font-size:13px;
+}
+.search-input::placeholder{color:var(--text-faint)}
+.search-kbd{
+  font-family:"JetBrains Mono",monospace;
+  font-size:11px;
+  color:var(--text-faint);
+  border:1px solid var(--border);
+  padding:1px 6px;
+}
+.search-meta{
+  font-size:11px;
+  color:var(--text-faint);
+  padding:0 2px 8px;
+  /* factual result-count line: "3,115 parts" → "12 matches for \"10k\"" */
+}
+
+/* ── §6 Tables ───────────────────────────────────────────────────────────── */
+table.parts{
+  width:100%;
+  border-collapse:collapse;
+  font-family:"JetBrains Mono",monospace;
+  font-size:13px;
+}
+.parts thead th{
+  font-family:"IBM Plex Mono",monospace;
+  font-weight:600;
+  font-size:10px;
+  text-transform:uppercase;
+  letter-spacing:0.1em;
+  color:var(--text-faint);
+  text-align:left;
+  padding:8px 10px;
+  border-bottom:1px solid var(--border);
+  white-space:nowrap;
+  user-select:none;
+}
+.parts thead th[role="columnheader"]{cursor:pointer}
+.parts thead th .sort-ind{
+  margin-left:6px;
+  color:var(--text-faint);
+  opacity:0; /* only the active column shows by default */
+}
+.parts thead th:hover .sort-ind{opacity:1;color:var(--text-faint)}
+.parts thead th.sort-asc .sort-ind,
+.parts thead th.sort-desc .sort-ind{
+  opacity:1;
+  color:var(--copper); /* sort arrow is part of the active-state language */
+}
+.parts thead th.sort-asc .sort-ind::after{content:"\25B2"}  /* ▲ */
+.parts thead th.sort-desc .sort-ind::after{content:"\25BC"} /* ▼ */
+.parts tbody td{
+  padding:8px 10px;
+  color:var(--text-dim);
+  border-bottom:1px solid var(--border-soft);
+}
+.parts tbody tr:hover{background:var(--surface-alt)}
+.parts tbody tr.selected{
+  background:var(--surface-alt);
+  box-shadow:inset 2px 0 0 var(--copper); /* selected-row copper left rule */
+}
+.parts td.num,.parts th.num{text-align:right}
+.parts td.num{color:var(--phosphor)} /* live-data values: quantities */
+.parts td.muted{color:var(--text-faint)}
+
+/* Empty state — explicit, in the interface's own voice (§9). */
+.parts-empty td{
+  padding:18px 10px;
+  color:var(--text-faint);
+  text-align:center;
+  font-style:normal;
+}
+
+/* ── §6 Badges — sharp corners, ok/warn only ────────────────────────────── */
+.badge{
+  display:inline-block;
+  font-family:"IBM Plex Mono",monospace;
+  font-weight:600;
+  font-size:10px;
+  letter-spacing:0.06em;
+  text-transform:uppercase;
+  padding:2px 7px;
+  border-radius:0;          /* sharp — no rounded corners anywhere (§4) */
+  border:1px solid transparent;
+  line-height:1.4;
+  white-space:nowrap;
+}
+.badge-ok{color:var(--ok);background:var(--ok-bg);border-color:rgba(124,196,143,0.25)}
+.badge-warn{color:var(--warn);background:var(--warn-bg);border-color:rgba(226,87,76,0.30)}
+
+/* ── §6 Buttons — outline only (no filled), copper reserved for primary ─── */
+.btn{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  font-family:"IBM Plex Mono",monospace;
+  font-weight:600;
+  font-size:11px;
+  letter-spacing:0.04em;
+  text-transform:uppercase;
+  padding:6px 12px;
+  color:var(--text-dim);
+  background:transparent;
+  border:1px solid var(--border);
+  border-radius:0;
+  cursor:pointer;
+}
+.btn:hover{background:var(--surface-alt);color:var(--text)}
+.btn[disabled]{opacity:0.5;cursor:not-allowed}
+.btn-primary{
+  border-color:var(--copper);
+  color:var(--copper-bright);
+}
+.btn-primary:hover{background:var(--surface-alt);color:var(--copper-bright)}
+/* outline-only — never fill; copper is the actions language only */
+.btn-danger{
+  border-color:var(--warn);
+  color:var(--warn);
+}
+.btn-icon svg{width:14px;height:14px;stroke-width:1.8}
+
+/* ── §6 Status bar — vim-style status line ──────────────────────────────── */
+.statusbar{
+  border-top:1px solid var(--border);
+  background:var(--surface);
+  display:flex;
+  align-items:center;
+  gap:0;
+  padding:4px 14px;
+  font-family:"JetBrains Mono",monospace;
+  font-size:11px;
+  color:var(--text-faint);
+  letter-spacing:0.04em;
+  flex-wrap:nowrap;
+  overflow-x:auto;
+  white-space:nowrap;
+}
+.statusbar .seg{padding:0 10px;border-right:1px solid var(--border-soft)}
+.statusbar .seg:first-child{padding-left:0}
+.statusbar .seg:last-child{border-right:none}
+.statusbar .mode{color:var(--text-dim);text-transform:uppercase}
+.statusbar .dot{
+  display:inline-block;
+  width:6px;height:6px;
+  border-radius:50%;
+  background:var(--text-faint);
+  margin-right:6px;
+  vertical-align:middle;
+}
+.statusbar .dot.on{background:var(--ok)}     /* gateway/plugin connected */
+.statusbar .dot.off{background:var(--warn)}  /* gateway/plugin down */
+.statusbar .rec{color:var(--text-dim)}
+.statusbar .rec .num{color:var(--phosphor)} /* live-data value */
+.statusbar .ver{margin-left:auto}
+
+/* ── §7 Motion — cursor blink is the only ambient animation ─────────────── */
+@keyframes cursor-blink{
+  0%,49%{opacity:1}
+  50%,100%{opacity:0}
+}
+.wordmark .cursor{animation:cursor-blink 1.05s steps(1,end) infinite}
+
+/* ── §4 Responsive — sidebar → chip-row <900px; detail → bottom-sheet <700px ─ */
+@media(max-width:900px){
+  .shell{
+    grid-template-columns:1fr;
+    grid-template-areas:
+      "nav"
+      "main"
+      "detail"
+      "status";
+  }
+  .sidebar{
+    display:none; /* chip-row rendered by the mobile sidebar placeholder (Tasks 5+) */
+  }
+  .nav-junction::before,.nav-junction::after{display:none}
+  /* Mobile chip-row — horizontal scroller of category chips above the table. */
+  .chip-row{
+    display:flex;
+    gap:6px;
+    overflow-x:auto;
+    padding:6px 14px;
+    border-bottom:1px solid var(--border);
+    background:var(--surface);
+    white-space:nowrap;
+  }
+  .chip{
+    display:inline-flex;
+    align-items:center;
+    padding:4px 10px;
+    font-family:"IBM Plex Mono",monospace;
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+    color:var(--text-dim);
+    border:1px solid var(--border);
+    background:transparent;
+  }
+  .chip.active{color:var(--copper-bright);border-color:var(--copper)}
+}
+
+@media(max-width:700px){
+  .shell{
+    grid-template-columns:1fr;
+    grid-template-rows:auto 1fr auto auto;
+    grid-template-areas:
+      "nav"
+      "main"
+      "detail"
+      "status";
+  }
+  .detail{
+    border-left:none;
+    border-top:1px solid var(--border);
+    /* bottom-sheet feel: slides up only when a row is selected — Tasks 5+ toggle a
+       .detail.open class; collapsed by default to give the table the full row. */
+    max-height:0;
+    overflow:hidden;
+    padding:0 18px;
+    transition:max-height 200ms ease,padding 200ms ease;
+  }
+  .detail.open{
+    max-height:60vh;
+    padding:14px 18px;
+  }
+}
+
+/* ── §7 Motion — reduced-motion: kill transitions + cursor blink ────────── */
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    transition:none !important;
+    animation:none !important;
+  }
+  .wordmark .cursor{animation:none;opacity:1}
+}
