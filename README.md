@@ -21,6 +21,12 @@ web UI, `start`/`stop`/`status`) is the next implementation milestone.
 
 Full design: [`docs/internals/go-parts-prd.md`](docs/internals/go-parts-prd.md).
 
+## Documentation
+
+Browse [`docs/`](docs/) — [`docs/README.md`](docs/README.md) is the index. Start with the
+[architecture overview](docs/reference/architecture.md) or the full
+[PRD](docs/internals/go-parts-prd.md).
+
 ## What it will be
 
 - **Single binary**, embedded Pebble KV — no Postgres/MySQL/external DB

@@ -120,6 +120,15 @@ A change often touches more than one. Apply every group whose files appear in th
   a new MCP tool is classified mutating-or-readonly; deliberately-non-MCP operations (reindex
   §5.15, image upload §5.16) stay REST/CLI only. These are mostly *not* caught by CI.
 
+- **Documentation (the doc gate)** — any behavior change. Read
+  `docs/development/doc-obligations.md` and apply every row whose trigger the diff hits: a
+  CLI change needs the matching `docs/guide/` page; a data-model / `schema_version` change
+  needs `docs/reference/data-model.md`; a config/env change needs `docs/reference/config.md`;
+  a new REST/MCP surface needs `docs/reference/api.md`; a Tier-3 fork needs a decision in the
+  go-parts memory vault; a new invariant needs `CLAUDE.md` or the PRD. A missing or stale doc
+  update is **blocking** — same severity as a cross-surface obligation, not a nit. A page that
+  does not yet exist must be created by the change that first needs it.
+
 ## What to produce
 
 A review that leads with a clear verdict — **approve**, **approve with required changes**,
@@ -131,6 +140,8 @@ expert and why) — then, most-important-first:
   §5.x and file:line), a concrete failure scenario, and what must change. Distinguish "this
   is wrong" from "this is a risk."
 - **Cross-surface obligations missed**: "you changed X but didn't update Y" (name the Y).
+- **Documentation obligations**: name any doc page the change should have updated (or created)
+  per `docs/development/doc-obligations.md`, and flag any miss as blocking.
 - **Verification you ran**: build/vet/test output, `-race` result, and the RED-sanity result
   for any bug fix — paste the meaningful lines, don't just say "passed."
 - **Cleanups / smaller notes** (non-blocking), clearly separated from the blocking findings.
