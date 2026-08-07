@@ -1,0 +1,23 @@
+{{define "detail.html"}}
+<header class="detail-head">
+  <h2>{{.P.MPN}}</h2>
+  <span class="badge {{if le .P.QtyOnHand .P.ReorderPoint}}badge-warn{{else}}badge-ok{{end}}">
+    {{if le .P.QtyOnHand .P.ReorderThreshold}}LOW{{else}}OK{{end}}
+  </span>
+</header>
+<dl>
+  <dt>manufacturer</dt><dd>{{.P.Manufacturer}}</dd>
+  <dt>description</dt><dd>{{.P.Description}}</dd>
+  <dt>category</dt><dd>{{.P.Category}} / {{.P.Subcategory}}</dd>
+  <dt>footprint</dt><dd>{{.P.Footprint}}</dd>
+  <dt>via</dt><dd>{{.P.ViaCode}}</dd>
+  <dt>specs</dt><dd>{{range $k,$v := .P.Specs}}{{$k}}={{$v}} {{end}}</dd>
+  <dt>tags</dt><dd>{{range .P.Tags}}{{.}} {{end}}</dd>
+</dl>
+<div class="qty">qty: <span class="num">{{.P.QtyOnHand}}</span></div>
+<!-- edit + stock forms added in Tasks 8/9; version carried for optimistic concurrency -->
+<form class="inline" hx-post="/ui/parts/{{.P.ID}}" hx-target="#detail-panel">
+  <input type="hidden" name="version" value="{{.P.Version}}">
+  <button class="btn btn-primary" type="button" onclick="this.closest('.detail').classList.add('editing')">edit</button>
+</form>
+{{end}}

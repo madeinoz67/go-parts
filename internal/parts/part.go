@@ -23,29 +23,30 @@ import (
 // keyspace. No json tags — REST (Task 10) and the e2e test (Task 12) use Go
 // field names; adding tags later is additive and breaks nothing.
 type Part struct {
-	ID             string
-	MPN            string
-	Manufacturer   string
-	Category       string
-	Subcategory    string
-	PartType       string // linked | local
-	ViaCode        string
-	Description    string
-	Specs          map[string]string
-	Footprint      string
-	UnitOfMeasure  string
-	PackageQty     int
-	QtyOnHand      int
-	ReorderPoint   int
-	Tags           []string
-	CustomFields   map[string]string
-	DatasheetStore string // empty until §5.6 slice
-	DatasheetRef   string
-	CreatedBy      string
-	UpdatedBy      string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	Version        int
+	ID               string
+	MPN              string
+	Manufacturer     string
+	Category         string
+	Subcategory      string
+	PartType         string // linked | local
+	ViaCode          string
+	Description      string
+	Specs            map[string]string
+	Footprint        string
+	UnitOfMeasure    string
+	PackageQty       int
+	QtyOnHand        int
+	ReorderPoint     int // soft reorder trigger — badge flips to warn at/below this
+	ReorderThreshold int // critical floor — badge text flips to LOW at/below this (<= ReorderPoint by convention)
+	Tags             []string
+	CustomFields     map[string]string
+	DatasheetStore   string // empty until §5.6 slice
+	DatasheetRef     string
+	CreatedBy        string
+	UpdatedBy        string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	Version          int
 }
 
 // newID returns a ULID — the canonical part identifier used as the Pebble key

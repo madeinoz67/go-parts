@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"net/http"
 	"sort"
 
@@ -39,6 +40,29 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{"Parts": pts, "Q": q}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleDetail renders the detail.html fragment for a single part (the row-
+// select → detail-panel flow wired into rows.html: each <tr> carries
+// hx-get="/ui/parts/{id}" hx-target="#detail-panel"). Calls store.Get
+// IN-PROCESS (PRD §5.2 — the web UI is a 5th surface over the core, never over
+// REST). parts.ErrNotFound maps to HTTP 404; any other storage error degrades
+// loudly to 500 rather than rendering a partial record.
+func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, err := s.store.Get(id)
+	if err != nil {
+		if errors.Is(err, parts.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{"P": p}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

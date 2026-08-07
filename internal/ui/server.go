@@ -41,6 +41,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /ui/static/", http.StripPrefix("/ui/static/", http.FileServer(http.FS(staticSub))))
 	// Fragment handlers.
 	s.mux.HandleFunc("GET /ui/parts/search", s.handleSearch) // live-filter + sort + initial-load
+	s.mux.HandleFunc("GET /ui/parts/{id}", s.handleDetail)   // row-select → detail-panel fragment
 }
 
 // handleShell renders the full shell page.

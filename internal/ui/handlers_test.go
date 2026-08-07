@@ -116,3 +116,26 @@ func TestSearchNoMatchesMessage(t *testing.T) {
 		t.Errorf("missing no-matches empty state; body=%s", rr.Body.String())
 	}
 }
+
+func TestDetailKnownPart(t *testing.T) {
+	srv := newTestServer(t)
+	p := &parts.Part{MPN: "C0805C104J5", Description: "100nF cap", PartType: "linked", Category: "capacitors", QtyOnHand: 42}
+	srv.store.Create(p)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+p.ID, nil))
+	body := rr.Body.String()
+	for _, want := range []string{"C0805C104J5", "100nF cap", "42"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("detail missing %q; body=%s", want, body)
+		}
+	}
+}
+
+func TestDetailUnknownIs404(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/nope", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown part = %d, want 404", rr.Code)
+	}
+}
