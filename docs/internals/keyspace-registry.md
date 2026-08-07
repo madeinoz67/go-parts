@@ -57,9 +57,8 @@ keyspace is still blocking. The three `search_index` prefixes are imported verba
 Allocated: `0x05`, `0x06`, `0x07` (FTS), `0x10` (parts), `0xF0` (meta).
 
 Free ranges: `0x00-0x04`, `0x08-0x0F`, `0x11-0xEF`, `0xF1-0xFF`. A new prefix picks a free
-byte, not one in use. (The task-4 brief noted `0x00-0x04, 0x08-0x0F, 0x11-0xEF`; `0xF1-0xFF`
-is also free — `meta` sub-keys are differentiated by payload after the single `0xF0` prefix,
-not by adjacent prefixes, so the top nybble above `0xF0` is not reserved.)
+byte, not one in use. (`0xF1-0xFF` is free — the `meta` keyspace is `0xF0` only, sub-keyed
+by payload after the single prefix, so the top nybble above `0xF0` is not reserved.)
 
 ## Reviewer obligation
 

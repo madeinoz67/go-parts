@@ -9,14 +9,15 @@
 //
 // The Load model is "default everything, then overlay saved values": a missing
 // config.json is normal on first run and yields the bare-metal default
-// (loopback bind, ~/.go-parts data dir). A malformed config.json is currently
-// ignored (overlay fails closed to defaults) — the operator can fix the file
-// or delete it; Load never blocks startup on a corrupt non-secret file.
+// (loopback bind, ~/.go-parts data dir). A malformed config.json is warned
+// (slog.Warn) and the defaults stand — the operator can fix the file or delete
+// it; Load never blocks startup on a corrupt non-secret file.
 package config
 
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -71,7 +72,11 @@ func Load(dataDir string) (Config, error) {
 	// make the overlay intent explicit.
 	var saved Config
 	if jerr := json.Unmarshal(b, &saved); jerr != nil {
-		return c, nil // malformed non-secret file: defaults stand, never block startup
+		// Loud-but-graceful (CLAUDE.md §2): the file is non-secret advice, not a
+		// load-bearing contract, so we don't block startup — but we DO warn so a
+		// stray comma doesn't silently mask the operator's intent.
+		slog.Warn("config.json malformed; using defaults", "error", jerr)
+		return c, nil
 	}
 	if saved.Bind != "" {
 		c.Bind = saved.Bind
