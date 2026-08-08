@@ -97,6 +97,15 @@ Custom line-art SVGs styled as schematic symbols — resistor zigzag, capacitor 
 - Empty state: an explicit `no matches for "{query}"` row inside the table itself, in the interface's own voice — never a blank table with no explanation.
 - Result count updates alongside the query (`3,115 parts` → `12 matches for "10k"`) so the person always knows what they're looking at.
 
+### Form inputs (create/edit/stock)
+- Background: `--surface-alt` (`#142720`) — dark, distinct from the page `--bg`
+- Text: `--text` (`#e8ede8`) — silkscreen white, high contrast on the dark field
+- Border: 1px `--border` (`#223229`) at rest; shifts to `--copper-bright` (`#e6a868`) on focus (no outline — the border-color shift is the focus indicator, consistent with buttons/table rows)
+- Placeholder text: `--text-faint` (`#4d6459`)
+- Font: JetBrains Mono 13px — these are technical values (MPNs, specs, quantities), not prose
+- Corners: 0 — sharp, consistent with the rest of the interface
+- **The search input has its own `.search-input` rules (phosphor focus border, transparent background) — it is deliberately distinct from form inputs because it is a filter, not a data-entry field. Never apply form-input background to the search input.**
+
 ### Status / footer bar
 - vim-style status line: mode indicator, record count, live connection dots for gateways (go-rag / muninndb) and vendor plugins, version tag
 - The person should never have to wonder whether a dependent service is connected — that state is always visible, not tucked into a settings page.
