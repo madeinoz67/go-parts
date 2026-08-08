@@ -1,0 +1,11 @@
+{{define "confirm-footprint.html"}}
+<div class="confirm-footprint">
+  <p>Unknown footprint "<strong>{{.Footprint}}</strong>". Add it as a new footprint?</p>
+  <form hx-post="{{.Action}}" hx-target="{{.Target}}" hx-swap="{{.Swap}}">
+    {{range .Fields}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+    <input type="hidden" name="footprint_confirmed" value="true">
+    <button class="btn btn-primary" type="submit">confirm add</button>
+  </form>
+  <button class="btn" hx-get="{{.CancelURL}}" hx-target="#detail-panel">cancel</button>
+</div>
+{{end}}

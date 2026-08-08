@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -44,6 +45,80 @@ func mergeFootprints(common, db []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// formField is a single name/value pair rendered as a hidden input by
+// confirm-footprint.html, so the confirm re-submit preserves the original
+// form values the user entered (not just the footprint).
+type formField struct {
+	Name  string
+	Value string
+}
+
+// confirmFootprintData is the template data for confirm-footprint.html. The
+// confirm form re-posts to Action with Target/Swap matching the original
+// form's, so the success fragment (row for create, detail for edit) lands in
+// the right place. CancelURL re-fetches the original form via #detail-panel.
+type confirmFootprintData struct {
+	Footprint string
+	Action    string
+	Target    string
+	Swap      string
+	CancelURL string
+	Fields    []formField
+}
+
+// renderConfirmFootprint emits the "unknown footprint — confirm?" prompt and
+// stops the save. It is the shared guard path for handleCreate/handleEdit:
+// neither handler proceeds to store.Create/Update while the prompt is pending.
+//
+// The prompt must render where the form lives (#detail-panel), but the create
+// form's own hx-target is #parts-tbody — so the first response sets
+// Hx-Retarget/Hx-Reswap to redirect the swap into #detail-panel (the edit
+// form already targets #detail-panel, so the retarget is a harmless no-op
+// there). The confirm re-submit's Target/Swap match the original form's so
+// the success fragment lands correctly on the second POST.
+func (s *Server) renderConfirmFootprint(w http.ResponseWriter, action, target, swap, cancelURL, fp string, r *http.Request) {
+	// Carry every submitted field forward as a hidden input, except the
+	// confirm flag (the template adds that fresh) so a stale value can't
+	// bypass a fresh prompt.
+	keys := make([]string, 0, len(r.PostForm))
+	for k := range r.PostForm {
+		if k == "footprint_confirmed" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	fields := make([]formField, 0, len(keys))
+	for _, k := range keys {
+		for _, v := range r.PostForm[k] {
+			fields = append(fields, formField{Name: k, Value: v})
+		}
+	}
+	w.Header().Set("Hx-Retarget", "#detail-panel")
+	w.Header().Set("Hx-Reswap", "innerHTML")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "confirm-footprint.html", confirmFootprintData{
+		Footprint: fp,
+		Action:    action,
+		Target:    target,
+		Swap:      swap,
+		CancelURL: cancelURL,
+		Fields:    fields,
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// footprintNeedsConfirm reports whether fp is outside the known set (common
+// baseline + DB-sourced). Used by the create/edit typo guard.
+func (s *Server) footprintNeedsConfirm(fp string) bool {
+	if fp == "" {
+		return false
+	}
+	known := mergeFootprints(commonFootprints, s.store.DistinctFootprints())
+	return !slices.Contains(known, fp)
 }
 
 // handleSearch renders the rows.html fragment (a <tbody id="parts-tbody">) for a
@@ -132,6 +207,18 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Footprint typo guard: if the submitted footprint is not in the known set
+	// (common baseline + DB-sourced) and the user has not explicitly confirmed
+	// via the hidden footprint_confirmed field, render the confirm prompt
+	// instead of saving. The confirm re-submit re-posts the original fields
+	// (carried as hidden inputs by confirm-footprint.html) + the flag, which
+	// bypasses this guard on the second pass. Target/Swap match the create
+	// form's (#parts-tbody / afterbegin) so a confirmed save still prepends
+	// the new row to the table.
+	if r.PostFormValue("footprint_confirmed") != "true" && s.footprintNeedsConfirm(r.PostFormValue("footprint")) {
+		s.renderConfirmFootprint(w, "/ui/parts", "#parts-tbody", "afterbegin", "/ui/parts/new", r.PostFormValue("footprint"), r)
+		return
+	}
 	p := &parts.Part{
 		MPN:         r.PostFormValue("mpn"),
 		Description: r.PostFormValue("description"),
@@ -181,6 +268,13 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Footprint typo guard (same as handleCreate). CancelURL re-fetches the
+	// canonical record so the form reverts to the stored footprint value —
+	// the typo the user wants to fix is exactly what cancel discards.
+	if r.PostFormValue("footprint_confirmed") != "true" && s.footprintNeedsConfirm(r.PostFormValue("footprint")) {
+		s.renderConfirmFootprint(w, "/ui/parts/"+id, "#detail-panel", "innerHTML", "/ui/parts/"+id, r.PostFormValue("footprint"), r)
 		return
 	}
 	expected, _ := strconv.Atoi(r.PostFormValue("version"))

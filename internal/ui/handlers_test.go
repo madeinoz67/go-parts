@@ -245,3 +245,118 @@ func TestEditStaleVersionReturns409(t *testing.T) {
 		t.Errorf("conflict fragment should say 'edited elsewhere'; body=%s", rr.Body.String())
 	}
 }
+
+// postForm builds a urlencoded POST request mirroring how the browser submits
+// the create/edit forms (application/x-www-form-urlencoded).
+func postForm(method, url, body string) *http.Request {
+	req := httptest.NewRequest(method, url, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return req
+}
+
+func TestCreateUnknownFootprintReturnsConfirm(t *testing.T) {
+	srv := newTestServer(t)
+	// TYPO123 is not in commonFootprints and the DB is empty → unknown.
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts", "mpn=NEW1&part_type=local&footprint=TYPO123&description=d"))
+	body := rr.Body.String()
+	if !strings.Contains(body, "confirm-footprint") {
+		t.Errorf("unknown footprint should render the confirm prompt; body=%s", body)
+	}
+	if !strings.Contains(body, "TYPO123") {
+		t.Errorf("confirm prompt should name the unknown footprint; body=%s", body)
+	}
+	if !strings.Contains(body, `name="footprint_confirmed"`) {
+		t.Errorf("confirm prompt must carry the hidden confirm flag; body=%s", body)
+	}
+	// Retargeted into #detail-panel (create form's own target is #parts-tbody).
+	if got := rr.Header().Get("Hx-Retarget"); got != "#detail-panel" {
+		t.Errorf("Hx-Retarget = %q, want #detail-panel", got)
+	}
+	// The part must NOT have been created.
+	if hits := srv.fts.Search([8]byte{}, "NEW1", 10); len(hits) != 0 {
+		t.Errorf("unknown-footprint create should not save; got %d hits", len(hits))
+	}
+	// The original fields are preserved as hidden inputs so confirm re-submit
+	// does not lose them.
+	if !strings.Contains(body, `name="mpn"`) || !strings.Contains(body, `value="NEW1"`) {
+		t.Errorf("confirm prompt should preserve mpn as a hidden input; body=%s", body)
+	}
+}
+
+func TestCreateConfirmFlagSavesUnknownFootprint(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts", "mpn=NEW2&part_type=local&footprint=TYPO456&footprint_confirmed=true"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("confirmed create = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	// Saved — the unknown footprint is now a real part.
+	if hits := srv.fts.Search([8]byte{}, "NEW2", 10); len(hits) != 1 {
+		t.Errorf("confirmed create should save; got %d hits", len(hits))
+	}
+}
+
+func TestCreateKnownFootprintSavesDirectly(t *testing.T) {
+	srv := newTestServer(t)
+	// 0805 is in commonFootprints → no prompt, direct save.
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts", "mpn=NEW3&part_type=local&footprint=0805"))
+	body := rr.Body.String()
+	if strings.Contains(body, "confirm-footprint") {
+		t.Errorf("known footprint should not trigger confirm; body=%s", body)
+	}
+	if hits := srv.fts.Search([8]byte{}, "NEW3", 10); len(hits) != 1 {
+		t.Errorf("known-footprint create should save directly; got %d hits", len(hits))
+	}
+}
+
+func TestCreateEmptyFootprintSavesDirectly(t *testing.T) {
+	srv := newTestServer(t)
+	// Empty footprint must NOT trigger the guard (footprint is optional).
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts", "mpn=NEW4&part_type=local"))
+	body := rr.Body.String()
+	if strings.Contains(body, "confirm-footprint") {
+		t.Errorf("empty footprint should not trigger confirm; body=%s", body)
+	}
+	if hits := srv.fts.Search([8]byte{}, "NEW4", 10); len(hits) != 1 {
+		t.Errorf("empty-footprint create should save; got %d hits", len(hits))
+	}
+}
+
+func TestEditUnknownFootprintReturnsConfirm(t *testing.T) {
+	srv := newTestServer(t)
+	p := &parts.Part{MPN: "EDT1", PartType: "local", Footprint: "0805"}
+	srv.store.Create(p)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p.ID, "version="+fmt.Sprintf("%d", p.Version)+"&footprint=TYPO789"))
+	body := rr.Body.String()
+	if !strings.Contains(body, "confirm-footprint") {
+		t.Errorf("unknown footprint on edit should render the confirm prompt; body=%s", body)
+	}
+	if !strings.Contains(body, "TYPO789") {
+		t.Errorf("confirm prompt should name the unknown footprint; body=%s", body)
+	}
+	// Not applied — the stored footprint is unchanged.
+	got, _ := srv.store.Get(p.ID)
+	if got.Footprint != "0805" {
+		t.Errorf("unknown-footprint edit should not save; stored footprint = %q, want 0805", got.Footprint)
+	}
+}
+
+func TestEditConfirmFlagSavesUnknownFootprint(t *testing.T) {
+	srv := newTestServer(t)
+	p := &parts.Part{MPN: "EDT2", PartType: "local", Footprint: "0603"}
+	srv.store.Create(p)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p.ID,
+		"version="+fmt.Sprintf("%d", p.Version)+"&footprint=WEIRD&footprint_confirmed=true"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("confirmed edit = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	got, _ := srv.store.Get(p.ID)
+	if got.Footprint != "WEIRD" {
+		t.Errorf("confirmed edit should save the unknown footprint; got %q", got.Footprint)
+	}
+}
