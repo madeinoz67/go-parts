@@ -10,6 +10,42 @@ import (
 	"github.com/madeinoz67/go-parts/internal/parts"
 )
 
+// commonFootprints is the baseline set shown in the footprint datalist even
+// when the DB is empty. Merged with store.DistinctFootprints() so the dropdown
+// always shows common packages + any custom ones the operator has used.
+var commonFootprints = []string{
+	"0402", "0603", "0805", "1206", "1210",
+	"SOT-23", "SOT-223", "SOD-123", "SOD-323",
+	"SOIC-8", "SOIC-14", "SOIC-16", "TSSOP-8", "TSSOP-14", "TSSOP-20",
+	"MSOP-8", "MSOP-10",
+	"QFN-24", "QFN-32", "QFN-48",
+	"TQFP-44", "TQFP-64", "TQFP-100",
+	"DPAK", "D2PAK", "TO-220", "TO-252",
+	"DIP-8", "DIP-14", "DIP-16", "DIP-28",
+	"TO-92", "THT",
+}
+
+// mergeFootprints returns the sorted union of common + db-sourced footprints
+// (deduped), so the datalist always shows the baseline + any custom values.
+func mergeFootprints(common, db []string) []string {
+	seen := make(map[string]bool, len(common)+len(db))
+	out := make([]string, 0, len(common)+len(db))
+	for _, f := range common {
+		if !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	for _, f := range db {
+		if f != "" && !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // handleSearch renders the rows.html fragment (a <tbody id="parts-tbody">) for a
 // search query. It is the live-filter + sort + initial-load endpoint wired into
 // the shell (layout.html): the search input's hx-trigger="keyup", the column
@@ -66,7 +102,7 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{
 		"P":          p,
-		"Footprints": s.store.DistinctFootprints(),
+		"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -79,7 +115,7 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCreateForm(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "create.html", map[string]any{
-		"Footprints": s.store.DistinctFootprints(),
+		"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -111,7 +147,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "row.html", map[string]any{"P": p}); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "row.html", map[string]any{"P": p, "Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints())}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -168,7 +204,7 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{"P": cur}); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{"P": cur, "Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints())}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -206,7 +242,7 @@ func (s *Server) handleStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{"P": p}); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{"P": p, "Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints())}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
