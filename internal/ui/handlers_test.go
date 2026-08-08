@@ -161,6 +161,55 @@ func TestCreateReturnsNewRow(t *testing.T) {
 	}
 }
 
+// TestCreateClearsDetailPanelOOB locks in the OOB swap that clears the detail
+// panel after a successful create. Both create paths (normal form + confirm
+// footprint) leave #detail-panel holding stale content (the form / the confirm
+// prompt) because the create form's hx-target is #parts-tbody, not the panel.
+// row-created.html ships an OOB <section id="detail-panel" hx-swap-oob> that
+// resets the panel to the "select a part" hint. This test would fail against
+// the old row.html response (no OOB marker, no panel reset).
+func TestCreateClearsDetailPanelOOB(t *testing.T) {
+	srv := newTestServer(t)
+	// Normal create path (known footprint 0805 → no confirm).
+	rr := newTestServerRecorder(t, srv, postForm("POST", "/ui/parts", "mpn=OOB1&part_type=local&footprint=0805"))
+	body := rr.Body.String()
+	if !strings.Contains(body, `id="detail-panel"`) || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Errorf("normal create should ship an OOB #detail-panel clear; body=%s", body)
+	}
+	if !strings.Contains(body, "select a part") {
+		t.Errorf("OOB panel should reset to the 'select a part' hint; body=%s", body)
+	}
+}
+
+// TestCreateConfirmClearsDetailPanelOOB is the bug-report case: after the
+// confirm-footprint prompt is accepted, the prompt (which lived in
+// #detail-panel) must be cleared. The confirm POST re-posts footprint_confirmed
+// → handleCreate saves and returns row-created.html (row + OOB panel-clear).
+func TestCreateConfirmClearsDetailPanelOOB(t *testing.T) {
+	srv := newTestServer(t)
+	rr := newTestServerRecorder(t, srv, postForm("POST", "/ui/parts", "mpn=OOB2&part_type=local&footprint=TYPOOOB&footprint_confirmed=true"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("confirmed create = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `id="detail-panel"`) || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Errorf("confirmed create should ship an OOB #detail-panel clear; body=%s", body)
+	}
+	if strings.Contains(body, "confirm-footprint") {
+		t.Errorf("confirmed create must not leak the stale confirm prompt; body=%s", body)
+	}
+}
+
+// newTestServerRecorder runs req against srv and returns the recorder, purely
+// to keep the OOB tests' assertion blocks focused on the body rather than the
+// boilerplate.
+func newTestServerRecorder(t *testing.T, srv *Server, req *http.Request) *httptest.ResponseRecorder {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	return rr
+}
+
 func TestCreateFormRenders(t *testing.T) {
 	srv := newTestServer(t)
 	rr := httptest.NewRecorder()

@@ -1,0 +1,9 @@
+{{define "row-created.html"}}
+<tr hx-get="/ui/parts/{{.P.ID}}" hx-target="#detail-panel" hx-swap="innerHTML">
+  <td>{{.P.MPN}}</td>
+  <td>{{.P.Description}}</td>
+  <td>{{.P.Category}}</td>
+  <td class="num">{{.P.QtyOnHand}}</td>
+</tr>
+<section class="detail" id="detail-panel" hx-swap-oob="true"><p class="hint">select a part</p></section>
+{{end}}

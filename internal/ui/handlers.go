@@ -198,10 +198,14 @@ func (s *Server) handleCreateForm(w http.ResponseWriter, r *http.Request) {
 
 // handleCreate parses the create form, calls store.Create IN-PROCESS (PRD §5.2
 // — the web UI is a 5th surface over the core, never over REST), and renders
-// the single new row as a fragment. The form's hx-swap="afterbegin" prepends
-// the row to #parts-tbody. store.Create assigns ID/ViaCode/timestamps and
-// indexes the FTS — the row template reads them straight off the populated
-// *Part, so the response carries the canonical ULID for subsequent row-select.
+// the new row plus an OOB swap that clears #detail-panel (row-created.html).
+// The form's hx-swap="afterbegin" prepends the row to #parts-tbody; the OOB
+// <section id="detail-panel" hx-swap-oob> resets the panel to the "select a
+// part" hint, firing on BOTH create paths — the normal form (which lives in
+// #detail-panel) and the confirm-footprint prompt (also in #detail-panel).
+// store.Create assigns ID/ViaCode/timestamps and indexes the FTS — the row
+// template reads them straight off the populated *Part, so the response carries
+// the canonical ULID for subsequent row-select.
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -234,7 +238,14 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "row.html", map[string]any{"P": p, "Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints())}); err != nil {
+	// row-created.html renders the new row (prepended into #parts-tbody by the
+	// form's hx-swap="afterbegin") PLUS an OOB swap that resets #detail-panel
+	// to the "select a part" hint. The OOB element mirrors the panel's original
+	// <section class="detail" id="detail-panel"> tag/class so the swap replaces
+	// like-for-like and CSS (.detail, .detail.open) keeps applying. This clears
+	// the panel on BOTH create paths: the normal create form (which lives in
+	// #detail-panel) and the confirm-footprint prompt (also in #detail-panel).
+	if err := s.tmpl.ExecuteTemplate(w, "row-created.html", map[string]any{"P": p, "Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints())}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
