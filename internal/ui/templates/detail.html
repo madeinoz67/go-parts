@@ -20,7 +20,8 @@
   <input type="hidden" name="version" value="{{.P.Version}}">
   <input type="text" name="description" value="{{.P.Description}}" placeholder="description" style="flex:1;min-width:12em">
   <input type="text" name="category" value="{{.P.Category}}" placeholder="category" style="width:8em">
-  <input type="text" name="footprint" value="{{.P.Footprint}}" placeholder="footprint" style="width:8em">
+  <input type="text" name="footprint" value="{{.P.Footprint}}" list="footprints-list" placeholder="footprint" style="width:8em">
+  <datalist id="footprints-list">{{range .Footprints}}<option value="{{.}}">{{end}}</datalist>
   <button class="btn btn-primary" type="submit">save</button>
 </form>
 <form class="inline stock" hx-post="/ui/parts/{{.P.ID}}/stock" hx-target="#detail-panel">

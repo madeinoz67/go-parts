@@ -64,7 +64,10 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{"P": p}); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{
+		"P":          p,
+		"Footprints": s.store.DistinctFootprints(),
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -75,7 +78,9 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 // detail view share one swap surface by design.
 func (s *Server) handleCreateForm(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "create.html", nil); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "create.html", map[string]any{
+		"Footprints": s.store.DistinctFootprints(),
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

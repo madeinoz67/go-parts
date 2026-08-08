@@ -239,6 +239,41 @@ func (s *Store) List() []*Part {
 	return out
 }
 
+// DistinctFootprints returns the sorted set of distinct non-empty Footprint
+// values across all part records, via a prefix scan over the parts keyspace
+// (same PartsPrefixBound pattern as Count/List). Used by the web UI's create +
+// edit forms to populate a <datalist> of existing footprints — selectable from
+// the corpus, typeable for a new value. Encapsulates the scan so the UI does
+// not import pebble or reach into unexported state. A failed scan or decode
+// reports a partial result (the values decoded so far) rather than failing the
+// whole call — the UI is best-effort read-only, matching List's posture.
+func (s *Store) DistinctFootprints() []string {
+	var ws [8]byte
+	lower, upper := keys.PartsPrefixBound(ws)
+	it, err := s.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
+	if err != nil {
+		return nil
+	}
+	defer it.Close()
+	seen := make(map[string]struct{})
+	for it.First(); it.Valid(); it.Next() {
+		var p Part
+		if err := json.Unmarshal(it.Value(), &p); err != nil {
+			continue // skip undecodable record rather than failing the whole scan
+		}
+		if p.Footprint == "" {
+			continue
+		}
+		seen[p.Footprint] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for fp := range seen {
+		out = append(out, fp)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // AdjustStock applies a commutative stock delta (§5.14) to QtyOnHand under a
 // per-id striped lock. Two concurrent -10 calls always net -20 regardless of
 // interleaving; the read-modify-write on QtyOnHand is atomic per-id.
