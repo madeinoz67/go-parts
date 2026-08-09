@@ -6,7 +6,7 @@
   </div>
   <div class="bulk-bar" id="bulkBar">
     <span class="count" id="bulkCount">0 selected</span>
-    <form hx-post="/ui/parts/bulk-delete" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" id="bulkDeleteForm">
+    <form hx-post="/ui/parts/bulk-delete" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" hx-include="[name=id]" id="bulkDeleteForm">
       <input type="hidden" name="q" value="{{or .Q ""}}">
       <input type="hidden" name="tag" value="{{or .Tag ""}}">
       <input type="hidden" name="low" value="{{or .Low ""}}">
