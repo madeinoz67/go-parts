@@ -461,31 +461,25 @@ func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
 // counts update live — passing Tags + Active into rows.html drives the same
 // Task-4 OOB #tag-nav mechanism that handleSearch uses for the active highlight.
 //
-// Form field disambiguation: the bulk-tag form carries TWO fields named `tag`
-// (per resolution #2 — the brief's text input for the new tag PLUS a hidden
-// field for the current filter context, mirroring the delete form). With two
-// values, r.PostFormValue("tag") returns the FIRST (the hidden filter), so:
-//   - tagFilter (first) drives filteredParts + the sidebar Active highlight;
-//   - the new tag to add is read from the LAST value (the text input).
+// Form field disambiguation: the bulk-tag form carries TWO fields — the text
+// input for the new tag is name="new_tag"; the hidden field name="tag" carries
+// the current filter context (mirroring the delete form). The new tag is read
+// unambiguously from r.PostFormValue("new_tag"); tagFilter (the hidden filter)
+// drives filteredParts + the sidebar Active highlight, and is currently dead in
+// production (correct when filter-preservation lands).
 //
-// This is robust to 1 value (the test's `tag=smd` body — that one value is
-// both the filter and the new tag, which is harmless) and to 2 values
-// (production — hidden filter first, text input second).
-//
-// Idempotency: the contains guard skips the append when the tag is already on
-// the part, so re-tagging p1 with a tag it already has neither duplicates the
-// entry nor bumps Version. An empty/whitespace new-tag short-circuits the loop
-// (nothing to add); an unknown id is skipped via store.Get's ErrNotFound.
+// Idempotency: the slices.Contains guard skips the append when the tag is
+// already on the part, so re-tagging p1 with a tag it already has neither
+// duplicates the entry nor bumps Version. An empty/whitespace new-tag
+// short-circuits the loop (nothing to add); an unknown id is skipped via
+// store.Get's ErrNotFound.
 func (s *Server) handleBulkTag(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	tagFilter := r.PostFormValue("tag") // first `tag` value — hidden filter context
-	var newTag string
-	if vals := r.PostForm["tag"]; len(vals) > 0 {
-		newTag = strings.ToLower(strings.TrimSpace(vals[len(vals)-1])) // last — text input
-	}
+	tagFilter := r.PostFormValue("tag")                                      // hidden filter context
+	newTag := strings.ToLower(strings.TrimSpace(r.PostFormValue("new_tag"))) // text input
 	for _, id := range r.PostForm["id"] {
 		if newTag == "" {
 			break
@@ -494,7 +488,7 @@ func (s *Server) handleBulkTag(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		if !contains(p.Tags, newTag) {
+		if !slices.Contains(p.Tags, newTag) {
 			p.Tags = append(p.Tags, newTag)
 		}
 		_ = s.store.Update(p, p.Version) // optimistic; per-part, current version just loaded
@@ -539,17 +533,4 @@ func lessInt(a, b int, dir string) bool {
 		return a > b
 	}
 	return a < b
-}
-
-// contains reports whether v is in s. Used by handleBulkTag's append-if-absent
-// guard. (A separate helper rather than reusing slices.Contains so the brief's
-// `contains(p.Tags, tag)` call site reads as written; tests use their own
-// testContains/testCountStr helpers to avoid colliding with this name.)
-func contains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -616,19 +617,17 @@ func TestLowStockFilter(t *testing.T) {
 	}
 }
 
-// TestBulkTagAddsTag covers slice 5b's bulk-tag action: posting tag=smd with
-// two ids should add 'smd' to both parts' Tags. p1 already carries 'resistor'
-// so the idempotent append-if-absent path is also exercised — re-tagging with
-// 'resistor' (already present) must not duplicate. The helpers are named
-// testContains/testCountStr (not contains/countStr) to avoid colliding with
-// the package-level contains helper that handleBulkTag uses.
+// TestBulkTagAddsTag covers slice 5b's bulk-tag action: posting new_tag=smd
+// with two ids should add 'smd' to both parts' Tags. p1 already carries
+// 'resistor' so the idempotent append-if-absent path is also exercised —
+// re-tagging with 'resistor' (already present) must not duplicate.
 func TestBulkTagAddsTag(t *testing.T) {
 	srv := newTestServer(t)
 	p1 := &parts.Part{MPN: "T1", PartType: "local", Tags: []string{"resistor"}}
 	p2 := &parts.Part{MPN: "T2", PartType: "local"}
 	srv.store.Create(p1)
 	srv.store.Create(p2)
-	body := "tag=smd&id=" + p1.ID + "&id=" + p2.ID
+	body := "new_tag=smd&id=" + p1.ID + "&id=" + p2.ID
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/bulk-tag", body))
 	if rr.Code != http.StatusOK {
@@ -636,7 +635,7 @@ func TestBulkTagAddsTag(t *testing.T) {
 	}
 	for _, id := range []string{p1.ID, p2.ID} {
 		got, _ := srv.store.Get(id)
-		if !testContains(got.Tags, "smd") {
+		if !slices.Contains(got.Tags, "smd") {
 			t.Errorf("part %s should now have tag 'smd': %+v", id, got.Tags)
 		}
 	}
@@ -645,15 +644,6 @@ func TestBulkTagAddsTag(t *testing.T) {
 	if testCountStr(got.Tags, "resistor") != 1 {
 		t.Errorf("resistor duplicated: %+v", got.Tags)
 	}
-}
-
-func testContains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }
 
 func testCountStr(s []string, v string) int {
