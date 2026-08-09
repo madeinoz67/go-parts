@@ -57,7 +57,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /ui/parts/new", s.handleCreateForm)          // create form (literal wins over {id})
 	s.mux.HandleFunc("GET /ui/parts/{id}", s.handleDetail)             // row-select → detail-panel fragment
 	s.mux.HandleFunc("POST /ui/parts", s.handleCreate)                 // create → new-row fragment
-	s.mux.HandleFunc("POST /ui/parts/bulk-delete", s.handleBulkDelete) // bulk delete → refreshed tbody (§7.2, hx-include name=id)
+	s.mux.HandleFunc("POST /ui/parts/bulk-delete", s.handleBulkDelete) // bulk delete → refreshed tbody + OOB tag-nav (§7.2, hx-include name=id)
+	s.mux.HandleFunc("POST /ui/parts/bulk-tag", s.handleBulkTag)       // bulk tag → refreshed tbody + OOB tag-nav (§7.2)
 	s.mux.HandleFunc("POST /ui/parts/{id}", s.handleEdit)              // inline edit → updated detail (409 on stale version)
 	s.mux.HandleFunc("POST /ui/parts/{id}/stock", s.handleStock)       // inline stock-adjust → updated detail (404 on miss)
 }

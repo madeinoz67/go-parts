@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/madeinoz67/go-parts/internal/parts"
 )
@@ -436,7 +437,78 @@ func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
 	low := r.PostFormValue("low") == "1"
 	pts := s.filteredParts(q, tag, low, r.PostFormValue("sort"), r.PostFormValue("dir"))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{"Parts": pts, "Q": q}); err != nil {
+	// Tags + Active drive the rows.html OOB #tag-nav swap (Task 4) — without
+	// them, deleting the last part carrying a tag would leave the sidebar
+	// showing a stale count. Passing them here means a bulk-delete refreshes
+	// the sidebar live (htmx applies the hx-swap-oob element after the primary
+	// tbody swap), matching handleSearch/handleBulkTag.
+	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
+		"Parts":  pts,
+		"Q":      q,
+		"Tags":   s.store.TagCounts(),
+		"Active": tag,
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleBulkTag adds a tag to every selected part (the bulk-action bar's tag
+// form, §7.2). Per-part Get/append-tag/Update under each part's own striped
+// lock (§5.14) — N independent updates, no cross-part atomicity needed. The
+// applied tag is lowercased + trimmed (defense-in-depth matching normalizeTags,
+// §5.7, which lowercases again on save). Re-renders the current view (q/low/
+// sort/dir plus the current tag filter) plus an OOB swap of the tag sidebar so
+// counts update live — passing Tags + Active into rows.html drives the same
+// Task-4 OOB #tag-nav mechanism that handleSearch uses for the active highlight.
+//
+// Form field disambiguation: the bulk-tag form carries TWO fields named `tag`
+// (per resolution #2 — the brief's text input for the new tag PLUS a hidden
+// field for the current filter context, mirroring the delete form). With two
+// values, r.PostFormValue("tag") returns the FIRST (the hidden filter), so:
+//   - tagFilter (first) drives filteredParts + the sidebar Active highlight;
+//   - the new tag to add is read from the LAST value (the text input).
+//
+// This is robust to 1 value (the test's `tag=smd` body — that one value is
+// both the filter and the new tag, which is harmless) and to 2 values
+// (production — hidden filter first, text input second).
+//
+// Idempotency: the contains guard skips the append when the tag is already on
+// the part, so re-tagging p1 with a tag it already has neither duplicates the
+// entry nor bumps Version. An empty/whitespace new-tag short-circuits the loop
+// (nothing to add); an unknown id is skipped via store.Get's ErrNotFound.
+func (s *Server) handleBulkTag(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	tagFilter := r.PostFormValue("tag") // first `tag` value — hidden filter context
+	var newTag string
+	if vals := r.PostForm["tag"]; len(vals) > 0 {
+		newTag = strings.ToLower(strings.TrimSpace(vals[len(vals)-1])) // last — text input
+	}
+	for _, id := range r.PostForm["id"] {
+		if newTag == "" {
+			break
+		}
+		p, err := s.store.Get(id)
+		if err != nil {
+			continue
+		}
+		if !contains(p.Tags, newTag) {
+			p.Tags = append(p.Tags, newTag)
+		}
+		_ = s.store.Update(p, p.Version) // optimistic; per-part, current version just loaded
+	}
+	q := r.PostFormValue("q")
+	low := r.PostFormValue("low") == "1"
+	pts := s.filteredParts(q, tagFilter, low, r.PostFormValue("sort"), r.PostFormValue("dir"))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
+		"Parts":  pts,
+		"Q":      q,
+		"Tags":   s.store.TagCounts(),
+		"Active": tagFilter,
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -467,4 +539,17 @@ func lessInt(a, b int, dir string) bool {
 		return a > b
 	}
 	return a < b
+}
+
+// contains reports whether v is in s. Used by handleBulkTag's append-if-absent
+// guard. (A separate helper rather than reusing slices.Contains so the brief's
+// `contains(p.Tags, tag)` call site reads as written; tests use their own
+// testContains/testCountStr helpers to avoid colliding with this name.)
+func contains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

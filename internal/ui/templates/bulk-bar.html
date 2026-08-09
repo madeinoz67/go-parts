@@ -14,6 +14,15 @@
       <input type="hidden" name="dir" value="{{or .Dir ""}}">
       <button type="button" class="btn-bulk btn-danger" onclick="askDelete()">delete</button>
     </form>
+    <form hx-post="/ui/parts/bulk-tag" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" hx-include="[name=id]" id="bulkTagForm">
+      <input type="hidden" name="q" value="{{or .Q ""}}">
+      <input type="hidden" name="tag" value="{{or .Tag ""}}">
+      <input type="hidden" name="low" value="{{or .Low ""}}">
+      <input type="hidden" name="sort" value="{{or .Sort ""}}">
+      <input type="hidden" name="dir" value="{{or .Dir ""}}">
+      <input name="tag" placeholder="tag" required>
+      <button type="submit" class="btn-bulk">tag</button>
+    </form>
     <button class="btn-bulk" onclick="clearSelection()">clear</button>
   </div>
 </div>
