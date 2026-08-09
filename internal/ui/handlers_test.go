@@ -499,3 +499,61 @@ func TestShellRendersTagSidebar(t *testing.T) {
 		t.Errorf("shell should render the tag sidebar with resistor(1); body=%s", body)
 	}
 }
+
+// TestTagFilterActiveHighlight pins the OOB tag-nav swap on search: when
+// handleSearch runs with ?tag=resistor it must emit, alongside #parts-tbody,
+// an OOB <aside id="tag-nav" hx-swap-oob="true"> carrying the active tag so
+// the sidebar's copper highlight (cat-item active) lands on the resistor
+// entry and NOT on the capacitor entry. Without the OOB swap the sidebar is
+// never re-rendered after initial shell load — layout.html hard-codes
+// Active="" — so clicking a tag filters the table but no highlight shows.
+//
+// The active-class assertion is the load-bearing one: resistor's <a> must
+// carry "cat-item active" while capacitor's <a> must carry only "cat-item"
+// (no active). The two are distinguished by tying the class string to the
+// tag-specific hx-get URL so a substring check can't conflate them.
+func TestTagFilterActiveHighlight(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "R", PartType: "local", Tags: []string{"resistor"}})
+	srv.store.Create(&parts.Part{MPN: "C", PartType: "local", Tags: []string{"capacitor"}})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search?tag=resistor", nil))
+	body := rr.Body.String()
+	// OOB swap fired — the sidebar refreshed alongside the rows.
+	if !strings.Contains(body, `id="tag-nav"`) {
+		t.Errorf("search response should ship an OOB #tag-nav aside; body=%s", body)
+	}
+	if !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Errorf("OOB aside must carry hx-swap-oob=\"true\"; body=%s", body)
+	}
+	// Resistor entry is the active one — class+URL tied together so this
+	// cannot match the capacitor line.
+	resistorActive := `cat-item active"` + "\n" + `     hx-get="/ui/parts/search?tag=resistor"`
+	if !strings.Contains(body, resistorActive) {
+		t.Errorf("resistor entry should carry the active highlight; body=%s", body)
+	}
+	// Capacitor entry must NOT be active — the closing quote lands right
+	// after "cat-item" (no " active" inserted).
+	capInactive := `cat-item"` + "\n" + `     hx-get="/ui/parts/search?tag=capacitor"`
+	if !strings.Contains(body, capInactive) {
+		t.Errorf("capacitor entry must NOT carry the active highlight; body=%s", body)
+	}
+}
+
+// TestTagFilterNoTagLeavesNothingActive pins the plain-search branch: a search
+// with no ?tag= sets Active="" so no sidebar entry picks up the highlight.
+// Guards against a regression where the OOB swap hard-codes a tag or where
+// Active defaults to something non-empty.
+func TestTagFilterNoTagLeavesNothingActive(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "R", PartType: "local", Tags: []string{"resistor"}})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search?q=R", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Errorf("plain search should still ship the OOB sidebar (Active=\"\" ); body=%s", body)
+	}
+	if strings.Contains(body, "cat-item active") {
+		t.Errorf("plain search must not highlight any tag; body=%s", body)
+	}
+}

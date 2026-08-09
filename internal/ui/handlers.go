@@ -145,7 +145,17 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	pts := s.filteredParts(q, tag, low, sortKey, sortDir)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{"Parts": pts, "Q": q}); err != nil {
+	// The data map carries Tags + Active so rows.html can emit an OOB swap of
+	// #tag-nav alongside #parts-tbody. htmx applies hx-swap-oob elements after
+	// the primary swap, so every search/keystroke refreshes the sidebar with
+	// the active tag highlighted (cat-item active) — without it, layout.html's
+	// inline render hard-codes Active="" and the copper highlight never lands.
+	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
+		"Parts":  pts,
+		"Q":      q,
+		"Tags":   s.store.TagCounts(),
+		"Active": tag,
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -191,11 +201,8 @@ func (s *Server) filteredParts(q, tag string, low bool, sortKey, sortDir string)
 	if tag != "" {
 		out := pts[:0]
 		for _, p := range pts {
-			for _, tg := range p.Tags {
-				if tg == tag {
-					out = append(out, p)
-					break
-				}
+			if slices.Contains(p.Tags, tag) {
+				out = append(out, p)
 			}
 		}
 		pts = out
