@@ -534,3 +534,18 @@ th.checkbox-col{ width:32px; }
 .confirm-panel p{ color:var(--text); font-size:13px; margin-bottom:16px; line-height:1.5; }
 .confirm-actions{ display:flex; gap:8px; }
 .btn.btn-danger{ border-color:var(--warn); color:var(--warn); }
+
+/* ── §6 Detail panel restructure (slice 6 — detail.html) ───────────────── */
+.detail .panel-icon{ width:40px; height:40px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; margin-bottom:8px; }
+.detail .panel-title{ font-family:"IBM Plex Mono",monospace; font-size:15px; font-weight:600; color:var(--text); margin:4px 0 2px; }
+.detail .part-sub{ color:var(--text-faint); font-size:11px; margin-bottom:16px; }
+.spec-rows .spec-row{ display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid var(--border-soft); font-size:12px; }
+.spec-row span:first-child{ color:var(--text-faint); }
+.spec-row span:last-child{ color:var(--text); }
+.spec-row .phos{ color:var(--phosphor); }
+.qty-stepper{ display:flex; align-items:center; gap:8px; }
+.qty-stepper .step{ width:22px; height:22px; border:1px solid var(--border); background:none; color:var(--text-dim);
+  cursor:pointer; font-family:"JetBrains Mono",monospace; font-size:14px; line-height:1;
+  display:flex; align-items:center; justify-content:center; transition:background .15s,border-color .15s,color .15s; }
+.qty-stepper .step:hover{ background:var(--surface-alt); border-color:var(--copper); color:var(--copper-bright); }
+.qty-stepper .qty-value{ color:var(--phosphor); min-width:34px; text-align:center; font-size:13px; }

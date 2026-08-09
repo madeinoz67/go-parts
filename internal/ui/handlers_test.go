@@ -580,10 +580,15 @@ func TestBulkDeleteRemovesParts(t *testing.T) {
 		t.Errorf("after deleting 2 of 3, Count = %d, want 1", got)
 	}
 	resp := rr.Body.String()
-	if strings.Contains(resp, "D1") || strings.Contains(resp, "D2") {
+	// Match the MPN as it renders in the row cell (<td class="mpn">D1</td>),
+	// NOT as a bare substring — ULIDs are Crockford base32 and routinely
+	// contain "D1"/"D2" as substrings (e.g. ...4DD1K2M8), which made the old
+	// loose check flake. The cell-scoped match pins the test's actual intent:
+	// the deleted parts' MPNs do not render as rows.
+	if strings.Contains(resp, `class="mpn">D1<`) || strings.Contains(resp, `class="mpn">D2<`) {
 		t.Errorf("deleted parts should not appear in the refreshed rows; body=%s", resp)
 	}
-	if !strings.Contains(resp, "D3") {
+	if !strings.Contains(resp, `class="mpn">D3<`) {
 		t.Errorf("the remaining part should appear; body=%s", resp)
 	}
 }
@@ -654,4 +659,26 @@ func testCountStr(s []string, v string) int {
 		}
 	}
 	return n
+}
+
+// TestDetailRendersSpecRows pins slice 6's detail-panel restructure: the
+// rebuilt detail.html must surface the Specs map as one spec-row per entry
+// (key/value) and replace the old separate stock form with an inline
+// qty-stepper (the −/+ buttons fold the delta field into the form). The
+// panel-icon, title, and sub (mfr · tag · footprint) line are the mockup's
+// header layout. This test would fail against the old detail.html: no
+// qty-stepper, no per-key spec-row.
+func TestDetailRendersSpecRows(t *testing.T) {
+	srv := newTestServer(t)
+	p := &parts.Part{MPN: "DT1", PartType: "local", Manufacturer: "Yageo", Footprint: "0805",
+		Tags: []string{"resistor"}, Specs: map[string]string{"resistance": "10k", "power": "1/8W"}, QtyOnHand: 42}
+	srv.store.Create(p)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+p.ID, nil))
+	body := rr.Body.String()
+	for _, want := range []string{"DT1", "Yageo", "0805", "resistance", "10k", "qty-stepper", "42"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("detail missing %q; body=%s", want, body)
+		}
+	}
 }

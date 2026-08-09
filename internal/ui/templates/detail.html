@@ -1,32 +1,30 @@
 {{define "detail.html"}}
-<header class="detail-head">
-  <h2>{{.P.MPN}}</h2>
-  <span class="badge {{if le .P.QtyOnHand .P.ReorderPoint}}badge-warn{{else}}badge-ok{{end}}">
-    {{if le .P.QtyOnHand .P.ReorderPoint}}LOW{{else}}OK{{end}}
-  </span>
-</header>
-<dl>
-  <dt>manufacturer</dt><dd>{{.P.Manufacturer}}</dd>
-  <dt>description</dt><dd>{{.P.Description}}</dd>
-  <dt>category</dt><dd>{{.P.Category}} / {{.P.Subcategory}}</dd>
-  <dt>footprint</dt><dd>{{.P.Footprint}}</dd>
-  <dt>via</dt><dd>{{.P.ViaCode}}</dd>
-  <dt>specs</dt><dd>{{range $k,$v := .P.Specs}}{{$k}}={{$v}} {{end}}</dd>
-  <dt>tags</dt><dd>{{range .P.Tags}}{{.}} {{end}}</dd>
-</dl>
-<div class="qty">qty: <span class="num">{{.P.QtyOnHand}}</span></div>
-<!-- edit + stock forms added in Tasks 8/9; version carried for optimistic concurrency -->
+<div class="panel-icon">{{template "status-badge.html" (dict "P" .P)}}</div>
+<h2 class="panel-title">{{.P.MPN}}</h2>
+<div class="part-sub">{{.P.Manufacturer}}{{if .P.Tags}} · {{index .P.Tags 0}}{{end}}{{if .P.Footprint}} · {{.P.Footprint}}{{end}}</div>
+
+<div class="spec-rows">
+  {{range $k, $v := .P.Specs}}
+  <div class="spec-row"><span>{{$k}}</span><span class="phos">{{$v}}</span></div>
+  {{end}}
+  <div class="spec-row">
+    <span>On hand</span>
+    <form class="qty-stepper" hx-post="/ui/parts/{{.P.ID}}/stock" hx-target="#detail-panel" hx-swap="innerHTML">
+      <button type="button" class="step" onclick="var i=this.form.querySelector('input[name=delta]'); i.value=-1; this.form.requestSubmit()" aria-label="decrease">−</button>
+      <span class="qty-value">{{.P.QtyOnHand}}</span>
+      <input type="hidden" name="delta" value="0">
+      <button type="button" class="step" onclick="var i=this.form.querySelector('input[name=delta]'); i.value=1; this.form.requestSubmit()" aria-label="increase">+</button>
+    </form>
+  </div>
+</div>
+
+<hr>
+
 <form class="inline edit" hx-post="/ui/parts/{{.P.ID}}" hx-target="#detail-panel">
   <input type="hidden" name="version" value="{{.P.Version}}">
   <input type="text" name="description" value="{{.P.Description}}" placeholder="description" style="flex:1;min-width:12em">
-  <input type="text" name="category" value="{{.P.Category}}" placeholder="category" style="width:8em">
   <input type="text" name="footprint" value="{{.P.Footprint}}" list="footprints-list" placeholder="footprint" style="width:8em">
   <datalist id="footprints-list">{{range .Footprints}}<option value="{{.}}">{{end}}</datalist>
   <button class="btn btn-primary" type="submit">save</button>
-</form>
-<form class="inline stock" hx-post="/ui/parts/{{.P.ID}}/stock" hx-target="#detail-panel">
-  <button class="btn" type="button" onclick="var i=this.form.querySelector('input[name=delta]'); i.value=-1; this.form.requestSubmit()">−</button>
-  <input name="delta" type="number" value="0" style="width:4em">
-  <button class="btn" type="submit">apply</button>
 </form>
 {{end}}
