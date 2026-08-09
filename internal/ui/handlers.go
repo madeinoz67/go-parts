@@ -415,6 +415,32 @@ func (s *Server) handleStock(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleBulkDelete deletes every selected part (the bulk-action bar's delete
+// form, §7.2 — checked boxes share name="id" and submit as native form data via
+// the form's hx-include="[name=id]"). Each id is deleted in-process via
+// store.Delete; an unknown id is skipped (idempotent per-row — ErrNotFound is
+// not a failure here). After deleting, the current view (q/tag/low/sort/dir,
+// carried as hidden form fields) is re-rendered via filteredParts so the table
+// reflects the post-delete state and the selection clears (the deleted rows'
+// checkboxes are gone, so the client's updateBulkBar reverts to the chip row).
+func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	for _, id := range r.PostForm["id"] {
+		_ = s.store.Delete(id) // unknown id → ErrNotFound, intentionally ignored
+	}
+	q := r.PostFormValue("q")
+	tag := r.PostFormValue("tag")
+	low := r.PostFormValue("low") == "1"
+	pts := s.filteredParts(q, tag, low, r.PostFormValue("sort"), r.PostFormValue("dir"))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{"Parts": pts, "Q": q}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 // applySort re-orders pts in place by the requested key/direction. No-op when
 // key is unrecognized (the default BM25 relevance order from FTS.Search is
 // preserved).

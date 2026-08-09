@@ -559,3 +559,44 @@ func TestTagFilterNoTagLeavesNothingActive(t *testing.T) {
 		t.Errorf("plain search must not highlight any tag; body=%s", body)
 	}
 }
+
+func TestBulkDeleteRemovesParts(t *testing.T) {
+	srv := newTestServer(t)
+	p1 := &parts.Part{MPN: "D1", PartType: "local"}
+	p2 := &parts.Part{MPN: "D2", PartType: "local"}
+	p3 := &parts.Part{MPN: "D3", PartType: "local"}
+	srv.store.Create(p1)
+	srv.store.Create(p2)
+	srv.store.Create(p3)
+
+	body := "id=" + p1.ID + "&id=" + p2.ID
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/bulk-delete", body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bulk-delete = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if got := srv.store.Count(); got != 1 {
+		t.Errorf("after deleting 2 of 3, Count = %d, want 1", got)
+	}
+	resp := rr.Body.String()
+	if strings.Contains(resp, "D1") || strings.Contains(resp, "D2") {
+		t.Errorf("deleted parts should not appear in the refreshed rows; body=%s", resp)
+	}
+	if !strings.Contains(resp, "D3") {
+		t.Errorf("the remaining part should appear; body=%s", resp)
+	}
+}
+
+func TestBulkDeleteUnknownIdIgnored(t *testing.T) {
+	srv := newTestServer(t)
+	p := &parts.Part{MPN: "K", PartType: "local"}
+	srv.store.Create(p)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/bulk-delete", "id=nope&id="+p.ID))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bulk-delete = %d, want 200", rr.Code)
+	}
+	if got := srv.store.Count(); got != 0 {
+		t.Errorf("unknown id should be ignored, real id deleted; Count=%d want 0", got)
+	}
+}
