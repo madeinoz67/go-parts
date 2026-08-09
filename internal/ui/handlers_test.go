@@ -644,10 +644,25 @@ func TestBulkTagAddsTag(t *testing.T) {
 			t.Errorf("part %s should now have tag 'smd': %+v", id, got.Tags)
 		}
 	}
-	// Idempotent: re-tagging p1 with 'resistor' (already present) doesn't duplicate.
+	// Idempotency guard: re-apply a tag p1 already has ('resistor') via a
+	// SECOND bulk-tag POST, then assert the tag is still present exactly once.
+	// The first POST above added 'smd' — it never touched 'resistor' — so a
+	// check after only the first POST passes whether or not the
+	// !slices.Contains(p.Tags, newTag) guard in handleBulkTag exists. This
+	// second POST is what actually exercises the guard: without it, 'resistor'
+	// would be appended a second time (count == 2).
+	rr2 := httptest.NewRecorder()
+	srv.ServeHTTP(rr2, postForm("POST", "/ui/parts/bulk-tag", "new_tag=resistor&id="+p1.ID))
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("second bulk-tag = %d, want 200; body=%s", rr2.Code, rr2.Body.String())
+	}
 	got, _ := srv.store.Get(p1.ID)
 	if testCountStr(got.Tags, "resistor") != 1 {
-		t.Errorf("resistor duplicated: %+v", got.Tags)
+		t.Errorf("resistor duplicated after re-tag: %+v", got.Tags)
+	}
+	// And 'smd' (added by the first POST) survives the second POST untouched.
+	if testCountStr(got.Tags, "smd") != 1 {
+		t.Errorf("smd should still be present exactly once: %+v", got.Tags)
 	}
 }
 

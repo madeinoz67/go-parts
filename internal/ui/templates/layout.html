@@ -79,7 +79,8 @@ document.addEventListener('keydown', e => {
   }
   if (e.key === 'n' && document.activeElement.id !== 'search' && !/input|select|textarea/i.test(document.activeElement.tagName)) {
     document.getElementById('search')?.blur();
-    htmx.trigger(document.querySelector('[hx-get="/ui/parts/new"]'), 'click');
+    const newBtn = document.querySelector('[hx-get="/ui/parts/new"]');
+    if (newBtn) htmx.trigger(newBtn, 'click');
   }
 });
 

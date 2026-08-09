@@ -291,7 +291,6 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		MPN:         r.PostFormValue("mpn"),
 		Description: r.PostFormValue("description"),
 		PartType:    r.PostFormValue("part_type"),
-		Category:    r.PostFormValue("category"),
 		Footprint:   r.PostFormValue("footprint"),
 	}
 	if v := r.PostFormValue("qty"); v != "" {
@@ -355,9 +354,6 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 	expected, _ := strconv.Atoi(r.PostFormValue("version"))
 	if v := r.PostFormValue("description"); v != "" {
 		cur.Description = v
-	}
-	if v := r.PostFormValue("category"); v != "" {
-		cur.Category = v
 	}
 	if v := r.PostFormValue("footprint"); v != "" {
 		cur.Footprint = v
