@@ -600,3 +600,18 @@ func TestBulkDeleteUnknownIdIgnored(t *testing.T) {
 		t.Errorf("unknown id should be ignored, real id deleted; Count=%d want 0", got)
 	}
 }
+
+// TestLowStockFilter locks the low-stock chip (?low=1) — Task 4 wired the `low`
+// param into filteredParts (QtyOnHand <= ReorderPoint); this pins it as a
+// regression test. It passes on the Task-4 behavior (no new production code).
+func TestLowStockFilter(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "OK1", PartType: "local", QtyOnHand: 100, ReorderPoint: 10})
+	srv.store.Create(&parts.Part{MPN: "LOW1", PartType: "local", QtyOnHand: 2, ReorderPoint: 10})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search?low=1", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, "LOW1") || strings.Contains(body, "OK1") {
+		t.Errorf("?low=1 should show only low-stock parts; body=%s", body)
+	}
+}
