@@ -57,11 +57,15 @@ func TestShellStructure(t *testing.T) {
 	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/", nil))
 	body := rr.Body.String()
 	for _, want := range []string{
-		`id="search"`,               // search input
+		`id="search"`,               // search input (now in the header)
 		`id="parts-tbody"`,          // table body target for htmx
 		`id="detail-panel"`,         // detail panel target
 		`hx-get="/ui/parts/search"`, // htmx live-filter wiring
-		`<nav`,                      // top nav
+		`<header`,                   // header band (wordmark + search + new)
+		`<nav class="topnav"`,       // topnav band (six tabs)
+		`go-parts`,                  // wordmark
+		`-- NORMAL --`,              // footer mode segment
+		`parts indexed`,             // footer count segment
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("shell missing %q", want)

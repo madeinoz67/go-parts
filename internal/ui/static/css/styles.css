@@ -94,24 +94,42 @@ input,button,select,textarea{font:inherit;color:inherit}
 /* ── §7 Motion — color/border only, ~150ms; reduced-motion block at EOF ── */
 button,a,input,th[role="columnheader"],tr{transition:background-color 150ms ease,border-color 150ms ease,color 150ms ease}
 
-/* ── §4 Layout — three-column shell ──────────────────────────────────────── */
+/* ── Banded shell (header / topnav / body-grid / status) ─────────────────── */
 .shell{
-  position:relative;
-  z-index:1;
+  position:relative; z-index:1;
   display:grid;
-  grid-template-columns:220px 1fr 300px;
-  grid-template-rows:auto 1fr auto;
-  grid-template-areas:
-    "nav    nav     nav"
-    "side   main    detail"
-    "status status  status";
+  grid-template-rows:auto auto 1fr auto;
   min-height:100vh;
 }
-.nav{grid-area:nav}
-.sidebar{grid-area:side}
-.main{grid-area:main}
-.detail{grid-area:detail}
-.statusbar{grid-area:status}
+.header{
+  display:flex; align-items:center; gap:24px;
+  padding:14px 20px;
+  border-bottom:1px solid var(--copper);
+  background:var(--surface);
+}
+.header .wordmark{
+  font-family:"IBM Plex Mono",monospace; font-weight:700; font-size:15px;
+  letter-spacing:0.02em; color:var(--text); white-space:nowrap;
+}
+.header .wordmark .dash{ color:var(--copper); }
+.header .wordmark .cursor{
+  display:inline-block; width:8px; height:14px; background:var(--phosphor);
+  margin-left:1px; vertical-align:-2px;
+}
+.header .search{ flex:1; max-width:560px; }
+.topnav{
+  display:flex; gap:2px; padding:0 20px;
+  border-bottom:1px solid var(--border); background:var(--bg);
+}
+.body-grid{
+  display:grid; grid-template-columns:220px 1fr 300px;
+  grid-template-areas:"side main detail";
+}
+.body-grid .sidebar{ grid-area:side; }
+.body-grid .main{ grid-area:main; }
+.body-grid .detail{ grid-area:detail; }
+.header .nav-action{ white-space:nowrap; }
+.statusbar .sep{ color:var(--border); padding:0; }
 .shell > *{min-width:0} /* let grid children shrink + scroll correctly */
 
 /* ── §1 Signature — copper hairlines + via dots at structural junctions ─── */
@@ -125,36 +143,15 @@ button,a,input,th[role="columnheader"],tr{transition:background-color 150ms ease
   /* sits on a 1px hairline as the junction dot */
 }
 /* junction under the nav row: copper hairline with a via-dot at each column edge */
-.nav-junction{
-  grid-area:nav;
-  border-bottom:1px solid var(--copper);
-  position:relative;
-}
-.nav-junction::before,.nav-junction::after{
-  content:"";
-  position:absolute;
-  bottom:-3px;
-  width:5px;height:5px;
-  border-radius:50%;
-  background:var(--copper);
-}
-.nav-junction::before{left:220px}
-.nav-junction::after{right:300px}
-
 /* ── §6 Top navigation ───────────────────────────────────────────────────── */
-.nav{
-  border-bottom:1px solid var(--border);
-  padding:0 14px;
-  background:var(--surface);
-}
-.nav-list{
+.topnav .nav-list{
   display:flex;
   gap:0;
   list-style:none;
   margin:0;padding:0;
   align-items:stretch;
 }
-.nav-item{
+.topnav .nav-item{
   display:inline-flex;
   align-items:center;
   padding:10px 14px;
@@ -169,12 +166,12 @@ button,a,input,th[role="columnheader"],tr{transition:background-color 150ms ease
   background:none;
   border-top:none;border-left:none;border-right:none;
 }
-.nav-item:hover{color:var(--text-dim)}
-.nav-item.active{
+.topnav .nav-item:hover{color:var(--text-dim)}
+.topnav .nav-item.active{
   color:var(--copper-bright);
   border-bottom-color:var(--copper);
 }
-.nav-item.disabled{opacity:0.4;cursor:not-allowed}
+.topnav .nav-item.disabled{opacity:0.4;cursor:not-allowed}
 .nav-spacer{flex:1}
 .wordmark{
   display:inline-flex;
@@ -457,7 +454,6 @@ table.parts{
   .sidebar{
     display:none; /* chip-row rendered by the mobile sidebar placeholder (Tasks 5+) */
   }
-  .nav-junction::before,.nav-junction::after{display:none}
   /* Mobile chip-row — horizontal scroller of category chips above the table. */
   .chip-row{
     display:flex;
