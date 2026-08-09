@@ -1,7 +1,7 @@
 # go-parts Style Guide — Hacker / Hi-Tech
 
 **Author:** Stephen Eaton
-**Status:** v1.0
+**Status:** v2.1 (generalized the autocomplete dropdown to cover manufacturer and footprint, not just tags)
 **Companion to:** `go-parts-prd.md` §8.1, `go-parts-ui-mockup.html`
 
 ---
@@ -10,7 +10,7 @@
 
 Not the generic "near-black background, acid-green terminal accent" default — that reads as an AI-generated cliché, not a considered choice. go-parts draws instead from **bench-equipment aesthetics**: PCB solder-mask green, exposed copper traces, an oscilloscope/multimeter phosphor readout. It should feel like an instrument panel for electronics work, not a hacker-movie prop.
 
-**Signature element:** thin copper hairlines connect structural sections (header → sidebar spine → category items) with small circular "via" dots at junctions — the layout itself reads as one connected circuit. This is the one place visual flourish is spent; everything else stays quiet and disciplined. This word made its way into the product itself, too — the scannable code printed on part/location labels is called a **Via** (PRD §5.17), the same idea in both places: a small connection point that jumps you straight to something.
+**Signature element:** thin copper hairlines connect structural sections (header → sidebar spine → tag items) with small circular "via" dots at junctions — the layout itself reads as one connected circuit. This is the one place visual flourish is spent; everything else stays quiet and disciplined. This word made its way into the product itself, too — the scannable code printed on part/location labels is called a **Via** (PRD §5.17), the same idea in both places: a small connection point that jumps you straight to something.
 
 **Beyond the browser:** the same token language extends to the TUI (`go-parts tui`, see PRD §5.11) via ANSI 256-color/truecolor terminal output where supported — copper accent, phosphor data color, dark background — so the command-line tool reads as the same product, not a disconnected one.
 
@@ -67,6 +67,8 @@ No serif or humanist sans anywhere. Monospace throughout is a deliberate signal:
 
 Custom line-art SVGs styled as schematic symbols — resistor zigzag, capacitor plates, IC chip outline, connector plug, sensor circle — never a generic flat/rounded icon set. 14–22px, stroke-width 1.6–2, using `currentColor` so hover/active states recolor automatically without a second icon variant.
 
+**Fallback for tags with no hand-drawn icon.** Six common tag values (`resistor`, `capacitor`, `ic`, `connector`, `sensor`, `hardware`) have bespoke art; anything else (a tag nobody anticipated — `optocoupler`, `crystal`, whatever) needs to render *something*, not a broken icon slot or a mismatched generic-flat icon that breaks the "never generic/rounded" rule. The fallback is a dashed-outline rectangle, `--text-faint` stroke rather than full icon color — the same convention KiCad and other CAD tools already use for an unassigned/undefined footprint placeholder, so it reads as "no specific symbol designed yet" rather than as a mistake. Every tag not in the hand-drawn six gets the same fallback; they're differentiated by their text label, not a bespoke icon. Adding real art for a new tag later is a deliberate choice when one earns it through actual use, not something solved upfront for every conceivable tag.
+
 ---
 
 ## 6. Components
@@ -86,9 +88,11 @@ Custom line-art SVGs styled as schematic symbols — resistor zigzag, capacitor 
 - Header: IBM Plex Mono 10px uppercase, letter-spacing 0.1em, `--text-faint`
 - Body: JetBrains Mono, `--text-dim`, 1px bottom border `--border-soft`
 - Row hover: background `--surface-alt`
-- Row selected: background `--surface-alt` + 2px left border `--copper`
+- Row selected: background `--surface-alt` + 2px left border `--copper` — this is the *viewing* state (row clicked, shown in the detail panel), a different thing from bulk selection below and never triggered by the same gesture
 - **Sortable columns:** every column header is clickable and keyboard-operable (`Enter`/`Space`). Inactive columns show a faint `↕` on hover; the active sort column shows a solid `▲`/`▼` in `--copper`. Clicking an already-active column reverses direction.
 - Numeric columns (quantity) render in `--phosphor` to visually separate live data from descriptive text.
+- **Bulk-select checkbox column** (PRD §7.2) — leftmost column, deliberately separate from row-click-for-detail-panel above. Unchecked: 1px `--border` box. Checked: `--copper` fill, `--bg` checkmark. Header checkbox selects everything currently visible, same "scoped to what's filtered" rule as the rest of the table.
+- **Bulk-action bar** replaces the toolbar's chip row the moment anything is checked — `N selected` in `--text`, then outline actions (`Tag`, `Move`, `Delete` in `--warn`-bordered, `Clear`) in the same button language as everywhere else. Disappears back to the normal chip row the instant the selection is cleared or the last box is unchecked.
 
 ### Search
 - Terminal-prompt style: icon + input + `/` kbd hint
@@ -115,6 +119,72 @@ Custom line-art SVGs styled as schematic symbols — resistor zigzag, capacitor 
 - IBM Plex Mono 11px, uppercase, letter-spacing 0.06em, `--text-faint` at rest
 - Active section: `--copper-bright` text with a 2px `--copper` underline — the same active-state language used for table sort arrows and selected rows, so "this is the current thing" reads consistently everywhere in the app
 - Hover (inactive): shift to `--text-dim` only — no underline until active, keeps the row calm
+
+### Confirmation panel
+- Not a native browser `confirm()` — a styled inline panel, same tokens as everything else, no drop shadow (border + `--surface-alt` background instead)
+- States plainly what's about to happen, specific to the action — never a generic "are you sure?"
+- Two buttons: outline default for cancel, `--warn`-bordered for the destructive confirm — same outline-only rule as every other button, just recolored to signal weight
+
+### Operation failure banner
+- One component, several triggers — a stale-version conflict (PRD §5.14), a vendor lookup failure (§5.4), an AI enrichment error (§5.9) — same visual treatment every time: full-width, `--warn-bg` background, `--warn` left border
+- States what happened in one line, worded from §5.4's own retry classification rather than a generic error — *"rate limited — will retry automatically"* reads differently from *"authentication failed — check the API key"* because they call for different next steps
+- If it's sitting above a form, the form underneath keeps every field exactly as typed — never cleared, never silently merged
+- Only for the mid-action case (something failed while you were waiting on it). A background failure doesn't get a banner — see the failed badge below, which covers the "nobody was watching" case
+
+### Failed badge
+- Small `--warn` badge on a part row/detail, same visual language as the existing low-stock badge — reflects `enrichment_status = failed` (PRD §5.10)
+- The dashboard's `enrichment_failed` count (§5.19) is the discovery path — tapping it filters straight to failed parts, reusing the same tag-filter mechanism as everything else, not a separate failure inbox
+- A persistent, ongoing outage (not a one-off) is a different case again — see the footer status bar's connection dots, which stay red for as long as it's actually true rather than a banner that would've scrolled away
+
+### Inline validation
+- Errors sit directly under the specific field, `--warn` text, 11px — never a summary block stacked at the top of the form
+- The field's border shifts to `--warn` too, so the eye catches it before reading the message
+
+### Status line (loading states)
+- Long-running operations (reindex, bulk import, vendor sync) render as one text line, not a spinner — `reindexing… 340/3,115`, `--phosphor` for the live count, polling the same job status already shown elsewhere (PRD §5.10)
+- No skeleton screens, no shimmer placeholders — consistent with the "no decorative feedback loops" motion principle below
+
+### Quantity stepper
+- `−` button · delta input (signed, defaults to `1`) · `+` button — never a bare editable number (PRD §5.14/§5.22, a correctness requirement, not a style choice)
+- Confirm applies the delta and the on-hand count updates in place — no separate "save" step once the delta is set
+- `−` in `--warn` on hover if the delta would take stock below zero, otherwise both buttons stay outline-default
+
+### Spec / custom-field row
+- One row per key-value pair: key input, value input, small outline `+` to add another row, `×` to remove
+- Key input autocompletes from keys already used elsewhere in the catalog (PRD §6.2/§5.22) — a live dynamic list, not a fixed dropdown
+- New rows append below the last; nothing about the layout implies a maximum or a required set
+
+### Field autocomplete dropdown
+- Same component behind tag entry (§5.7), manufacturer, and footprint (§5.22) — one dropdown, not three near-copies
+- Appears below the input while typing, `--surface-alt` background, same border/panel treatment as everything else — no separate "dropdown" styling
+- Existing matches: `--text-dim`, count in `--text-faint` where relevant (`resistor (1,204)`) — a fact being offered, not an action
+- "Add new: 'xyz'" row at the bottom: `--copper`, not `--text-dim` — the same color rule from §2 (copper = a thing you can do) applied here, not a new rule invented for this one component
+- Stays open while typing rather than requiring a deliberate trigger — the existing/new choice needs to be visible before it's committed, not hidden
+- Tags: multi-value, feeds the add-a-row pattern. Manufacturer/footprint: single-value, one input, no row list — same dropdown, different container around it
+
+### Breadcrumb
+- Appears above a Location's label whenever it has a parent (PRD §5.21) — omitted entirely for top-level locations, no single-segment clutter for the common flat case
+- Ancestor segments in `--text-faint`, IBM Plex Mono 11px, each a link that navigates up; current location in full `--text`; separated by `›`
+- Same treatment on desktop and the Via mobile landing page (below) — one component, not a mobile-specific variant
+
+### Via mobile landing page
+- Single column, not the three-column desktop shell — a scanned Via (PRD §5.24) loads a minimal task-focused view, not the full app
+- Minimal top bar: wordmark + a "full app" link only, no six-item top nav
+- Location: breadcrumb above the label if nested, then tappable list of contents (MPN, description, `--phosphor` quantity) — tap a row to open its quantity stepper directly
+- Part: detail view with the quantity stepper front and center, same component as desktop, larger tap target underneath
+- Stepper `+`/`−` touch targets are sized for a thumb, not a mouse — same visual treatment as the desktop stepper, bigger hit area
+
+### Printed labels (PRD §5.17) — deliberately not this style guide's palette
+- Black on white (or transparent over label stock) — no `--bg`, no `--copper`, no glow states. Most label printers are monochrome thermal anyway, and color ink on a small adhesive label is wasted ink for no scannability benefit.
+- QR code dominant; human-readable Via code (`L-7B3D1E`) printed beneath it in monospace, plus the location/part's plain label — the QR isn't the only thing on the label, the text matters too since the whole point of the Via format was staying typeable if a scanner fails
+- No via-dot motif, no decorative trace lines — those are screen-only flourishes, not label content
+- SVG output — same format already used for label/sticker export elsewhere in this toolset, works across thermal printers, cutters, and laser engraving alike
+
+### First-run panel
+- Replaces the whole view (table, dashboard grid, etc.), not a banner stacked above it — this is the only content on screen until there's real data
+- Same tokens as everything else — no separate "welcome" styling, no illustration, no onboarding-product visual language
+- One line stating what's empty, one or two outline buttons for the actual next actions (PRD §5.25) — copper-bordered like any primary action, not a special CTA treatment
+- The "not built yet" variant (Purchasing/Builds/Reports pre-Phase 6) drops the action buttons entirely — `--text-faint` text only, since there's nothing to do yet and a button that goes nowhere is worse than no button
 
 ---
 

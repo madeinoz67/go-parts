@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>go-parts — UI style example</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #0b1411;
+    --bg-grid: #0d1713;
+    --surface: #0f1c17;
+    --surface-alt: #142720;
+    --border: #223229;
+    --border-soft: #1a2820;
+    --copper: #c98a4b;
+    --copper-bright: #e6a868;
+    --phosphor: #6fd9c9;
+    --text: #e8ede8;
+    --text-dim: #82998d;
+    --text-faint: #4d6459;
+    --ok: #7cc48f;
+    --warn: #e2574c;
+    --warn-bg: rgba(226,87,76,0.10);
+    --ok-bg: rgba(124,196,143,0.08);
+    --radius: 2px;
+  }
+
+  *{box-sizing:border-box; margin:0; padding:0;}
+
+  body{
+    background:
+      linear-gradient(var(--bg-grid) 1px, transparent 1px) 0 0 / 100% 28px,
+      linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px) 0 0 / 28px 100%,
+      var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px;
+    min-height: 100vh;
+    padding: 28px;
+  }
+
+  .eyebrow{
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-size: 10px;
+    color: var(--text-faint);
+  }
+
+  .shell{
+    max-width: 1240px;
+    margin: 0 auto;
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  header{
+    display:flex;
+    align-items:center;
+    gap: 24px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--copper);
+    position: relative;
+  }
+  header::after{
+    content:"";
+    position:absolute;
+    left: 168px;
+    bottom: -4px;
+    width:7px; height:7px;
+    border-radius:50%;
+    background: var(--bg);
+    border: 1.5px solid var(--copper);
+  }
+  .logo{
+    font-family:'IBM Plex Mono', monospace;
+    font-weight:700;
+    font-size:15px;
+    letter-spacing: 0.02em;
+    color: var(--text);
+    white-space:nowrap;
+  }
+  .logo span{ color: var(--copper); }
+  .logo::after{
+    content:"_";
+    color: var(--phosphor);
+    animation: blink 1.1s steps(1) infinite;
+  }
+  @keyframes blink{ 50%{ opacity:0; } }
+  @media (prefers-reduced-motion: reduce){
+    .logo::after{ animation: none; }
+    *{ transition: none !important; }
+  }
+
+  .search{
+    flex:1;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    color: var(--text-dim);
+    transition: border-color .15s ease;
+  }
+  .search:focus-within{ border-color: var(--phosphor); }
+  .search input{
+    flex:1;
+    background:none;
+    border:none;
+    outline:none;
+    color: var(--text);
+    font-family:'JetBrains Mono', monospace;
+    font-size:13px;
+  }
+  .search input::placeholder{ color: var(--text-faint); }
+  kbd{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:10px;
+    color: var(--text-faint);
+    border:1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: var(--radius);
+  }
+
+  .status-pill{ display:flex; align-items:center; gap:6px; font-size:11px; color: var(--text-dim); white-space:nowrap; }
+  .dot{ width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 6px var(--ok);}
+
+  .topnav{
+    display:flex; gap:2px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .topnav a{
+    display:block;
+    padding: 10px 14px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    color: var(--text-faint);
+    text-decoration:none;
+    border-bottom: 2px solid transparent;
+    cursor:pointer;
+  }
+  .topnav a:hover{ color: var(--text-dim); }
+  .topnav a.active{ color: var(--copper-bright); border-bottom-color: var(--copper); }
+
+  .body-grid{ display:grid; grid-template-columns: 220px 1fr 300px; }
+
+  nav.categories{ border-right: 1px solid var(--border); padding: 18px 0; position:relative; }
+  nav.categories .eyebrow{ padding: 0 18px 10px; }
+  nav.categories::before{
+    content:""; position:absolute; left:14px; top:38px; bottom:18px; width:1px; background: var(--border-soft);
+  }
+  .cat-item{
+    position:relative; display:flex; align-items:center; gap:10px;
+    padding: 8px 18px 8px 24px; color: var(--text-dim); cursor:pointer; border-left: 2px solid transparent;
+  }
+  .cat-item::before{ content:""; position:absolute; left:0; top:50%; width:14px; height:1px; background: var(--border-soft); }
+  .cat-item svg{ width:14px; height:14px; flex-shrink:0; color: var(--text-faint); }
+  .cat-item .count{ margin-left:auto; font-size:11px; color: var(--text-faint); }
+  .cat-item:hover{ color: var(--text); background: var(--surface-alt); }
+  .cat-item.active{ color: var(--copper-bright); border-left-color: var(--copper); background: var(--surface-alt); }
+  .cat-item.active svg{ color: var(--copper); }
+  .cat-item.active .count{ color: var(--copper); }
+
+  main{ padding: 18px 20px; border-right:1px solid var(--border); }
+  .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom: 14px; gap: 14px; min-height: 26px; }
+  .chips{ display:flex; gap:8px; }
+  .chip{ font-size:11px; color: var(--text-dim); border:1px solid var(--border); padding: 4px 9px; cursor:pointer; }
+  .chip.active{ color: var(--phosphor); border-color: var(--phosphor); }
+  #resultCount{ white-space:nowrap; }
+
+  /* bulk-action bar — replaces .chips the moment anything is checked (PRD §7.2 / style guide "Bulk-action bar") */
+  .bulk-bar{ display:none; align-items:center; gap:8px; }
+  .bulk-bar.active{ display:flex; }
+  .bulk-bar .count{ color: var(--text); font-size:12px; margin-right:4px; }
+  .btn-bulk{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:0.04em;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    cursor:pointer;
+    background:none;
+  }
+  .btn-bulk:hover{ background: var(--surface-alt); }
+  .btn-bulk.danger{ border-color: var(--warn); color: var(--warn); }
+
+  table{ width:100%; border-collapse:collapse; }
+  thead th{
+    text-align:left;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:10px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color: var(--text-faint);
+    font-weight:600;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    user-select:none;
+  }
+  th.sortable{ cursor:pointer; }
+  th.sortable:hover{ color: var(--text-dim); }
+  th.sortable:focus-visible{ outline:1px solid var(--phosphor); outline-offset:-1px; }
+  .sort-arrow{ margin-left:6px; font-size:9px; color: var(--text-faint); }
+  th.sortable:hover .sort-arrow{ color: var(--text-dim); }
+  th.sortable.active .sort-arrow{ color: var(--copper); }
+  th.checkbox-col{ width:32px; }
+
+  tbody td{ padding: 10px; border-bottom: 1px solid var(--border-soft); color: var(--text-dim); white-space:nowrap; }
+  tbody tr.data-row{ cursor:pointer; border-left: 2px solid transparent; }
+  tbody tr.data-row:hover{ background: var(--surface-alt); }
+  tbody tr.data-row.selected{ background: var(--surface-alt); border-left-color: var(--copper); }
+  .mpn{ color: var(--text); font-weight:500; }
+  .qty{ color: var(--phosphor); }
+  .badge{ font-size:10px; padding: 2px 7px; border-radius: var(--radius); letter-spacing:0.04em; }
+  .badge.ok{ color: var(--ok); background: var(--ok-bg); }
+  .badge.low{ color: var(--warn); background: var(--warn-bg); }
+
+  /* row-select checkbox — deliberately separate from row click (which opens the detail panel), style guide "Bulk-select checkbox column" */
+  .row-checkbox{
+    appearance:none; -webkit-appearance:none;
+    width:14px; height:14px;
+    border:1px solid var(--border);
+    background: var(--bg);
+    cursor:pointer;
+    position:relative;
+    display:block;
+    flex-shrink:0;
+  }
+  .row-checkbox:checked{ background: var(--copper); border-color: var(--copper); }
+  .row-checkbox:checked::after{
+    content:"✓"; position:absolute; top:-3px; left:1px;
+    font-size:11px; color: var(--bg); font-weight:700;
+  }
+  .row-checkbox:focus-visible{ outline:1px solid var(--phosphor); outline-offset:2px; }
+
+  #noMatchRow td{ text-align:center; color: var(--text-faint); padding: 22px 10px; white-space:normal; }
+  #noMatchRow .q{ color: var(--text-dim); }
+
+  aside{ padding: 18px 20px; }
+  .part-title{ font-family:'IBM Plex Mono', monospace; font-size:15px; font-weight:600; color: var(--text); margin: 4px 0 2px; }
+  .part-sub{ color: var(--text-faint); font-size:11px; margin-bottom:16px; }
+  .spec-row{ display:flex; justify-content:space-between; align-items:center; padding: 7px 0; border-bottom: 1px solid var(--border-soft); font-size:12px; }
+  .spec-row span:first-child{ color: var(--text-faint); }
+  .spec-row span:last-child{ color: var(--text); }
+  .spec-row .phos{ color: var(--phosphor); }
+  .panel-icon{ width:40px; height:40px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; color: var(--copper); }
+  .panel-icon svg{ width:22px; height:22px; }
+  .actions{ display:flex; gap:8px; margin-top:16px; }
+  .btn{ flex:1; text-align:center; font-family:'IBM Plex Mono', monospace; font-size:11px; letter-spacing:0.04em; text-transform:uppercase; padding: 9px 0; border: 1px solid var(--border); color: var(--text-dim); cursor:pointer; transition: background .15s ease; }
+  .btn.primary{ border-color: var(--copper); color: var(--copper-bright); }
+  .btn:hover{ background: var(--surface-alt); }
+
+  /* quantity stepper — stock is never a raw editable number (PRD §5.14/§5.22), delta buttons only */
+  .qty-stepper{ display:flex; align-items:center; gap:8px; }
+  .qty-stepper button{
+    width:22px; height:22px;
+    border:1px solid var(--border);
+    background:none;
+    color: var(--text-dim);
+    cursor:pointer;
+    font-family:'JetBrains Mono', monospace;
+    font-size:14px;
+    line-height:1;
+    display:flex; align-items:center; justify-content:center;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
+  }
+  .qty-stepper button:hover{ background: var(--surface-alt); border-color: var(--copper); color: var(--copper-bright); }
+  .qty-stepper .qty-value{ color: var(--phosphor); min-width:34px; text-align:center; font-size:13px; }
+
+  footer{ display:flex; align-items:center; gap:20px; padding: 7px 20px; border-top: 1px solid var(--border); font-size:11px; color: var(--text-faint); }
+  footer .sep{ color: var(--border); }
+  footer .up{ color: var(--ok); }
+
+  /* confirmation panel — styled, not a native confirm() (PRD §5.21) */
+  .confirm-overlay{
+    display:none; position:fixed; inset:0;
+    background: rgba(0,0,0,0.55);
+    align-items:center; justify-content:center;
+    z-index: 100;
+  }
+  .confirm-overlay.active{ display:flex; }
+  .confirm-panel{
+    background: var(--surface-alt);
+    border: 1px solid var(--warn);
+    padding: 20px;
+    max-width: 320px;
+    width: 90%;
+  }
+  .confirm-panel p{ color: var(--text); font-size:13px; margin-bottom:16px; line-height:1.5; }
+  .confirm-actions{ display:flex; gap:8px; }
+  .btn.warn{ border-color: var(--warn); color: var(--warn); }
+
+  @media (max-width: 900px){
+    .body-grid{ grid-template-columns: 1fr; }
+    nav.categories{ display:flex; overflow-x:auto; border-right:none; border-bottom:1px solid var(--border); padding: 10px; gap: 4px; }
+    nav.categories::before{ display:none; }
+    .cat-item::before{ display:none; }
+    aside{ border-top: 1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <header>
+    <div class="logo">&gt; go<span>-</span>parts</div>
+    <div class="search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="searchInput" type="text" placeholder="search mpn, description, footprint...">
+      <kbd>/</kbd>
+    </div>
+    <div class="status-pill"><span class="dot"></span>go-rag · muninndb connected</div>
+  </header>
+
+  <nav class="topnav">
+    <a class="active">Parts</a>
+    <a>Storage</a>
+    <a>Projects</a>
+    <a>Purchasing</a>
+    <a>Builds</a>
+    <a>Reports</a>
+  </nav>
+
+  <div class="body-grid">
+
+    <nav class="categories">
+      <div class="eyebrow">Tags</div>
+      <div class="cat-item active">
+        <svg viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M0 6h4l1.5-4 3 8 3-8 3 8 1.5-4H24"/></svg>
+        resistor <span class="count">1,204</span>
+      </div>
+      <div class="cat-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 12h7M15 12h7M9 4v16M15 4v16"/></svg>
+        capacitor <span class="count">862</span>
+      </div>
+      <div class="cat-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="6" y="6" width="12" height="12"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
+        ic <span class="count">347</span>
+      </div>
+      <div class="cat-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 8h16v6a3 3 0 01-3 3H7a3 3 0 01-3-3V8z"/><path d="M8 8V5M12 8V5M16 8V5"/></svg>
+        connector <span class="count">213</span>
+      </div>
+      <div class="cat-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/></svg>
+        sensor <span class="count">58</span>
+      </div>
+      <div class="cat-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2l3 5-3 2-3-2z"/><path d="M12 9v13M6 22h12"/></svg>
+        hardware <span class="count">431</span>
+      </div>
+    </nav>
+
+    <main>
+      <div class="toolbar">
+        <div class="chips" id="chipsRow">
+          <div class="chip active">all parts</div>
+          <div class="chip">low stock</div>
+          <div class="chip">recently added</div>
+        </div>
+        <div class="bulk-bar" id="bulkBar">
+          <span class="count" id="bulkCount">0 selected</span>
+          <button class="btn-bulk">tag</button>
+          <button class="btn-bulk">move</button>
+          <button class="btn-bulk danger" onclick="showConfirm()">delete</button>
+          <button class="btn-bulk" onclick="clearSelection()">clear</button>
+        </div>
+        <div class="eyebrow" id="resultCount">3,115 parts</div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th class="checkbox-col"><input type="checkbox" class="row-checkbox" id="selectAll" onclick="toggleSelectAll(this)" aria-label="select all visible"></th>
+            <th class="sortable" tabindex="0" data-type="text" onclick="sortTable(1,'text')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sortTable(1,'text');}">MPN<span class="sort-arrow">↕</span></th>
+            <th class="sortable" tabindex="0" data-type="text" onclick="sortTable(2,'text')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sortTable(2,'text');}">Description<span class="sort-arrow">↕</span></th>
+            <th class="sortable" tabindex="0" data-type="text" onclick="sortTable(3,'text')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sortTable(3,'text');}">Package<span class="sort-arrow">↕</span></th>
+            <th class="sortable" tabindex="0" data-type="numeric" onclick="sortTable(4,'numeric')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sortTable(4,'numeric');}">Qty<span class="sort-arrow">↕</span></th>
+            <th class="sortable" tabindex="0" data-type="text" onclick="sortTable(5,'text')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sortTable(5,'text');}">Location<span class="sort-arrow">↕</span></th>
+            <th class="sortable" tabindex="0" data-type="text" onclick="sortTable(6,'text')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sortTable(6,'text');}">Status<span class="sort-arrow">↕</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="data-row selected" data-id="r1" onclick="selectRow(this,'r1')">
+            <td onclick="event.stopPropagation()"><input type="checkbox" class="row-checkbox" data-id="r1" onclick="updateBulkBar()" aria-label="select row"></td>
+            <td class="mpn">RC0805FR-0710KL</td><td>10kΩ ±1% thick film resistor</td><td>0805</td><td class="qty">840</td><td>Bin A3</td><td><span class="badge ok">OK</span></td>
+          </tr>
+          <tr class="data-row" data-id="r2" onclick="selectRow(this,'r2')">
+            <td onclick="event.stopPropagation()"><input type="checkbox" class="row-checkbox" data-id="r2" onclick="updateBulkBar()" aria-label="select row"></td>
+            <td class="mpn">GRM188R71H104</td><td>0.1µF X7R ceramic cap</td><td>0603</td><td class="qty">1,120</td><td>Bin A5</td><td><span class="badge ok">OK</span></td>
+          </tr>
+          <tr class="data-row" data-id="r3" onclick="selectRow(this,'r3')">
+            <td onclick="event.stopPropagation()"><input type="checkbox" class="row-checkbox" data-id="r3" onclick="updateBulkBar()" aria-label="select row"></td>
+            <td class="mpn">ATMEGA328P-AU</td><td>8-bit AVR MCU, 32K flash</td><td>TQFP-32</td><td class="qty">6</td><td>Drawer 12</td><td><span class="badge low">LOW</span></td>
+          </tr>
+          <tr class="data-row" data-id="r4" onclick="selectRow(this,'r4')">
+            <td onclick="event.stopPropagation()"><input type="checkbox" class="row-checkbox" data-id="r4" onclick="updateBulkBar()" aria-label="select row"></td>
+            <td class="mpn">AMS1117-3.3</td><td>3.3V LDO regulator, 1A</td><td>SOT-223</td><td class="qty">54</td><td>Drawer 9</td><td><span class="badge ok">OK</span></td>
+          </tr>
+          <tr class="data-row" data-id="r5" onclick="selectRow(this,'r5')">
+            <td onclick="event.stopPropagation()"><input type="checkbox" class="row-checkbox" data-id="r5" onclick="updateBulkBar()" aria-label="select row"></td>
+            <td class="mpn">MOLEX 22-01-3037</td><td>3-pin KK254 header</td><td>THT</td><td class="qty">3</td><td>Bin C1</td><td><span class="badge low">LOW</span></td>
+          </tr>
+          <tr class="data-row" data-id="r6" onclick="selectRow(this,'r6')">
+            <td onclick="event.stopPropagation()"><input type="checkbox" class="row-checkbox" data-id="r6" onclick="updateBulkBar()" aria-label="select row"></td>
+            <td class="mpn">BME280</td><td>Temp / humidity / pressure sensor</td><td>LGA-8</td><td class="qty">14</td><td>Drawer 12</td><td><span class="badge ok">OK</span></td>
+          </tr>
+          <tr id="noMatchRow" style="display:none;">
+            <td colspan="7">no matches for "<span class="q" id="noMatchQuery"></span>"</td>
+          </tr>
+        </tbody>
+      </table>
+    </main>
+
+    <aside id="detailPanel">
+      <div class="panel-icon">
+        <svg viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M0 6h4l1.5-4 3 8 3-8 3 8 1.5-4H24"/></svg>
+      </div>
+      <div class="part-title" id="d-title">RC0805FR-0710KL</div>
+      <div class="part-sub" id="d-sub">Yageo · resistor · 0805</div>
+
+      <div class="spec-row"><span>Resistance</span><span class="phos" id="d-spec1">10kΩ ±1%</span></div>
+      <div class="spec-row"><span>Power</span><span id="d-spec2">1/8W</span></div>
+      <div class="spec-row">
+        <span>On hand</span>
+        <div class="qty-stepper">
+          <button onclick="adjustQty(-1)" aria-label="decrease quantity">−</button>
+          <span class="qty-value" id="d-qty">840</span>
+          <button onclick="adjustQty(1)" aria-label="increase quantity">+</button>
+        </div>
+      </div>
+      <div class="spec-row"><span>Location</span><span id="d-loc">Bin A3</span></div>
+      <div class="spec-row"><span>Vendor</span><span id="d-vendor">LCSC · C17414</span></div>
+      <div class="spec-row"><span>Used in</span><span id="d-project">4 projects</span></div>
+
+      <div class="actions">
+        <div class="btn primary">datasheet</div>
+        <div class="btn">enrich</div>
+      </div>
+    </aside>
+
+  </div>
+
+  <footer>
+    <span>-- NORMAL --</span>
+    <span class="sep">|</span>
+    <span>3,115 parts indexed</span>
+    <span class="sep">|</span>
+    <span class="up">● go-rag</span>
+    <span class="up">● muninndb</span>
+    <span class="up">● lcsc</span>
+    <span class="sep">|</span>
+    <span>v1.0 style guide</span>
+  </footer>
+
+</div>
+
+<!-- confirmation panel — styled, not a native confirm(), PRD §5.21 -->
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-panel">
+    <p>delete <span id="confirmCount">0</span> parts? this can't be undone.</p>
+    <div class="confirm-actions">
+      <div class="btn" onclick="hideConfirm()">cancel</div>
+      <div class="btn warn" onclick="confirmDelete()">delete</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const searchInput = document.getElementById('searchInput');
+  const resultCount = document.getElementById('resultCount');
+  const noMatchRow = document.getElementById('noMatchRow');
+  const noMatchQuery = document.getElementById('noMatchQuery');
+  const TOTAL_LABEL = '3,115 parts';
+
+  document.addEventListener('keydown', (e) => {
+    if(e.key === '/' && document.activeElement !== searchInput){
+      e.preventDefault();
+      searchInput.focus();
+    }
+  });
+
+  // ---- live search ----
+  searchInput.addEventListener('input', () => {
+    const raw = searchInput.value.trim();
+    const q = raw.toLowerCase();
+    const rows = Array.from(document.querySelectorAll('tbody tr.data-row'));
+    let visible = 0;
+    rows.forEach(r => {
+      const match = q === '' || r.textContent.toLowerCase().includes(q);
+      r.style.display = match ? '' : 'none';
+      if(match) visible++;
+    });
+
+    if(q === ''){
+      resultCount.textContent = TOTAL_LABEL;
+      noMatchRow.style.display = 'none';
+    } else if(visible === 0){
+      resultCount.textContent = '0 matches for "' + raw + '"';
+      noMatchQuery.textContent = raw;
+      noMatchRow.style.display = '';
+    } else {
+      resultCount.textContent = visible + (visible === 1 ? ' match' : ' matches') + ' for "' + raw + '"';
+      noMatchRow.style.display = 'none';
+    }
+  });
+
+  // ---- sortable columns (column 0 is now the checkbox, so data columns start at 1) ----
+  let sortState = { col: null, dir: 1 };
+
+  function sortTable(colIndex, type){
+    const tbody = document.querySelector('tbody');
+    const rows = Array.from(tbody.querySelectorAll('tr.data-row'));
+    const dir = (sortState.col === colIndex) ? -sortState.dir : 1;
+
+    rows.sort((a, b) => {
+      let av = a.children[colIndex].textContent.trim();
+      let bv = b.children[colIndex].textContent.trim();
+      if(type === 'numeric'){
+        av = parseFloat(av.replace(/,/g,'')) || 0;
+        bv = parseFloat(bv.replace(/,/g,'')) || 0;
+        return (av - bv) * dir;
+      }
+      return av.localeCompare(bv) * dir;
+    });
+
+    rows.forEach(r => tbody.insertBefore(r, noMatchRow));
+    sortState = { col: colIndex, dir };
+
+    document.querySelectorAll('th.sortable').forEach((th, i) => {
+      const arrow = th.querySelector('.sort-arrow');
+      if((i + 1) === colIndex){
+        th.classList.add('active');
+        arrow.textContent = dir === 1 ? '▲' : '▼';
+      } else {
+        th.classList.remove('active');
+        arrow.textContent = '↕';
+      }
+    });
+  }
+
+  // ---- bulk selection — dedicated checkbox column, deliberately separate from row-click-for-detail (PRD §7.2) ----
+  function toggleSelectAll(headerCheckbox){
+    document.querySelectorAll('tbody tr.data-row:not([style*="display: none"]) .row-checkbox[data-id]')
+      .forEach(cb => cb.checked = headerCheckbox.checked);
+    updateBulkBar();
+  }
+
+  function updateBulkBar(){
+    const checked = document.querySelectorAll('.row-checkbox[data-id]:checked');
+    const count = checked.length;
+    const chipsRow = document.getElementById('chipsRow');
+    const bulkBar = document.getElementById('bulkBar');
+    if(count > 0){
+      chipsRow.style.display = 'none';
+      bulkBar.classList.add('active');
+      document.getElementById('bulkCount').textContent = count + ' selected';
+    } else {
+      chipsRow.style.display = 'flex';
+      bulkBar.classList.remove('active');
+    }
+  }
+
+  function clearSelection(){
+    document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+    updateBulkBar();
+  }
+
+  function showConfirm(){
+    const count = document.querySelectorAll('.row-checkbox[data-id]:checked').length;
+    document.getElementById('confirmCount').textContent = count;
+    document.getElementById('confirmOverlay').classList.add('active');
+  }
+  function hideConfirm(){
+    document.getElementById('confirmOverlay').classList.remove('active');
+  }
+  function confirmDelete(){
+    // demo only — a real build would call DELETE /parts/{id} per selected row
+    hideConfirm();
+    clearSelection();
+  }
+
+  // ---- row selection / detail panel ----
+  const details = {
+    r1:{title:'RC0805FR-0710KL', sub:'Yageo · resistor · 0805', spec1:'10kΩ ±1%', spec2:'1/8W', qty:'840', loc:'Bin A3', vendor:'LCSC · C17414', project:'4 projects'},
+    r2:{title:'GRM188R71H104KA93D', sub:'Murata · capacitor · 0603', spec1:'0.1µF ±10%', spec2:'50V X7R', qty:'1,120', loc:'Bin A5', vendor:'LCSC · C14663', project:'9 projects'},
+    r3:{title:'ATMEGA328P-AU', sub:'Microchip · ic · TQFP-32', spec1:'32K flash', spec2:'20MHz max', qty:'6', loc:'Drawer 12', vendor:'Mouser · 556-ATMEGA328P-AU', project:'2 projects'},
+    r4:{title:'AMS1117-3.3', sub:'AMS · ic · SOT-223', spec1:'3.3V out', spec2:'1A max', qty:'54', loc:'Drawer 9', vendor:'LCSC · C6186', project:'6 projects'},
+    r5:{title:'MOLEX 22-01-3037', sub:'Molex · connector · THT', spec1:'3-pin', spec2:'2.54mm pitch', qty:'3', loc:'Bin C1', vendor:'Mouser · 538-22-01-3037', project:'1 project'},
+    r6:{title:'BME280', sub:'Bosch · sensor · LGA-8', spec1:'±1 hPa', spec2:'I²C / SPI', qty:'14', loc:'Drawer 12', vendor:'DigiKey · 828-1063-1-ND', project:'3 projects'}
+  };
+
+  let currentQty = 840;
+
+  function selectRow(el, id){
+    document.querySelectorAll('tbody tr.data-row').forEach(r => r.classList.remove('selected'));
+    el.classList.add('selected');
+    const d = details[id];
+    document.getElementById('d-title').textContent = d.title;
+    document.getElementById('d-sub').textContent = d.sub;
+    document.getElementById('d-spec1').textContent = d.spec1;
+    document.getElementById('d-spec2').textContent = d.spec2;
+    currentQty = parseInt(d.qty.replace(/,/g,''), 10);
+    document.getElementById('d-qty').textContent = d.qty;
+    document.getElementById('d-loc').textContent = d.loc;
+    document.getElementById('d-vendor').textContent = d.vendor;
+    document.getElementById('d-project').textContent = d.project;
+  }
+
+  // ---- quantity stepper — delta only, never a raw editable number (PRD §5.14/§5.22) ----
+  function adjustQty(delta){
+    currentQty = Math.max(0, currentQty + delta);
+    document.getElementById('d-qty').textContent = currentQty.toLocaleString();
+  }
+</script>
+
+</body>
+</html>

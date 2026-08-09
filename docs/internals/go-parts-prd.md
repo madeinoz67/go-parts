@@ -1,7 +1,7 @@
 # PRD: go-parts — Standalone Electronics Parts Database
 
 **Author:** Stephen Eaton
-**Status:** Draft v3.7 (corrected §5.20 against MuninnDB's actual CLAUDE.md — review agent is a repo-local subagent invoked via /code-review, not a GitHub Actions auto-trigger; added CLAUDE.md structure and a MuninnDB dogfooding note)
+**Status:** Draft v5.4 (added embedded footprint seed list §5.22 — fixes the cold-start autocomplete gap, footprint-specific since it has a real bounded standard vocabulary unlike tags/manufacturer; still just suggestions, no enum)
 **Date:** 2026-08-07
 **License:** MIT
 
@@ -53,7 +53,7 @@ Follows the same low-friction philosophy as **go-rag** and **MuninnDB**: one bin
 
 ### 5.1 Storage Engine
 - Pebble as the embedded LSM KV store (same pattern as go-rag/MuninnDB)
-- Core keyspaces: `parts`, `categories`, `locations`, `suppliers`, `projects/boms`, `datasheets` (blob or path ref), `search_index` (BM25 postings + optional vector index), `stock_history`, `meta` (schema version marker — see §5.13)
+- Core keyspaces: `parts`, `tags`, `locations`, `suppliers`, `projects/boms`, `datasheets` (blob or path ref), `search_index` (BM25 postings + optional vector index), `stock_history`, `meta` (schema version marker — see §5.13)
 - **Search reuse (resolved):** go-parts embeds go-rag's search module directly as a Go library rather than forking a lightweight subset — BM25 + vector search comes for free, stays in sync with go-rag's improvements over time, and lines up with the embedded-mode go-rag gateway in §5.5 (same library, same decision, not two separate builds)
 
 **How search actually works — two tiers, only one needs a model:**
@@ -69,7 +69,7 @@ Follows the same low-friction philosophy as **go-rag** and **MuninnDB**: one bin
 | **RPC** | Wire-level API (JSON-RPC) — decouples core logic from HTTP; used by CLI and reserved as a tight-integration surface for local tools, including a future KiCAD plugin |
 | **REST** | Public HTTP API — CRUD, search, BOM import/export, barcode lookup; also usable by a future KiCAD plugin |
 | **MCP** | MCP server — exposes parts operations as tools for AI agents |
-| **Website** | Embedded static web UI — browse/search/edit without touching the API directly |
+| **Website** | Embedded static web UI — HTMX fragment routes (§5.23) calling the same core logic as REST, not the JSON endpoints directly |
 | **TUI** | Terminal UI — `go-parts tui` subcommand of the same binary, a REST client for the command line (§5.11), not a fifth server-side protocol |
 
 **RPC scope (resolved):** RPC is built as a real wire-level protocol from the start, not just in-process Go function calls — a future KiCAD plugin (typically a Python process, external to the go-parts binary) rules out an in-process-only design. Both RPC and REST are kept as viable surfaces for that plugin; which one it actually uses is decided when the plugin is built (§10 Phase 4), not now.
@@ -179,11 +179,26 @@ PartsBox.io is a mature, purpose-built reference for exactly this problem space 
 | **Parts** | Browse/search/edit the catalog — default landing view |
 | **Storage** | Manage storage locations; view stock by location |
 | **Projects** | BOMs — create/import, price, and build from |
-| **Purchasing** | Purchase lists (cart built from projects) → orders (Open/Ordered/Received) |
+| **Purchasing** | Shopping lists → purchase/cost tracking (§6.3, deliberately simple — no requirement-planning engine) |
 | **Builds** | Build history and in-progress builds, reached from a project's Builds tab |
 | **Reports** | Low-stock, inventory valuation — updates live |
 
-**Storage philosophy (adopted directly):** don't organize storage by part category — resistors together, capacitors together, and so on. That creates constant reorganization work and doesn't scale. Parts go wherever physically fits; search and location lookup do the finding. This means the "Categories" sidebar in the UI mockup is a **search/filter facet**, not a storage organization scheme — worth being explicit about, since the two are easy to conflate. Location creation follows PartsBox's four methods, detailed in §7.1: Single, Row (1D), Grid (2D), 3D Grid (3D) — covers everything from one drawer to a compartmented SMD box, starting basic and expanding as the collection grows.
+**Storage philosophy (adopted directly):** don't organize storage by part category — resistors together, capacitors together, and so on. That creates constant reorganization work and doesn't scale. Parts go wherever physically fits; search and location lookup do the finding. Location creation follows PartsBox's four methods, detailed in §7.1: Single, Row (1D), Grid (2D), 3D Grid (3D) — covers everything from one drawer to a compartmented SMD box, starting basic and expanding as the collection grows.
+
+**No dedicated `category`/`subcategory` fields — resolved, reversing an earlier draft of this doc.** PartsBox doesn't use a rigid category tree either, and says so plainly: *"instead of a static category tree, you use searches or smart folders to find parts with a given tag set"* — because a single-value category forces every part into exactly one bucket, while tags let a part be `resistor` and `SMD` and `audio` simultaneously. go-parts already has `tags[]` on Part (§6.1) doing exactly this job; a separate `category` field would just be redundant schema duplicating what tags already do, not a second useful thing. Removed.
+
+**The sidebar becomes a live tag list, not a fixed category list — same visual shape, different source.** v1: the sidebar shows every tag actually in use across the catalog, with counts, built the same dynamic way §6.2 already builds filterable spec keys — no new mechanism, and it's a **search/filter facet, not a storage organization scheme** (worth being explicit, since the two are easy to conflate — see the storage philosophy above). **Saved/shared filter presets** — PartsBox's fuller "smart folders," multi-condition, nameable, optionally shared — are real value beyond a flat tag list, but that's more machinery than a live tag count needs; deferred to Phase 6 (§7.3) alongside the other PartsBox-inspired depth, rather than gating basic tag browsing on building the fuller feature first.
+
+**Managing tags: three cheap rules that prevent most fragmentation, plus one real operation for when it happens anyway.** Freeform tagging has a well-known failure mode — nothing stops `resistor`, `resistors`, and `Resistor` from becoming three different tags that split the sidebar three ways. Not worth a full tag-administration feature (same over-scoping trap purchasing just fell into), but worth more than nothing:
+- **Lowercased on save.** `Resistor` and `resistor` are the same tag, always — the simplest possible rule, no case-sensitivity ambiguity to reason about later.
+- **Autocomplete on entry, same mechanism §5.22 already built for spec keys, just applied to tags too.** Typing shows a dropdown filtered from `GET /tags` (already in §8) — matches so far, case-insensitive since everything's lowercased anyway. Two kinds of entry in that dropdown, visually distinguished on purpose rather than left to blend together:
+  - **Existing tags** — plain list, `--text-dim`, count shown alongside (`resistor (1,204)`). One click applies it.
+  - **"Add new tag: 'xyz'"** — sits at the bottom, in `--copper` rather than `--text-dim`. This isn't cosmetic: the style guide's own color rule already says copper means "a thing you can do," `--text-dim`/`--phosphor` mean "a fact" — picking an existing tag is selecting a fact, creating one is an action, so the color difference is just that rule applied here rather than a new one invented for this case.
+  - The dropdown stays visible while typing rather than requiring it be opened deliberately — the point is that the choice between "use what exists" and "create new" is seen *before* committing, whether committed by click or by Enter, not hidden behind an extra confirmation step.
+  - **No fuzzy or near-duplicate matching — plain substring, on purpose.** This catches `res` → `resistor` but not `resistor` vs `resistors` as two separately-typed near-misses; catching that would need real matching logic (embeddings, edit distance) for a marginal benefit at this scale. If it ever actually causes fragmentation in practice, rename/merge (above) is the fix — not smarter matching built preemptively for a problem that hasn't shown up yet.
+- **AI-suggested tags (§5.9) check against existing tags before minting new ones.** The enrichment model should prefer a close existing match over inventing a fresh string — the same discipline as manual entry, applied to the automated path too.
+- **Rename/merge for the cases the above three don't catch.** `PATCH /tags/{tag}` renames it everywhere it's used; merging tag A into B is the same underlying operation — every part tagged A becomes tagged B, A stops existing. This isn't new machinery, it's the bulk-update mechanism from §7.2 targeted at "every part with this tag" instead of a manual selection.
+- **Phase 8 (§5.8): tagging stays open to any member** — it's ordinary day-to-day work, same as adding a part. **Rename/merge is admin-only**, since it's a catalog-wide change affecting everyone's view, not a personal edit — matches the existing two-tier split rather than inventing a third permission level for this one case.
 
 **Default storage location per part (adopted):** a part can have a "home" location, optionally marked mandatory so stock can only be added there. Cheap to build now, meaningfully reduces drift as inventory grows.
 
@@ -222,7 +237,7 @@ v1 is single-operator, no auth, matching go-rag. But a makerspace is a real futu
 
 ### 5.9 AI Enrichment Model (optional, configurable)
 
-A second, distinct enrichment stage on top of vendor plugins (§5.4). Vendor plugins fetch *raw* data (description, package, pricing, stock, datasheet URL) from a supplier by MPN. The enrichment model takes that raw data — or just a datasheet, or just a rough description for a local part with no MPN at all — and turns it into clean, structured fields: normalized description, suggested category/subcategory/tags, extracted spec table from datasheet text, and a short human-readable summary.
+A second, distinct enrichment stage on top of vendor plugins (§5.4). Vendor plugins fetch *raw* data (description, package, pricing, stock, datasheet URL) from a supplier by MPN. The enrichment model takes that raw data — or just a datasheet, or just a rough description for a local part with no MPN at all — and turns it into clean, structured fields: normalized description, suggested tags, extracted spec table from datasheet text, and a short human-readable summary.
 
 **Interface (draft)**
 ```go
@@ -238,11 +253,9 @@ type EnrichmentInput struct {
 }
 
 type EnrichmentResult struct {
-    Specs       map[string]string
-    Category    string
-    Subcategory string
-    Tags        []string
-    Summary     string
+    Specs   map[string]string
+    Tags    []string
+    Summary string
 }
 ```
 
@@ -266,7 +279,7 @@ The scheme (`anthropic://`, `openai://`, `ollama://`) selects the provider; the 
 **Use cases enabled**
 - Structured spec extraction from datasheet text (pairs directly with the Phase 3 datasheet text-extraction work)
 - Enrichment for **local parts** that have no MPN and so get nothing from vendor plugins — a rough description or attached datasheet is enough
-- Auto-suggested category/subcategory/tags on part creation, reducing manual tagging
+- Auto-suggested tags on part creation, reducing manual tagging
 - A short summary field for browse/search readability, independent of the raw vendor description
 
 **Provenance:** each Part tracks where its enrichment came from — `enrichment_source[]` (e.g. `["vendor:lcsc", "model:claude-sonnet-5"]`) — so it's always clear whether a field came from a vendor, a model, or manual entry.
@@ -302,7 +315,7 @@ Embedding generation (§5.1) and AI enrichment (§5.9) are exactly the kind of w
 
 Full parts lookup and stock management from the command line — SSH into the box, run one command, get an interactive terminal browser. No browser, no port-forwarding a web UI just to check if a part's in stock.
 
-**Architecture: a client, not a new server surface.** The TUI is a subcommand of the same `go-parts` binary (`go-parts tui`), not a separate binary and not a new backend protocol. It talks to a running go-parts server over REST — the same API the web UI uses — so there's one source of truth and one code path for "what can happen to a part," not a TUI-specific reimplementation of business logic.
+**Architecture: a client, not a new server surface.** The TUI is a subcommand of the same `go-parts` binary (`go-parts tui`), not a separate binary and not a new backend protocol. It talks to a running go-parts server over the JSON REST API (§8) — the same core service and business logic the web UI's HTMX fragment routes call into (§5.23), even though the wire format differs — so there's one source of truth for "what can happen to a part," not a TUI-specific reimplementation of business logic.
 
 **Why REST, not RPC:** REST already exists from Phase 1, so the TUI isn't blocked on RPC formalization (Phase 4) to ship. RPC stays available as a future transport if there's ever a concrete reason to switch (lower overhead, streaming) — but for a request/response terminal browser, REST is simpler and sufficient.
 
@@ -496,10 +509,16 @@ The gap: bin-label printing (§7.1) and `/parts/barcode/{code}` only ever covere
 
 **Label printing:**
 ```
-POST /locations/{id}/label   # renders a printable QR label (encodes the Via code)
+POST /locations/{id}/label   # renders a printable QR label (encodes the Via code as a full URL — see §5.24 for how the base address is chosen)
 POST /parts/{id}/label       # same, for parts with no vendor barcode
 ```
 go-parts renders the label; actually printing it is a client/OS concern (send to whatever printer's configured), not something go-parts manages drivers for.
+
+**Label design is its own thing, not the dark screen theme — a gap worth catching before someone actually prints one.** The whole visual system (style guide) is dark-first: PCB solder-mask background, copper accents, glow states. Printing that as-is wastes ink/toner covering a full dark background, and most dedicated label printers (Dymo, Brother QL, Zebra — the common choice for exactly this use case) are monochrome thermal printers anyway, incapable of the color palette at all. The label is black-on-white (or transparent, letting label stock show through), no decorative elements — no via-dot motif, no glow, none of the screen-only flourishes. Just what the label needs to do its job.
+
+**Content: the QR dominates, but the human-readable Via code prints too — not optional.** §5.17's Via format was deliberately chosen to be "typeable if a scanner ever fails" (see the Format note above). That property is only useful if the printed label actually shows the code as text, not just as a QR blob — so every label prints the QR plus `L-7B3D1E` (or whichever code) in small monospace beneath it, plus the location/part's human label ("Bin A3"). Monospace stays consistent with the rest of the product's typography even in print — it's legible at small sizes, which is exactly why datasheets and schematics already use it.
+
+**Output format: SVG, matching a format already proven for exactly this in your own toolset.** Vector, scales cleanly to whatever physical label size the printer actually uses, and it's the same format the YubiKey engraver project already exports for label/sticker production — a thermal label printer, a Cricut-style cutter, or a laser engraver can all consume the same file without go-parts needing a separate export mode per production method. One size variant for v1 — a compact single layout, not a library of label sizes — more sizes are a "later, if it's actually needed" refinement, not something to build speculatively now.
 
 **Scan-to-find — the actual point of a bin label:** scanning a Location's Via resolves via `GET /via/{code}` to that location's current contents. That's what "print a label, scan to find" was always supposed to mean, and until now there was no mechanism behind it.
 
@@ -529,6 +548,8 @@ GORAG_TOKEN, MUNINNDB_TOKEN                      (§5.5, only if that target req
 - **Bare-metal/systemd (§5.3's fallback):** here a bind address is a meaningful lever, and it defaults to `127.0.0.1` — mirroring the same loopback-by-default pattern go-rag itself uses for its own bridge target address. Reaching it from elsewhere on the network requires explicitly setting `--bind 0.0.0.0` or a specific interface.
 
 **Worth saying plainly, since v1 ships with zero auth (§5.8):** exposing go-parts beyond the Docker-internal network or localhost — before Phase 8's real auth lands — means exposing an unauthenticated REST/RPC/MCP API to whatever can reach it. The topology above is the safe default; publishing a port or fronting it with NPM is an informed, deliberate choice, not something the defaults nudge toward.
+
+**One related config value worth naming here:** `public_base_url` — the address printed inside Via QR labels (§5.24), since a phone scanning a label is on the home network, not the Docker-internal one, and needs a genuinely reachable address. Not a secret, lives in `.go-parts/config.json` alongside everything else non-secret; unset by default and falls back to the request's own incoming address.
 
 ### 5.19 Metrics & Dashboard Stats
 
@@ -612,6 +633,113 @@ This part of the original design holds — it's the review-agent mechanism that 
 - **§5.4 vendor plugin backoff** — mocked HTTP 429/401/404 responses verified against the classification table
 - **§5.10 background job queue** — a capped run leaves the correct parts `skipped`, and a resumed run picks them back up
 
+### 5.21 UI Conventions
+
+MuninnDB's own web UI (port 8476 — "decay charts, relationship graphs, live activation log") doesn't have a documented conventions doc the way its CLI and CLAUDE.md do, so there's no equivalent file to mirror here. What go-parts does have is a lot of *implicit* UI decisions already made across the style guide, the mockup, and this PRD — never pulled into one place, the way §5.12 did for CLI verb shapes. Doing that here, and filling the real gaps that fall out of decisions made elsewhere in the doc but never followed through to what the UI actually does.
+
+**Already decided elsewhere — formalized here, not re-litigated:**
+- Empty/no-match states are factual, never apologetic — `no matches for "x"`, not `oops, nothing found!` (style guide §9 Voice)
+- Search filters live, sorts on click, no submit step (§7.2)
+- Connection health for every dependent service is always visible, never tucked into settings (style guide, footer status bar)
+- Scanning a Location's Via resolves straight to its contents (§5.17)
+- Dashboard counts are always on screen, not a separate thing you go check (§5.19)
+
+**New — genuine gaps, not covered anywhere else yet:**
+
+- **Conflict resolution UI, following directly from §5.14's optimistic concurrency.** A `PATCH` rejected for a stale `version` doesn't fail silently or lose the edit — the form stays exactly as typed, with a banner stating plainly what happened: `this part changed since you loaded it — your edits are kept below; reload to see the latest before saving`. Never auto-merge, never auto-discard either side.
+- **That banner generalizes to every operation failure, not just version conflicts — a gap worth closing rather than leaving each failure type to invent its own treatment.** A vendor 429 (§5.4), an AI enrichment error (§5.9), an unreachable gateway (§5.5) — none of these had a defined UI surface, even though the backend already classifies and handles all of them. One banner component, three different situations it needs to cover:
+  - **Mid-action failures** (you clicked *enrich*, it failed right then) — the same banner, stating what failed and, critically, reusing §5.4's own retry classification for the copy rather than inventing new wording: a 429 says *"rate limited — will retry automatically,"* a 401 says *"authentication failed — check the API key,"* a 404 falls through silently to the next vendor since it was never a failure to begin with.
+  - **Background failures** (a job failed while nobody was watching) — no banner to interrupt, since nobody's mid-action. Discovery happens through what already exists: `enrichment_status = failed` on the part itself (a small `--warn` badge, same visual language as low-stock), and the `enrichment_failed` count already sitting in `GET /stats` (§5.19) — tapping that count filters straight to the failed parts, reusing the tag-filter mechanism from §5.7 rather than building a separate failure inbox.
+  - **Persistent failures** (a dependency has been down for a while, not a one-off blip) — this is exactly what the footer's connection dots already exist for (style guide, Status/footer bar): a gateway or vendor that's been unreachable shows red there continuously, not as a banner that would've long since scrolled away. A one-off transient failure gets a banner; an ongoing one gets a dot that stays red until it isn't.
+- **Confirmations are inline, not a native browser `confirm()`.** Destructive or expensive actions (deleting a part, deleting a location that still holds stock, triggering `search reindex` — cost-aware per §5.15) get a styled confirmation matching the rest of the interface, stating specifically what's about to happen — the same "say what will happen, require explicit confirm" principle already used for the CLI's `Overwrite? [y/N]` (§5.12), not a generic "are you sure?"
+- **Loading states reuse existing status machinery, not a new spinner convention.** A long-running operation (reindex, bulk import, vendor sync) shows as a status line — `reindexing… 340/3,115` — polling the same `GET /jobs` (§5.10) the CLI and dashboard already use, rather than inventing separate progress UI for the browser.
+- **No routine success toasts.** A saved edit just shows as saved — the field or panel reflects the new state directly. Toasts are reserved for confirming a destructive action actually completed, or a real error — not chatter on every field edit. Matches the style guide's motion principle: minimal, disciplined, no decorative feedback loops.
+- **Validation is inline, at the field, in `--warn`.** Not a summary block stacked at the top of a form — errors sit next to the specific field that has one, using the same warn color already defined for low-stock badges, so "something needs attention" reads consistently everywhere in the app.
+- **A small, fixed set of keyboard shortcuts, not an exhaustive list — expand only when there's a real reason to.** `/` for search (already built). Adding now: `Esc` closes the open panel/modal, `n` opens the new-part form. That's the whole set for now; more get added only when a specific workflow actually needs one, matching the "start basic, expand as needed" principle already used for locations (§7.1).
+- **Nested locations get a breadcrumb — a real gap, since `parent_location_id` (§6.1) supports arbitrary nesting (Workshop → Cabinet → Drawer → Bin) but nothing said how anyone sees that trail.** Appears on a Location's own view whenever it has a parent: muted (`--text-faint`) segments for each ancestor, the current location in full `--text`, each parent segment a link that navigates up. A top-level location with no parent just shows its plain label — no single-segment breadcrumb clutter for the common flat case. This matters most on exactly the surface most likely to land someone mid-hierarchy with no other context: the Via mobile landing page (§5.24) — scanning a bin's label and seeing only "Bin 3-A1" with no indication it's inside Drawer 3, Cabinet A, Workshop leaves no way to tell whether you scanned the right thing or navigate to the parent if you actually wanted the whole drawer. Out of scope for the TUI (§5.11) for now, consistent with its "not full feature parity" scope — location browsing isn't in the TUI's v1 feature set at all yet.
+
+### 5.22 Data Entry Conventions
+
+**Stock quantity is never a raw editable number in the UI — this is a correctness requirement, not a style choice.** §5.14 built `adjust_stock` as delta-based (`+10`, `-3`) specifically so two concurrent adjustments always compose correctly regardless of order. A UI field that lets someone type "set quantity to 47" reintroduces the exact lost-update race that design exists to prevent — read the old value, type a new absolute value, save; a second person's concurrent change vanishes. The quantity control is always `+`/`−` delta entry, never a bare number field, full stop.
+
+**MPN-first is the primary add-a-part flow, not a blank form.** Given §5.4's vendor auto-enrichment and §5.9's AI enrichment for the rest, the default path is: type or scan an MPN → auto-enrich runs → confirm/adjust what came back. A blank 15-field form is the fallback for local parts with no MPN (§6.1's `part_type = local`), not the default experience for the common case.
+
+**Barcode scanning is an entry shortcut, not just a lookup — extends §5.17's scan-to-find.** Scanning a vendor barcode while adding stock does one of two things depending on whether the part already exists: found → jump straight to the delta-quantity adjust; not found → pre-fills the MPN field and kicks off the MPN-first flow above. Either way, scanning is faster than typing, and it's already wired to fetch what it can.
+
+**Minimum viable save is a name — everything else is addable later.** A Part can be created with just a description (or an MPN, which pulls the rest in via enrichment). Location, specs, tags, custom fields are never required to complete an initial save. Entry never blocks on filling out a form fully; richness accumulates over time, matching the "start basic, expand as needed" principle already used for locations (§7.1) and datasheet storage (§5.6).
+
+**Unit-prefix shorthand works on entry, not just filtering.** §7.2 already lets you filter with `10k` instead of `10000`. Typing the same shorthand into a spec value on entry gets parsed and normalized the same way — it would be a real inconsistency to accept `10k` when searching but reject it when entering the value that search is supposed to find.
+
+**Freeform specs and custom fields get an add-a-row pattern, with autocomplete pulled from real data, not a fixed list.** Since §6.2 established there's no per-category schema, entering a spec is: key input + value input + an add-row button, growing as needed. Key autocomplete suggests from keys already used elsewhere in the catalog — the same dynamically-built key list §6.2 already uses for making filters appear, reused here rather than building a second mechanism for suggestions. Tag entry gets the identical autocomplete treatment (§5.7) — same mechanism, applied to `tags[]` instead of spec keys.
+
+**Manufacturer and footprint get the same autocomplete — with one real difference from tags: casing is preserved, not flattened.** Tags lowercase on save (§5.7) because casing genuinely doesn't matter for an informal label. Manufacturer names carry actual branding — `STMicroelectronics`, not `stmicroelectronics` — and footprint names are standardized nomenclature — `SOT-23`, not `sot-23` — so flattening either would look wrong. Matching stays case-insensitive (typing `yageo` still finds `Yageo`); display keeps whichever casing was first entered, or whatever a vendor plugin (§5.4) returned for a linked part. Both are single-value fields, so the interaction is one autocomplete input, not the add-a-row list tags and specs use.
+
+**Footprint gets a pre-populated seed list — tags and manufacturer deliberately don't, and it's worth saying why not.** The dynamic, usage-built autocomplete (above) has a real gap on a fresh catalog: type `SOT` before you've ever entered a SOT-package part and there's nothing to suggest, so you're back to free-typing and hoping it matches whatever spelling you use next time — the exact fragmentation autocomplete exists to prevent, just deferred until enough usage accumulates. Footprint is the one field where this is fixable, because footprint names are an actual bounded standard (JEDEC/IPC package designators), not an open-ended vocabulary — `0402`, `0805`, `SOT-23`, `SOIC-8`, `TQFP-32`, `DIP-8`, and so on. A small static list ships embedded in the binary (a Go slice, no database table, no migration) and merges into `GET /footprints`' results alongside whatever's actually been used, so the dropdown has real suggestions from the very first part entered. Tags and manufacturer don't get this treatment because there's no equivalent bounded set to seed from — tags are inherently personal and project-specific, and "common manufacturers" is a list of thousands with no natural stopping point, unlike a few dozen standard packages.
+
+**The seed list is a starting point, not a schema — still no enum, consistent with §6.2.** Seeded entries are suggestions with nothing forcing their use; typing something not on the list still works exactly like it does today, no restriction added. Usage-based entries and seed entries share one list, but real usage sorts first — once you've actually got 50 `0805` parts, your own inventory's counts lead, with the seed list filling in whatever you haven't used yet rather than competing with what you have.
+
+**The actual fragmentation risk here isn't sloppy typing — it's vendors disagreeing with each other.** For a linked part (§6.1), manufacturer and footprint usually come straight from a vendor plugin, not manual entry, so autocomplete-while-typing doesn't even apply most of the time. The real risk is LCSC reporting `YAGEO` and Mouser reporting `Yageo` for the literal same company on two different parts. Case-insensitive matching handles that at search/filter time regardless of whose casing won; rename/merge — same mechanism as tags, not a second one — is still there for whatever slips through anyway.
+
+**Sticky fields across a session, for rapid successive entry.** Receiving a shipment or doing a stocktake means adding several parts in a row. Location, tags, and vendor persist from the last entry within the same session rather than resetting to blank each time — "save and add another" is a first-class action alongside "save," not an afterthought.
+
+### 5.23 Frontend: HTMX
+
+**Decision, documented here for the first time.** The web UI is built with HTMX rather than a JS framework or a hand-rolled SPA. This wasn't written down anywhere until now — worth stating plainly rather than leaving it implicit.
+
+**Why it actually fits better than the alternative would have.** HTMX is server-rendered HTML with small `hx-*` attributes driving AJAX swaps — no bundler, no `npm run build`, no `node_modules`, no separate frontend build pipeline. The templates compile straight into the Go binary via `go:embed`, which is a *better* fit for the "single binary, zero-config start" goal (§2) than a React/SPA approach would have been — that would've meant a JS build step sitting in front of the one-binary promise everywhere else in this doc.
+
+**This means the web UI and the REST API are not literally the same endpoints — correcting §5.11's claim.** §5.11 said the TUI "talks to a running go-parts server over REST — the same API the web UI uses." That's no longer precise: HTMX needs HTML fragments back, not JSON, so the web UI can't share the JSON `/parts`, `/locations`, etc. endpoints verbatim the way the TUI does. What's actually true, and what matters: **both sit on the same core service and the same business logic** (§5.2's "parallel surfaces over one core service" principle) — the web UI's fragment routes (a distinct prefix, `/ui/*`) call into the identical Go functions the JSON REST handlers do, just rendering HTML instead of JSON at the end. One source of truth for "what can happen to a part," same as §5.11 intended — it's the wire format that differs, not the logic.
+
+**The already-established UI conventions (§5.21/§5.22) map onto this cleanly, which is worth noting rather than assuming.** They were written around polling and fragment-swap thinking already, not a client-side state framework:
+- Live search (§7.2) → `hx-trigger="keyup changed delay:300ms"`, swapping the table body fragment
+- Sortable columns → `hx-get` on the header, same swap
+- Detail panel on row click → `hx-get` targeting the panel, `hx-swap="innerHTML"`
+- Status line for long-running jobs (§5.21) → HTMX's built-in polling (`hx-trigger="every 2s"`) against the same `GET /jobs` the CLI already polls (§5.10) — this one lines up particularly well, since the status-line convention was already designed around polling before HTMX was decided
+- Quantity stepper (§5.22) → posts the delta, swaps just the on-hand count in place
+- Conflict banner (§5.21) → the fragment response on a version conflict includes the banner, swapped in above the untouched form
+
+**Minimal companion JS, not a second framework.** The mockup already uses small amounts of vanilla JS for things that don't need a server round-trip — the `/` search-focus shortcut, sort-arrow state. That continues as-is alongside HTMX rather than adding Alpine.js or hyperscript on top — one more dependency for a handful of client-only interactions isn't worth it.
+
+### 5.24 Via Scan: Mobile Flow
+
+The gap: §5.17 defined the Via resolver (`GET /via/{code}`) but never addressed how someone actually uses it while standing at a shelf — that's fundamentally a phone-camera interaction, and the existing three-column desktop layout isn't the right surface for it.
+
+**Scanning itself needs no code from go-parts at all.** A Via's printed QR label encodes a full URL, not a bare code — a phone's own camera app already reads QR codes and opens URLs natively, with zero in-page scanner required. Building one (`getUserMedia` + a JS decode library) would add a real dependency for something the phone already does better. Deliberately not built.
+
+**The label needs to know its own externally-reachable address — not the same as the internal bind address.** §5.18 established go-parts is Docker-internal by default, not published. A phone scanning a label is on the home WiFi, not the Docker network, so the QR code has to encode whatever address is actually reachable from there (an NPM-fronted hostname, or a LAN IP). That's a separate config value, `public_base_url`, used only when generating labels (§5.17's `POST /locations/{id}/label`) — with nothing set, label generation falls back to whatever address the request came in on, so it still works on the local network before anyone thinks to configure it explicitly.
+
+**What loads on scan is a minimal landing page, not the full app shell.** Dropping someone into the three-column desktop layout (top nav, sidebar, detail panel) mid-task, standing at a shelf, is the wrong experience even though the responsive floor (style guide §4) technically handles a narrow viewport. A scanned Via loads a single-column, task-focused view instead:
+- **Location Via** — the location's label as the header (with a breadcrumb above it if nested — §5.21), a list of what's stored there (MPN, description, phosphor-colored quantity), each row tappable straight into its quantity stepper
+- **Part Via** — that part's detail directly (specs, location, quantity), stepper front and center — this is exactly the local-part-with-no-vendor-barcode case §5.17 called out, and the moment someone's standing there wanting to adjust stock, not browse
+- A minimal top bar (wordmark + a "full app" link), not the six-item top nav from §5.7 — that's overkill for a task meant to take five seconds
+
+**Tap targets are sized for a thumb, not a mouse.** The quantity stepper's `+`/`−` buttons get a larger mobile hit area than their desktop sizing in the style guide — same visual treatment, bigger touch target underneath.
+
+**A second scan path already exists for the desktop workshop, at zero extra build cost.** A USB barcode scanner emulates a keyboard — focus the existing search box (§7.2's live search) and scan; the code appears as typed text and search runs immediately. Two different physical contexts, two different mechanisms that need nothing new built: phone camera → URL → mobile landing page; desktop USB scanner → keyboard emulation → the search box that already exists.
+
+**Auth is inherited for free once Phase 8 lands.** SSO (§5.8) is already a browser redirect flow, which works identically on mobile — scanning a Via while logged out just redirects through Pocket-ID/TinyAuth the same way a fresh browser tab would. No separate mobile-auth design needed.
+
+### 5.25 First-Run & Empty States
+
+The gap: §5.21 already covers "no matches for x," but a brand-new install with zero parts, zero locations, zero everything is a genuinely different situation — and it's the literal first thing anyone sees after the "under 5 minutes" cold-start promise (§2) actually delivers. Getting this wrong undercuts the whole point of making setup fast.
+
+**Two different empty states, two different tones — worth keeping distinct rather than reusing one message.**
+- **"No matches"** (§5.21) — you searched or filtered, nothing matched, data exists elsewhere. Purely factual, reports an absence.
+- **"Nothing here yet"** — the catalog itself is empty, nobody's added anything. Still plain, still no exclamation marks (§9's voice rules don't relax here), but it points at what to do next rather than just reporting absence — an invitation, not a null result.
+
+**Each section's first-run state points at its own fastest path forward, not a generic "add something":**
+- **Parts, empty catalog** — "no parts yet" + two actions: *add a part* (kicks off the MPN-first flow, §5.22) and *import a BOM* (§7.1) — the two real entry points already designed, surfaced here instead of a blank table
+- **Storage, no locations** — "no locations yet" + *create a location*, defaulting to the `Single` method (§7.1) as the suggested first step, not Row/Grid/3D Grid presented with equal weight — matches "start basic, expand as needed" rather than confronting day one with all four options at once
+- **Projects, no BOMs** — "no projects yet" + *create a project* or *import a KiCAD BOM*
+
+**Dashboard: one panel, not six empty stat cards.** When every count from `GET /stats` (§5.19) is zero, showing "0 parts · 0 locations · 0 projects · 0 low-stock" as separate widgets says nothing useful and reads worse than saying nothing at all. The dashboard collapses to a single first-run panel with the same actions as the Parts empty state, replacing the stat grid entirely until there's something to actually report.
+
+**Purchasing/Builds/Reports need an honest third state — "not built yet" is not "no data yet."** Those sections sit in the top nav (§5.7) because they're part of the fixed information architecture, but they're Phase 6+ features. A running v1–v3 install genuinely can't do anything there — that's a different situation from "you haven't added a part yet," and dressing it up as an inviting empty state would be dishonest. These get a plain, informational note instead, no call-to-action, because there isn't a real one yet.
+
+**TUI gets the same distinction, not a different one.** A fresh `go-parts tui` against an empty catalog shows "no parts yet" the same way the web UI does, pointing at the equivalent next step in its own vocabulary — since the TUI's scope doesn't include the rich MPN-enrichment form (§5.11), the hint points at the web UI or a CLI command rather than trying to replicate that flow in a terminal.
+
+**`go-parts init` ends with a next step, not silence.** §5.12's guided wizard already walks through first-run config. Finishing it without saying what to do next wastes the moment it's best positioned for — the wizard's last line names the concrete next action: open the web UI at the configured address, or run `go-parts tui`, to add the first part.
+
 ---
 
 ## 6. Data Model
@@ -619,7 +747,7 @@ This part of the original design holds — it's the review-agent mechanism that 
 ### 6.1 v1 Data Model
 
 **Part**
-- `id`, `mpn`, `manufacturer`, `category`, `subcategory`
+- `id`, `mpn`, `manufacturer`
 - `part_type` (`linked` | `local`) — linked = has an MPN and gets vendor-enriched; local = generic/no-name/custom, name-only (adopted from PartsBox's part-type model; `meta` and `sub_assembly` types arrive in §6.3)
 - `via_code` (unique, indexed — go-parts' own scannable identity, distinct from any vendor barcode — see §5.17)
 - `description`, `specs` (flexible key/value — resistance, tolerance, voltage, etc.)
@@ -661,7 +789,7 @@ A resistor has resistance/tolerance/power. A capacitor has capacitance/voltage/d
 - **Structured filtering** builds its list of filterable keys dynamically from what actually exists across your current parts, not from a fixed dropdown — the same approach PartsBox uses for custom-field filtering. A key only shows up as filterable once at least one part actually uses it.
 - **Unit-prefix numeric filtering** (§7.2 — `10k` instead of `10000`) is a parsing step applied at filter time to whatever key you're filtering on, not a declared type per key. Any spec value that looks like a number with a unit prefix can be range-filtered; nothing about the schema needs to know in advance that "resistance" is numeric and "dielectric" isn't.
 
-**New attributes need zero migration.** A vendor plugin encountering a component type it's never seen before, the AI enrichment model extracting an unfamiliar field from a datasheet, or you typing a new custom field by hand — all three just add a new key to the map. `category`/`subcategory` are plain strings too, not an enum, so a genuinely new component category is also just a new value, not a schema change.
+**New attributes need zero migration.** A vendor plugin encountering a component type it's never seen before, the AI enrichment model extracting an unfamiliar field from a datasheet, or you typing a new custom field by hand — all three just add a new key to the map. Same for tags (§5.7) — a genuinely new one is just a new value, nothing to define first. That freedom has a visual consequence worth naming rather than leaving implicit: the style guide's hand-drawn icons only map to six common tag values, so anything else needs a defined fallback — a dashed-outline placeholder, the same convention KiCad uses for an unassigned footprint (style guide §5), rather than a broken icon slot.
 
 **Deliberately not built for v1:** per-key type/unit declarations (formally marking "resistance" as a numeric field with unit "Ω") for stronger validation or nicer auto-generated form inputs. Worth revisiting if the freeform approach ever proves too loose in practice, but it's not needed for correctness and would be exactly the kind of upfront schema design this section is avoiding.
 
@@ -678,9 +806,15 @@ These arrive in Phase 6+ (§10) — deliberately not v1 scope, so the "start usi
 
 **Build** — `id`, `project_id`, `quantity`, `stage` (single, or a stage number for multi-stage), `status` (`in_progress`|`completed`), `stock_consumed[]` (part_id, lot_id?, location_id, quantity), `created_at`
 
-**PurchaseList** — `id`, `name`, `source_project_ids[]` with build quantities, `entries[]` (aggregated across the source projects)
+**Purchasing, right-sized: track what you bought and what it cost — not a requirement-planning engine.** An earlier pass at this pulled in PartsBox's contract-manufacturer machinery wholesale (source filters shared with Builds, gross/net requirement netting, MOQ-matched vendor offers, multi-vendor order splitting) without checking whether a home or makerspace setup actually needs it. It doesn't. Simplified:
 
-**Order** — `id`, `vendor`, `status` (`open`|`ordered`|`received`), `lines[]` (part_id, quantity_packages, unit_price), `expected_delivery_date`
+**Purchase** — `id`, `vendor`, `date`, `lines[]` (part_id, quantity, unit_price), `notes`, `attachment_ref` (optional receipt/invoice). A record of something you bought. That's the whole entity — no status lifecycle, no per-vendor splitting, no offer-matching.
+
+**Logging a purchase is the same action as adding stock, with two optional fields — not a separate flow.** The delta-quantity stepper (§5.14/§5.22) already handles stock increases. Attaching a vendor and unit cost to that same `+` action creates the Purchase record automatically — one gesture, not "adjust stock" and then separately "log a purchase" for the same event. Buying without logging cost is still fine; the fields are optional, not a second required form.
+
+**Shopping list** — `id`, `name`, `entries[]` (part_id, quantity_wanted). A plain list of things to buy, checked off as you buy them (which logs the Purchase per the point above). Seedable two ways: from parts below `reorder_threshold` (already exists on Part), or from a project's BOM with a simple subtraction — `quantity_wanted = BOM quantity − quantity_on_hand` — no source filters, no availability scoping, no vendor matching. If that's ever genuinely not enough for a busier makerspace, it's a real future conversation, not something to build speculatively now.
+
+**Cost tracking falls out of this almost for free.** Per-part cost history is just the Purchase records for that part over time. A running "total spent" figure for the dashboard (§5.19) is a sum over `Purchase.lines[]` — cheap to compute, no new machinery, answers the actual question that was asked.
 
 ---
 
@@ -713,15 +847,21 @@ These arrive in Phase 6+ (§10) — deliberately not v1 scope, so the "start usi
 - In-table search — filters the current table's rows as you type (already in the mockup)
 - Sortable columns (already in the mockup)
 - Filtering with unit-prefix numeric entry — type `10k` instead of `10000` for a 10kΩ resistor, matching PartsBox's convention (`k`, `M`, `m`, `u`/`μ`, `n`, `p`, etc.)
-- Bulk operations on a selection — tag, move to location, delete
+- **Bulk operations on a selection — tag, move to location, delete.** The promise existed before the mechanics did; specifying those here:
+  - **Selection is a dedicated checkbox column, not overloaded onto row click.** Clicking a row already means "show this one in the detail panel" (mockup, style guide) — reusing that same click for multi-select would make one gesture mean two different things depending on context, which is exactly the kind of ambiguity worth avoiding. A leftmost checkbox column, separate from that behavior, with a header checkbox for "select all currently visible" — scoped to what's visible after the live search/filter, not the whole catalog, consistent with how filtering already scopes everything else in the table.
+  - **Shift-click a checkbox to select the range** between it and the last one clicked — standard, cheap, and genuinely useful when selecting a run of rows that happen to be sorted together (e.g., everything from one vendor after sorting by MPN).
+  - **Selecting anything replaces the toolbar's chip row with a bulk-action bar** (`N selected · Tag · Move · Delete · Clear`) — reusing the existing toolbar space (§8.1's mockup) rather than adding new UI real estate, the same "reuse what's already there" principle used for job status and reindex elsewhere in this doc.
+  - **Selection persists across a re-sort, clears on a new search.** Sorting only reorders rows that are still selected; changing the search query changes which rows even exist in the current view, so keeping a selection of now-hidden rows around would be confusing — it clears instead, matching how most tools behave.
+  - **Bulk delete reuses the existing confirmation panel (§5.21), not a separate pattern** — same component, just with the count made explicit: `delete 12 parts? this can't be undone.`
+  - **Fits the HTMX model without new machinery (§5.23):** the checked boxes share one `name` attribute and submit as native form data on the bulk-action POST — no client-side JS array tracking selection state, the checked DOM elements already are the state.
 - CSV export of the current filtered/sorted view
 
 ### 7.3 Extended Features (PartsBox-inspired, later phases — see §10)
 
 - Substitutes: meta-parts, part substitutes, BOM substitutes (§6.3)
 - Builds: single-stage first; multi-stage, kitting, and per-device serial-number tracking as a stretch goal
-- Purchase lists: shopping-cart-style aggregation across multiple projects' BOMs, de-duplicated
-- Orders: Open → Ordered → Received lifecycle, receiving parts into stock
+- Purchase tracking: logging a stock increase with an optional vendor and unit cost creates a Purchase record — the same action, not a separate flow. Per-part cost history and a "total spent" dashboard figure fall out of this for free.
+- Shopping list: a plain list of what to buy, seeded from parts below `reorder_threshold` or a simple `BOM qty − on-hand` from a project — no requirement-planning engine behind it
 - Vendor rule groups: named, reorderable fallback chains for offer selection (extends the simple priority-order registry in §5.4 into something closer to PartsBox's rule groups)
 - Reports: inventory valuation, updating live — basic counts (parts, locations, low-stock) are already v1 via `GET /stats` (§5.19); valuation needs `supplier_links`/`Lot` price aggregation, real computation this phase adds
 
@@ -737,6 +877,12 @@ POST   /parts
 PATCH  /parts/{id}                 (requires If-Match: <etag> — rejects on version conflict, §5.14)
 DELETE /parts/{id}
 POST   /parts/{id}/stock           (delta-based, no version required — §5.14)
+GET    /tags                       (live list with counts, powers the sidebar — §5.7)
+PATCH  /tags/{tag}                 (rename everywhere it's used, or {merge_into: "other-tag"} — §5.7, admin-only in Phase 8)
+GET    /manufacturers              (live list, powers autocomplete — §5.22, same shape as /tags)
+PATCH  /manufacturers/{name}       (rename or {merge_into} — same mechanism as tags, admin-only in Phase 8)
+GET    /footprints                 (usage-built list merged with an embedded seed list of common JEDEC/IPC package names — §5.22)
+PATCH  /footprints/{name}          (rename or {merge_into})
 GET    /locations
 POST   /locations                  (single: {label, parent_location_id?, single_part_only?})
 POST   /locations/bulk             (row | grid | 3d_grid — see §7.1 for the four methods)
@@ -760,10 +906,10 @@ POST   /parts/{id}/substitutes
 POST   /meta-parts
 POST   /builds
 GET    /projects/{id}/builds
-POST   /purchase-lists
-GET    /purchase-lists/{id}
-POST   /orders
-PATCH  /orders/{id}/status         (open → ordered → received)
+POST   /shopping-lists             ({project_id, build_qty} or {below_reorder_threshold: true})
+GET    /shopping-lists/{id}        (entries with quantity_wanted = BOM qty − on-hand, or reorder gap)
+POST   /parts/{id}/stock           (vendor + unit_price fields optional — logging a purchase is the same call as adjusting stock, §5.14)
+GET    /purchases                  (?part_id= or ?vendor= — cost history)
 ```
 
 **MCP Tools (representative)**
@@ -771,10 +917,10 @@ PATCH  /orders/{id}/status         (open → ordered → received)
 - `get_part(id | mpn)`
 - `upsert_part(...)` — full-record edits require the current `version` (§5.14); rejected on conflict rather than overwriting
 - `adjust_stock(id, delta, reason)` — delta-based, no version needed (§5.14)
-- `find_substitutes(id)` — same category/specs within tolerance
+- `find_substitutes(id)` — same specs within tolerance
 - `list_low_stock()`
 - `enrich_part_from_vendor(mpn, vendor?)` — pull description/pricing/stock/datasheet via a registered vendor plugin
-- `enrich_part_with_model(id)` — run the optional configurable AI model stage (§5.9) to structure specs/category/tags/summary from raw data or a datasheet
+- `enrich_part_with_model(id)` — run the optional configurable AI model stage (§5.9) to structure specs/tags/summary from raw data or a datasheet
 - `list_pending_enrichment()` — check the background job queue (§5.10), useful right after a bulk import
 - `get_inventory_stats()` — part/location/project counts, low-stock summary (§5.19), a natural fit for "how many parts do I have"-style questions
 
@@ -811,7 +957,7 @@ PATCH  /orders/{id}/status         (open → ordered → received)
 - **Phase 3** — Vector/semantic search, datasheet text extraction, BOM import/export, KiCAD integration, optional configurable AI enrichment model (§5.9, off by default) — embedding and enrichment jobs run through the Phase 2 background queue so bulk imports stay fast
 - **Phase 4** — RPC layer formalized as wire-level protocol (CLI + future KiCAD plugin consumer), project/BOM linking, substitutes engine
 - **Phase 5** — go-rag gateway (embedded or remote indexing), MuninnDB gateway (event push + recall query)
-- **Phase 6** — PartsBox-inspired depth: substitutes model (meta-parts, part substitutes, BOM substitutes), single-stage builds, purchase lists + orders (Open/Ordered/Received), vendor rule groups, live low-stock/valuation reports
+- **Phase 6** — PartsBox-inspired depth: substitutes model (meta-parts, part substitutes, BOM substitutes), single-stage builds, shopping lists + purchase/cost tracking (§6.3), vendor rule groups, live low-stock/valuation reports
 - **Phase 7 (stretch)** — optional lot control toggle, multi-stage builds + kitting (pick list / build worksheet), per-device serial-number tracking
 - **Phase 8 (future, makerspace trigger)** — multi-user: real auth via Pocket-ID/TinyAuth SSO (replacing the no-op middleware from §5.8), admin/member permission tiers, live web UI updates (WebSocket/SSE)
 
