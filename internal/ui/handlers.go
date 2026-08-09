@@ -359,6 +359,8 @@ func applySort(pts []*parts.Part, key, dir string) {
 	switch key {
 	case "mpn":
 		sort.Slice(pts, func(i, j int) bool { return less(pts[i].MPN, pts[j].MPN, dir) })
+	case "footprint":
+		sort.Slice(pts, func(i, j int) bool { return less(pts[i].Footprint, pts[j].Footprint, dir) })
 	case "qty":
 		sort.Slice(pts, func(i, j int) bool { return lessInt(pts[i].QtyOnHand, pts[j].QtyOnHand, dir) })
 	}

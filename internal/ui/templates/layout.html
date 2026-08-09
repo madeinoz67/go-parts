@@ -41,8 +41,9 @@
           <tr>
             <th role="columnheader"><a hx-get="/ui/parts/search?sort=mpn&dir=asc" hx-target="#parts-tbody" hx-include="#search">MPN <span class="sort-ind">↕</span></a></th>
             <th>Description</th>
-            <th>Category</th>
+            <th role="columnheader"><a hx-get="/ui/parts/search?sort=footprint&dir=asc" hx-target="#parts-tbody" hx-include="#search">Package <span class="sort-ind">↕</span></a></th>
             <th role="columnheader"><a hx-get="/ui/parts/search?sort=qty&dir=asc" hx-target="#parts-tbody" hx-include="#search">Qty <span class="sort-ind">↕</span></a></th>
+            <th>Status</th>
           </tr>
         </thead>
         <tbody id="parts-tbody">

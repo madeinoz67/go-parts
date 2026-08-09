@@ -6,7 +6,6 @@
     <option value="linked">linked</option>
     <option value="local">local</option>
   </select>
-  <input name="category" placeholder="category">
   <input name="footprint" list="footprints-list" placeholder="footprint">
   <datalist id="footprints-list">{{range .Footprints}}<option value="{{.}}">{{end}}</datalist>
   <input name="qty" placeholder="qty" type="number" min="0">

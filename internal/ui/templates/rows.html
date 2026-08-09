@@ -1,7 +1,7 @@
 {{define "rows.html"}}
 <tbody id="parts-tbody">
 {{if not .Parts}}
-  <tr class="empty"><td colspan="4">no matches for "{{.Q}}"</td></tr>
+  <tr class="empty"><td colspan="5">no matches for "{{.Q}}"</td></tr>
 {{else}}
 {{range .Parts}}{{template "row.html" (dict "P" .)}}{{end}}
 {{end}}

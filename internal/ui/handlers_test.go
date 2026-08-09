@@ -413,3 +413,57 @@ func TestEditConfirmFlagSavesUnknownFootprint(t *testing.T) {
 		t.Errorf("confirmed edit should save the unknown footprint; got %q", got.Footprint)
 	}
 }
+
+// TestSearchRowShowsPackageAndStatus locks in slice 2's table columns: the
+// row fragment must surface Footprint (Package column) and a status badge,
+// and must no longer carry a Category column header. The layout thead is
+// rendered once on /ui/ but the row fragment is what search swaps in — since
+// search returns a fresh <tbody id="parts-tbody"> (rows.html) the header lives
+// only in layout.html; this test asserts the row body carries the new cells.
+// The Category-header check guards against a stale layout thead regressing.
+func TestSearchRowShowsPackageAndStatus(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "R1", Description: "10k", PartType: "local", Footprint: "0805", QtyOnHand: 50, ReorderPoint: 10})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search", nil))
+	body := rr.Body.String()
+	for _, want := range []string{"0805", "badge-ok", ">OK<"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("row missing %q; body=%s", want, body)
+		}
+	}
+	// Layout thead must not surface a Category column anymore — fetch the shell.
+	shellRR := httptest.NewRecorder()
+	srv.ServeHTTP(shellRR, httptest.NewRequest("GET", "/ui/", nil))
+	shellBody := shellRR.Body.String()
+	if strings.Contains(shellBody, "<th>Category</th>") {
+		t.Errorf("Category column should be gone; shell=%s", shellBody)
+	}
+}
+
+// TestSearchRowLowStockBadge pins the LOW branch of the shared status-badge
+// partial: a part at/below ReorderPoint renders badge-warn + LOW text.
+func TestSearchRowLowStockBadge(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "LOW1", PartType: "local", QtyOnHand: 2, ReorderPoint: 10})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, "badge-warn") || !strings.Contains(body, ">LOW<") {
+		t.Errorf("low-stock row should show a LOW warn badge; body=%s", body)
+	}
+}
+
+// TestSortByFootprint covers the new footprint sort case in applySort — asc
+// must put "0805" before "SOT-23" in the rendered rows.
+func TestSortByFootprint(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "B", PartType: "local", Footprint: "SOT-23"})
+	srv.store.Create(&parts.Part{MPN: "A", PartType: "local", Footprint: "0805"})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search?sort=footprint&dir=asc", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, "0805") || strings.Index(body, "0805") > strings.Index(body, "SOT-23") {
+		t.Errorf("asc footprint sort should put 0805 before SOT-23; body=%s", body)
+	}
+}

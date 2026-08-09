@@ -1,8 +1,9 @@
 {{define "row.html"}}
 <tr hx-get="/ui/parts/{{.P.ID}}" hx-target="#detail-panel" hx-swap="innerHTML">
-  <td>{{.P.MPN}}</td>
+  <td class="mpn">{{.P.MPN}}</td>
   <td>{{.P.Description}}</td>
-  <td>{{.P.Category}}</td>
+  <td>{{.P.Footprint}}</td>
   <td class="num">{{.P.QtyOnHand}}</td>
+  <td>{{template "status-badge.html" (dict "P" .P)}}</td>
 </tr>
 {{end}}
