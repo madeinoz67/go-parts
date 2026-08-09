@@ -76,6 +76,7 @@ func (s *Store) lockFor(id string) *sync.Mutex {
 // but Create itself is not idempotent at the parts keyspace — same id always
 // overwrites the prior record).
 func (s *Store) Create(p *Part) error {
+	normalizeTags(p)
 	now := time.Now().UTC()
 	if p.ID == "" {
 		p.ID = newID()
@@ -138,6 +139,7 @@ func (s *Store) Get(id string) (*Part, error) {
 // missing them — the caller (typically REST T10) is expected to Get-then-edit
 // so the create-time audit fields round-trip. Documented as a T10 concern.
 func (s *Store) Update(p *Part, expectedVersion int) error {
+	normalizeTags(p)
 	mu := s.lockFor(p.ID)
 	mu.Lock()
 	defer mu.Unlock()
@@ -272,6 +274,59 @@ func (s *Store) DistinctFootprints() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// TagCount is a single tag-facet entry: the tag and how many parts carry it.
+type TagCount struct {
+	Tag   string
+	Count int
+}
+
+// TagCounts returns every tag in use across the catalog with its part count,
+// sorted by count desc then tag asc — the §5.7/§6.2 dynamic sidebar facet.
+// Same PartsPrefixBound scan as List/DistinctFootprints; best-effort read-only
+// (skips undecodable records). Tags are lowercased on save (normalizeTags), so
+// no normalization happens here — a Resistor/resistor split would be a bug in
+// normalizeTags, not something TagCounts defends against.
+func (s *Store) TagCounts() []TagCount {
+	var ws [8]byte
+	lower, upper := keys.PartsPrefixBound(ws)
+	it, err := s.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
+	if err != nil {
+		return nil
+	}
+	defer it.Close()
+	counts := make(map[string]int)
+	for it.First(); it.Valid(); it.Next() {
+		var p Part
+		if err := json.Unmarshal(it.Value(), &p); err != nil {
+			continue
+		}
+		for _, tg := range p.Tags {
+			counts[tg]++
+		}
+	}
+	out := make([]TagCount, 0, len(counts))
+	for tg, c := range counts {
+		out = append(out, TagCount{Tag: tg, Count: c})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Tag < out[j].Tag
+	})
+	return out
+}
+
+// normalizeTags lowercases all tags in place (§5.7 — Resistor and resistor are
+// the same tag). Called by Create and Update so the sidebar facet (TagCounts)
+// never splits on case. Tags persist lowercased; queries/filters that compare
+// against tags must lowercase their comparison side (slice 3b's responsibility).
+func normalizeTags(p *Part) {
+	for i, tg := range p.Tags {
+		p.Tags[i] = strings.ToLower(tg)
+	}
 }
 
 // AdjustStock applies a commutative stock delta (§5.14) to QtyOnHand under a

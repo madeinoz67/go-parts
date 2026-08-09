@@ -2,6 +2,7 @@ package parts
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
@@ -156,5 +157,43 @@ func TestIndexTextEmitsWeightedFields(t *testing.T) {
 	}
 	if f["custom:project"] != "go-parts" {
 		t.Errorf("indexText[custom:project] = %q, want go-parts", f["custom:project"])
+	}
+}
+
+// TestTagCounts pins §5.7's dynamic tag facet: Store.TagCounts tallies each
+// part's Tags and returns them sorted by count desc then tag asc — the order
+// slice 3b's sidebar renders. Mirrors DistinctFootprints' PartsPrefixBound scan
+// + skip-undecodable posture (read-only, best-effort).
+func TestTagCounts(t *testing.T) {
+	store := newStore(t)
+	store.Create(&Part{MPN: "a", PartType: "local", Tags: []string{"resistor", "smd"}})
+	store.Create(&Part{MPN: "b", PartType: "local", Tags: []string{"resistor"}})
+	store.Create(&Part{MPN: "c", PartType: "local", Tags: []string{"capacitor"}})
+
+	got := store.TagCounts()
+	if len(got) != 3 {
+		t.Fatalf("TagCounts = %d entries, want 3: %+v", len(got), got)
+	}
+	// resistor(2) first by count; then capacitor(1) and smd(1) alpha asc.
+	if got[0].Tag != "resistor" || got[0].Count != 2 {
+		t.Errorf("got[0] = %+v, want {resistor 2}", got[0])
+	}
+	if got[1].Tag != "capacitor" || got[2].Tag != "smd" {
+		t.Errorf("count-tie order should be alpha asc (capacitor before smd): %+v", got)
+	}
+}
+
+// TestTagsLowercasedOnSave pins §5.7's "Resistor and resistor are the same tag"
+// contract: Create (and by symmetry Update) MUST lowercase tags before they
+// hit the keyspace, so the TagCounts facet never splits on case.
+func TestTagsLowercasedOnSave(t *testing.T) {
+	store := newStore(t)
+	p := &Part{MPN: "x", PartType: "local", Tags: []string{"Resistor", "SMD"}}
+	store.Create(p)
+	got, _ := store.Get(p.ID)
+	for _, tg := range got.Tags {
+		if tg != strings.ToLower(tg) {
+			t.Errorf("tag %q was not lowercased on save", tg)
+		}
 	}
 }
