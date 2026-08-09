@@ -144,13 +144,6 @@ button,a,input,th[role="columnheader"],tr{transition:background-color 150ms ease
 }
 /* junction under the nav row: copper hairline with a via-dot at each column edge */
 /* ── §6 Top navigation ───────────────────────────────────────────────────── */
-.topnav .nav-list{
-  display:flex;
-  gap:0;
-  list-style:none;
-  margin:0;padding:0;
-  align-items:stretch;
-}
 .topnav .nav-item{
   display:inline-flex;
   align-items:center;
@@ -441,19 +434,14 @@ table.parts{
 }
 .wordmark .cursor{animation:cursor-blink 1.05s steps(1,end) infinite}
 
-/* ── §4 Responsive — sidebar → chip-row <900px; detail → bottom-sheet <700px ─ */
+/* ── §4 Responsive — sidebar → chip-row <900px; detail stacks under main ── */
 @media(max-width:900px){
-  .shell{
+  .body-grid{
     grid-template-columns:1fr;
-    grid-template-areas:
-      "nav"
-      "main"
-      "detail"
-      "status";
+    grid-template-areas:"main" "detail";
   }
-  .sidebar{
-    display:none; /* chip-row rendered by the mobile sidebar placeholder (Tasks 5+) */
-  }
+  .body-grid .sidebar{ display:none; }
+  .body-grid .detail{ border-left:none; border-top:1px solid var(--border); }
   /* Mobile chip-row — horizontal scroller of category chips above the table. */
   .chip-row{
     display:flex;
@@ -479,31 +467,10 @@ table.parts{
   .chip.active{color:var(--copper-bright);border-color:var(--copper)}
 }
 
-@media(max-width:700px){
-  .shell{
-    grid-template-columns:1fr;
-    grid-template-rows:auto 1fr auto auto;
-    grid-template-areas:
-      "nav"
-      "main"
-      "detail"
-      "status";
-  }
-  .detail{
-    border-left:none;
-    border-top:1px solid var(--border);
-    /* bottom-sheet feel: slides up only when a row is selected — Tasks 5+ toggle a
-       .detail.open class; collapsed by default to give the table the full row. */
-    max-height:0;
-    overflow:hidden;
-    padding:0 18px;
-    transition:max-height 200ms ease,padding 200ms ease;
-  }
-  .detail.open{
-    max-height:60vh;
-    padding:14px 18px;
-  }
-}
+/* ≤700px inherits the ≤900px stack (one column, detail under main, sidebar hidden).
+   A future bottom-sheet detail panel (Tasks 5+) will re-introduce a ≤700px block
+   with the toggle JS it needs; deferring it here avoids collapsing detail with no
+   way to reopen it. */
 
 /* ── §7 Motion — reduced-motion: kill transitions + cursor blink ────────── */
 @media(prefers-reduced-motion:reduce){
