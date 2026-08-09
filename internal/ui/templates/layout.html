@@ -37,10 +37,11 @@
     </aside>
 
     <main class="main">
-      <div class="toolbar" id="toolbar"><!-- slice 4 populates chips/bulk-bar --></div>
+      {{template "bulk-bar.html" .}}
       <table class="parts">
         <thead>
           <tr>
+            <th class="checkbox-col"><input type="checkbox" class="row-checkbox" id="selectAll" aria-label="select all visible" onchange="toggleSelectAll(this)"></th>
             <th role="columnheader"><a hx-get="/ui/parts/search?sort=mpn&dir=asc" hx-target="#parts-tbody" hx-include="#search">MPN <span class="sort-ind">↕</span></a></th>
             <th>Description</th>
             <th role="columnheader"><a hx-get="/ui/parts/search?sort=footprint&dir=asc" hx-target="#parts-tbody" hx-include="#search">Package <span class="sort-ind">↕</span></a></th>
@@ -69,7 +70,62 @@
   </footer>
 </div>
 <script>
-document.addEventListener('keydown', e => { if (e.key === '/' && document.activeElement.id !== 'search') { e.preventDefault(); document.getElementById('search').focus(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && document.activeElement.id !== 'search') { e.preventDefault(); document.getElementById('search').focus(); }
+  if (e.key === 'Escape') {
+    document.getElementById('confirmOverlay')?.classList.remove('active');
+    const dp = document.getElementById('detail-panel');
+    if (dp) dp.innerHTML = '<p class="hint">select a part</p>';
+  }
+  if (e.key === 'n' && document.activeElement.id !== 'search' && !/input|select|textarea/i.test(document.activeElement.tagName)) {
+    document.getElementById('search')?.blur();
+    htmx.trigger(document.querySelector('[hx-get="/ui/parts/new"]'), 'click');
+  }
+});
+
+function updateBulkBar(){
+  const checked = document.querySelectorAll('tbody tr .row-checkbox[name=id]:checked');
+  const bar = document.getElementById('bulkBar');
+  const chips = document.getElementById('chipsRow');
+  if (checked.length > 0) {
+    chips.style.display = 'none'; bar.classList.add('active');
+    document.getElementById('bulkCount').textContent = checked.length + ' selected';
+  } else {
+    chips.style.display = 'flex'; bar.classList.remove('active');
+  }
+  const all = document.querySelectorAll('tbody tr .row-checkbox[name=id]');
+  document.getElementById('selectAll').checked = all.length > 0 && checked.length === all.length;
+}
+function toggleSelectAll(src){
+  document.querySelectorAll('tbody tr:not([style*="display: none"]) .row-checkbox[name=id]').forEach(cb => cb.checked = src.checked);
+  updateBulkBar();
+}
+function clearSelection(){
+  document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+  updateBulkBar();
+}
+let lastChecked = null;
+document.addEventListener('click', e => {
+  const cb = e.target.closest('tbody tr .row-checkbox[name=id]');
+  if (!cb) return;
+  if (e.shiftKey && lastChecked) {
+    const boxes = [...document.querySelectorAll('tbody tr .row-checkbox[name=id]')];
+    const i = boxes.indexOf(cb), j = boxes.indexOf(lastChecked);
+    boxes.slice(Math.min(i,j), Math.max(i,j)+1).forEach(b => b.checked = true);
+  }
+  lastChecked = cb;
+  updateBulkBar();
+});
+function askDelete(){
+  const n = document.querySelectorAll('tbody tr .row-checkbox[name=id]:checked').length;
+  document.getElementById('confirmCount').textContent = n;
+  document.getElementById('confirmOverlay').classList.add('active');
+}
+function hideConfirm(){ document.getElementById('confirmOverlay').classList.remove('active'); }
+// htmx swaps the tbody on search/sort; re-sync the bar afterwards.
+document.body.addEventListener('htmx:afterSwap', e => {
+  if (e.target.id === 'parts-tbody') { lastChecked = null; updateBulkBar(); }
+});
 </script>
 </body>
 </html>

@@ -1,0 +1,30 @@
+{{define "bulk-bar.html"}}
+<div class="toolbar">
+  <div class="chips" id="chipsRow">
+    <a class="chip active" hx-get="/ui/parts/search" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" hx-push-url="true">all parts</a>
+    <a class="chip" hx-get="/ui/parts/search?low=1" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" hx-push-url="true">low stock</a>
+  </div>
+  <div class="bulk-bar" id="bulkBar">
+    <span class="count" id="bulkCount">0 selected</span>
+    <form hx-post="/ui/parts/bulk-delete" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" id="bulkDeleteForm">
+      <input type="hidden" name="q" value="{{or .Q ""}}">
+      <input type="hidden" name="tag" value="{{or .Tag ""}}">
+      <input type="hidden" name="low" value="{{or .Low ""}}">
+      <input type="hidden" name="sort" value="{{or .Sort ""}}">
+      <input type="hidden" name="dir" value="{{or .Dir ""}}">
+      <button type="button" class="btn-bulk btn-danger" onclick="askDelete()">delete</button>
+    </form>
+    <button class="btn-bulk" onclick="clearSelection()">clear</button>
+  </div>
+</div>
+
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-panel">
+    <p>delete <span id="confirmCount">0</span> parts? this can't be undone.</p>
+    <div class="confirm-actions">
+      <button class="btn" onclick="hideConfirm()">cancel</button>
+      <button class="btn btn-danger" onclick="document.getElementById('bulkDeleteForm').requestSubmit()">delete</button>
+    </div>
+  </div>
+</div>
+{{end}}

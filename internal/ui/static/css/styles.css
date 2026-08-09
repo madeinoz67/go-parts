@@ -509,3 +509,28 @@ table.parts{
    re-invent it under .sidebar). */
 .eyebrow{ font-family:"IBM Plex Mono",monospace; font-weight:600; letter-spacing:0.14em;
   text-transform:uppercase; font-size:10px; color:var(--text-faint); }
+
+/* ── §6 Bulk-action bar (slice 4a — bulk-bar.html) ──────────────────────── */
+.toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; gap:14px; min-height:26px; }
+.chips{ display:flex; gap:8px; }
+.chip{ font-size:11px; color:var(--text-dim); border:1px solid var(--border); padding:4px 9px; cursor:pointer; }
+.chip.active{ color:var(--phosphor); border-color:var(--phosphor); }
+.bulk-bar{ display:none; align-items:center; gap:8px; }
+.bulk-bar.active{ display:flex; }
+.bulk-bar .count{ color:var(--text); font-size:12px; margin-right:4px; }
+.btn-bulk{ font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.04em;
+  padding:5px 10px; border:1px solid var(--border); color:var(--text-dim); cursor:pointer; background:none; }
+.btn-bulk:hover{ background:var(--surface-alt); }
+.btn-bulk.btn-danger{ border-color:var(--warn); color:var(--warn); }
+th.checkbox-col{ width:32px; }
+.row-checkbox{ appearance:none; -webkit-appearance:none; width:14px; height:14px; border:1px solid var(--border);
+  background:var(--bg); cursor:pointer; position:relative; display:block; flex-shrink:0; }
+.row-checkbox:checked{ background:var(--copper); border-color:var(--copper); }
+.row-checkbox:checked::after{ content:"✓"; position:absolute; top:-3px; left:1px; font-size:11px; color:var(--bg); font-weight:700; }
+.confirm-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55);
+  align-items:center; justify-content:center; z-index:100; }
+.confirm-overlay.active{ display:flex; }
+.confirm-panel{ background:var(--surface-alt); border:1px solid var(--warn); padding:20px; max-width:320px; width:90%; }
+.confirm-panel p{ color:var(--text); font-size:13px; margin-bottom:16px; line-height:1.5; }
+.confirm-actions{ display:flex; gap:8px; }
+.btn.btn-danger{ border-color:var(--warn); color:var(--warn); }

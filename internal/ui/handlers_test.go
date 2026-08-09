@@ -66,6 +66,8 @@ func TestShellStructure(t *testing.T) {
 		`go-parts`,                  // wordmark
 		`-- NORMAL --`,              // footer mode segment
 		`parts indexed`,             // footer count segment
+		`id="selectAll"`,            // slice 4a — thead select-all checkbox
+		`id="bulkBar"`,              // slice 4a — bulk-action bar
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("shell missing %q", want)

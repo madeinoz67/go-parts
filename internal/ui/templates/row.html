@@ -1,5 +1,6 @@
 {{define "row.html"}}
 <tr hx-get="/ui/parts/{{.P.ID}}" hx-target="#detail-panel" hx-swap="innerHTML">
+  <td onclick="event.stopPropagation()"><input type="checkbox" class="row-checkbox" name="id" value="{{.P.ID}}" aria-label="select row" onchange="updateBulkBar()"></td>
   <td class="mpn">{{.P.MPN}}</td>
   <td>{{.P.Description}}</td>
   <td>{{.P.Footprint}}</td>
