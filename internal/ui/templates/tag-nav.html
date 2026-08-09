@@ -1,0 +1,17 @@
+{{define "tag-nav.html"}}
+<div class="eyebrow">Tags</div>
+{{range .Tags}}
+  <a class="cat-item{{if eq .Tag $.Active}} active{{end}}"
+     hx-get="/ui/parts/search?tag={{.Tag}}" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML"
+     hx-push-url="true">
+    {{if eq .Tag "resistor"}}<svg viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M0 6h4l1.5-4 3 8 3-8 3 8 1.5-4H24"/></svg>
+    {{else if eq .Tag "capacitor"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 12h7M15 12h7M9 4v16M15 4v16"/></svg>
+    {{else if eq .Tag "ic"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="6" y="6" width="12" height="12"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
+    {{else if eq .Tag "connector"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 8h16v6a3 3 0 01-3 3H7a3 3 0 01-3-3V8z"/><path d="M8 8V5M12 8V5M16 8V5"/></svg>
+    {{else if eq .Tag "sensor"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/></svg>
+    {{else if eq .Tag "hardware"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2l3 5-3 2-3-2z"/><path d="M12 9v13M6 22h12"/></svg>
+    {{else}}<span class="cat-fallback"></span>{{end}}
+    {{.Tag}} <span class="count">{{.Count}}</span>
+  </a>
+{{end}}
+{{end}}

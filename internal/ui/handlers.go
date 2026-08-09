@@ -124,17 +124,56 @@ func (s *Server) footprintNeedsConfirm(fp string) bool {
 // handleSearch renders the rows.html fragment (a <tbody id="parts-tbody">) for a
 // search query. It is the live-filter + sort + initial-load endpoint wired into
 // the shell (layout.html): the search input's hx-trigger="keyup", the column
-// headers' sort links, and the table body's hx-trigger="load" all hit this route.
+// headers' sort links, the tag sidebar's ?tag= links, and the table body's
+// hx-trigger="load" all hit this route.
 //
-// The handler calls fts.Search + store.Get IN-PROCESS (PRD §5.2 — the web UI is
-// a 5th surface over the core, never over REST). An empty query falls through
-// to store.List() because FTS.Search returns nil when tokenize yields no terms
-// (so the table's initial-load + cleared-search cases still surface the corpus).
+// The handler is a thin read-and-render wrapper around filteredParts, which
+// holds the search (FTS) + tag + low filters + sort pipeline. q is the live
+// text-query (empty → list-the-corpus path, since FTS.Search returns nil when
+// tokenize yields no terms), tag is the sidebar facet value, and low gates the
+// low-stock chip (Task 7's toolbar surface — wired into the helper now so the
+// bulk handlers in Tasks 6/8 inherit the same view-resolution path for free).
+// The handler calls fts.Search + store.Get IN-PROCESS (PRD §5.2 — the web UI
+// is a 5th surface over the core, never over REST).
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
+	tag := r.URL.Query().Get("tag")
+	low := r.URL.Query().Get("low") == "1"
 	sortKey := r.URL.Query().Get("sort") // "mpn" | "qty" | ""
 	sortDir := r.URL.Query().Get("dir")  // "asc" | "desc"
 
+	pts := s.filteredParts(q, tag, low, sortKey, sortDir)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{"Parts": pts, "Q": q}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// filteredParts resolves the current view's parts list — search + tag + low
+// filters then sort — and is the single shared view-resolution path for
+// handleSearch and the bulk action handlers (Tasks 6/8). A bulk action must
+// re-render the same view the user is looking at (same tag/low/sort context),
+// so the helpers route through here instead of re-implementing the pipeline.
+//
+// Pipeline (preserves handleSearch's pre-refactor behavior exactly):
+//  1. Source — empty q → store.List() (the table's initial-load + cleared-search
+//     cases); else fts.Search + store.Get on each hit (FTS is the corpus-shaped
+//     result, Get materializes each *Part).
+//  2. Tag filter — in-place drop of parts whose Tags slice does not contain the
+//     requested tag. Tags persist lowercased (parts.normalizeTags on Create/
+//     Update), and the sidebar's ?tag= values come from TagCounts which reads
+//     the same lowercased store, so the comparison is case-consistent without a
+//     ToLower here. (A split would be a normalizeTags bug, not this filter's.)
+//  3. Low-stock filter — in-place drop of parts with QtyOnHand > ReorderPoint.
+//     No UI wire yet (Task 7 owns the chip); the branch is here so the helper
+//     is complete for the bulk handlers.
+//  4. Sort — applySort reorders in place by the requested key/direction.
+//
+// The two in-place filters use the standard `out := pts[:0]` aliasing pattern;
+// it is safe because range captures the slice header once and the append-writes
+// never get ahead of the iteration reads (out's length ≤ current index).
+func (s *Server) filteredParts(q, tag string, low bool, sortKey, sortDir string) []*parts.Part {
 	var pts []*parts.Part
 	if q == "" {
 		// Empty query: FTS.Search returns nil (no tokens), so list the corpus.
@@ -149,12 +188,29 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	applySort(pts, sortKey, sortDir)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{"Parts": pts, "Q": q}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if tag != "" {
+		out := pts[:0]
+		for _, p := range pts {
+			for _, tg := range p.Tags {
+				if tg == tag {
+					out = append(out, p)
+					break
+				}
+			}
+		}
+		pts = out
 	}
+	if low {
+		out := pts[:0]
+		for _, p := range pts {
+			if p.QtyOnHand <= p.ReorderPoint {
+				out = append(out, p)
+			}
+		}
+		pts = out
+	}
+	applySort(pts, sortKey, sortDir)
+	return pts
 }
 
 // handleDetail renders the detail.html fragment for a single part (the row-

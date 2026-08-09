@@ -467,3 +467,35 @@ func TestSortByFootprint(t *testing.T) {
 		t.Errorf("asc footprint sort should put 0805 before SOT-23; body=%s", body)
 	}
 }
+
+// TestTagFilter pins slice 3b's ?tag= filter: a tag query returns only parts
+// carrying that tag. The filter is applied after the empty-q list path (the
+// tag sidebar hits /ui/parts/search?tag=resistor with no q), so without the
+// filteredParts helper's tag branch the resistor query would leak the
+// capacitor row.
+func TestTagFilter(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "R", PartType: "local", Tags: []string{"resistor"}})
+	srv.store.Create(&parts.Part{MPN: "C", PartType: "local", Tags: []string{"capacitor"}})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search?tag=resistor", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, "R") || strings.Contains(body, ">C<") {
+		t.Errorf("?tag=resistor should show only the resistor; body=%s", body)
+	}
+}
+
+// TestShellRendersTagSidebar pins slice 3b's shell-side render: handleShell
+// must surface Store.TagCounts() through the tag-nav.html partial so the
+// sidebar lists each tag with its count. Without the Tags field on the shell
+// data + the partial invoke in layout.html, the sidebar stays empty.
+func TestShellRendersTagSidebar(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "R", PartType: "local", Tags: []string{"resistor"}})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, `id="tag-nav"`) || !strings.Contains(body, "resistor") || !strings.Contains(body, "1") {
+		t.Errorf("shell should render the tag sidebar with resistor(1); body=%s", body)
+	}
+}

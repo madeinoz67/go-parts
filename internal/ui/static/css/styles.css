@@ -480,3 +480,32 @@ table.parts{
   }
   .wordmark .cursor{animation:none;opacity:1}
 }
+
+/* ── §6 Sidebar tag facet (slice 3b — tag-nav.html) ──────────────────────── */
+/* The sidebar's contents are rendered by tag-nav.html, but the .sidebar a/.active
+   rules above pre-date the facet and target the placeholder nav-link shape.
+   These rules layer the bench-style eyebrow header, the inline-SVG category
+   icons (cat-fallback dashed box for non-canonical tags), and the right-aligned
+   count chip on top of the existing sidebar base. */
+.sidebar .eyebrow{
+  font-family:"IBM Plex Mono",monospace; font-weight:600; letter-spacing:0.14em;
+  text-transform:uppercase; font-size:10px; color:var(--text-faint);
+  padding:0 18px 10px;
+}
+.sidebar .cat-item{
+  position:relative; display:flex; align-items:center; gap:10px;
+  padding:8px 18px 8px 24px; color:var(--text-dim); cursor:pointer;
+  border-left:2px solid transparent;
+}
+.sidebar .cat-item svg{ width:14px; height:14px; flex-shrink:0; color:var(--text-faint); }
+.sidebar .cat-item .count{ margin-left:auto; font-size:11px; color:var(--text-faint); }
+.sidebar .cat-item:hover{ color:var(--text); background:var(--surface-alt); }
+.sidebar .cat-item.active{ color:var(--copper-bright); border-left-color:var(--copper); background:var(--surface-alt); }
+.sidebar .cat-item.active svg,.sidebar .cat-item.active .count{ color:var(--copper); }
+.cat-fallback{ width:14px; height:10px; border:1px dashed var(--text-faint); flex-shrink:0; }
+/* Re-usable eyebrow label (currently only the tag sidebar uses it, but the
+   style guide treats this as a shared label primitive — kept at top level so
+   the next surface that needs a faint-uppercase section header doesn't
+   re-invent it under .sidebar). */
+.eyebrow{ font-family:"IBM Plex Mono",monospace; font-weight:600; letter-spacing:0.14em;
+  text-transform:uppercase; font-size:10px; color:var(--text-faint); }

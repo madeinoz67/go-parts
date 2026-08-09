@@ -32,7 +32,9 @@
   </nav>
 
   <div class="body-grid">
-    <aside class="sidebar" id="tag-nav"><!-- slice 3 populates this --></aside>
+    <aside class="sidebar" id="tag-nav">
+      {{template "tag-nav.html" (dict "Tags" .Tags "Active" "")}}
+    </aside>
 
     <main class="main">
       <div class="toolbar" id="toolbar"><!-- slice 4 populates chips/bulk-bar --></div>
