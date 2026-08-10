@@ -12,6 +12,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/madeinoz67/go-parts/internal/index"
 	"github.com/madeinoz67/go-parts/internal/parts"
+	"github.com/madeinoz67/go-parts/internal/via"
 )
 
 func newTestServer(t *testing.T) *Server {
@@ -22,7 +23,7 @@ func newTestServer(t *testing.T) *Server {
 	}
 	t.Cleanup(func() { db.Close() })
 	fts := index.NewFTS(db)
-	return NewServer(parts.NewStore(db, fts), fts)
+	return NewServer(parts.NewStore(db, fts, via.NewStore(db)), fts)
 }
 
 func TestStaticAssetsServe(t *testing.T) {

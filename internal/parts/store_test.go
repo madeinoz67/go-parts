@@ -1,12 +1,14 @@
 package parts
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/madeinoz67/go-parts/internal/index"
+	"github.com/madeinoz67/go-parts/internal/via"
 )
 
 func newStore(t *testing.T) *Store {
@@ -16,7 +18,20 @@ func newStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return NewStore(db, index.NewFTS(db))
+	return NewStore(db, index.NewFTS(db), via.NewStore(db))
+}
+
+// newStoreWithVia is the variant used by the via-spine tests, which need the
+// SAME *via.Store the Store uses so they can call Lookup/Reserve directly.
+func newStoreWithVia(t *testing.T) (*Store, *via.Store) {
+	t.Helper()
+	db, err := pebble.Open(filepath.Join(t.TempDir(), "p"), &pebble.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	vs := via.NewStore(db)
+	return NewStore(db, index.NewFTS(db), vs), vs
 }
 
 func TestCreateGetRoundTrip(t *testing.T) {
@@ -195,5 +210,58 @@ func TestTagsLowercasedOnSave(t *testing.T) {
 		if tg != strings.ToLower(tg) {
 			t.Errorf("tag %q was not lowercased on save", tg)
 		}
+	}
+}
+
+// TestCreate_ReservesViaCode proves Create writes a via-index entry the
+// resolver can look up. Closes the open uniqueness gap (part.go's newViaCode
+// TODO: "uniqueness enforced by an indexed write in a later task").
+func TestCreate_ReservesViaCode(t *testing.T) {
+	s, vs := newStoreWithVia(t)
+	p := &Part{MPN: "VIA-1", PartType: "local", Footprint: "0805"}
+	if err := s.Create(p); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if p.ViaCode == "" {
+		t.Fatal("Create did not assign a ViaCode")
+	}
+	tt, id, err := vs.Lookup(p.ViaCode)
+	if err != nil {
+		t.Fatalf("via lookup: %v", err)
+	}
+	if tt != via.TypePart || id != p.ID {
+		t.Fatalf("via lookup = (%q,%q), want (part,%s)", tt, id, p.ID)
+	}
+}
+
+// TestDelete_ReleasesViaCode proves Delete removes the via entry (no dangling
+// index → a future Create can reuse the resolver cleanly).
+func TestDelete_ReleasesViaCode(t *testing.T) {
+	s, vs := newStoreWithVia(t)
+	p := &Part{MPN: "VIA-2", PartType: "local", Footprint: "0805"}
+	if err := s.Create(p); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	code := p.ViaCode
+	if err := s.Delete(p.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, _, err := vs.Lookup(code); !errors.Is(err, via.ErrNotFound) {
+		t.Fatalf("post-delete lookup err = %v, want via.ErrNotFound", err)
+	}
+}
+
+// TestCreate_CallerSuppliedViaCodeReserved proves a caller-supplied code is
+// reserved (not silently accepted duplicate) — the gap-closure.
+func TestCreate_CallerSuppliedViaCodeReserved(t *testing.T) {
+	s, _ := newStoreWithVia(t)
+	a := &Part{ViaCode: "P-DUP001", MPN: "A", PartType: "local", Footprint: "0805"}
+	if err := s.Create(a); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	b := &Part{ViaCode: "P-DUP001", MPN: "B", PartType: "local", Footprint: "0805"}
+	err := s.Create(b)
+	if !errors.Is(err, via.ErrCollision) {
+		t.Fatalf("duplicate via-code create err = %v, want via.ErrCollision", err)
 	}
 }

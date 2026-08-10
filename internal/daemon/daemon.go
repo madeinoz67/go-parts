@@ -35,6 +35,7 @@ import (
 	"github.com/madeinoz67/go-parts/internal/rest"
 	"github.com/madeinoz67/go-parts/internal/storage"
 	"github.com/madeinoz67/go-parts/internal/ui"
+	"github.com/madeinoz67/go-parts/internal/via"
 )
 
 // stateFileName is the single source of truth for the running daemon's state.
@@ -72,7 +73,8 @@ func Run(cfg config.Config) error {
 	defer storeDB.Close()
 
 	fts := index.NewFTS(storeDB.DB)
-	store := parts.NewStore(storeDB.DB, fts)
+	viaStore := via.NewStore(storeDB.DB) // shared spine; Locations (Slice 1) reuses this instance
+	store := parts.NewStore(storeDB.DB, fts, viaStore)
 	// Compose: UI at /ui/, REST at root, GET / → /ui/ redirect.
 	restSrv := rest.NewServer(store, fts)
 	uiSrv := ui.NewServer(store, fts)

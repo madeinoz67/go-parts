@@ -12,6 +12,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/madeinoz67/go-parts/internal/index"
 	"github.com/madeinoz67/go-parts/internal/storage/keys"
+	"github.com/madeinoz67/go-parts/internal/via"
 )
 
 // ErrNotFound is the parts package's not-found sentinel. Store.Get wraps this
@@ -41,20 +42,23 @@ const stripeShards = 64
 //
 // Lock ordering: lockFor(id) is the OUTERMOST lock for any part operation.
 // Under it the code calls Get/write/writePartsKey, and write calls
-// fts.Index/fts.Delete which take the FTS's internal mu. So the order is
-// parts.lockFor(id) → fts.mu, one direction. The FTS never calls back into
-// parts, so there is no cycle.
+// fts.Index/fts.Delete which take the FTS's internal mu; Create/Delete also
+// touch the via index (via.Reserve/Release → via.mu). So the order is
+// parts.lockFor(id) → fts.mu, and parts.lockFor(id) → via.mu, one direction
+// each. Neither the FTS nor the via index ever calls back into parts, so there
+// is no cycle.
 type Store struct {
 	db    *pebble.DB
 	fts   *index.FTS
+	via   *via.Store
 	locks [stripeShards]sync.Mutex
 }
 
-// NewStore returns a Part store over db whose writes keep fts in sync. The
-// striped-lock pool is zero-initialized (unlocked) — NewStore does not need to
-// prime it.
-func NewStore(db *pebble.DB, fts *index.FTS) *Store {
-	return &Store{db: db, fts: fts}
+// NewStore returns a Part store over db whose writes keep fts in sync and
+// whose via codes are reserved in the shared via index. The striped-lock pool
+// is zero-initialized (unlocked) — NewStore does not need to prime it.
+func NewStore(db *pebble.DB, fts *index.FTS, viaStore *via.Store) *Store {
+	return &Store{db: db, fts: fts, via: viaStore}
 }
 
 // lockFor returns the mutex governing operations on id. All Store ops that
@@ -82,7 +86,25 @@ func (s *Store) Create(p *Part) error {
 		p.ID = newID()
 	}
 	if p.ViaCode == "" {
-		p.ViaCode = newViaCode()
+		// Generate + reserve with collision-retry. Astronomically rare, but the
+		// index is the uniqueness authority, so we loop until Reserve succeeds.
+		for i := 0; i < 8; i++ {
+			code := via.NewCode("P-")
+			if err := s.via.Reserve(code, via.TypePart, p.ID); err == nil {
+				p.ViaCode = code
+				break
+			} else if !errors.Is(err, via.ErrCollision) {
+				return fmt.Errorf("parts: via reserve: %w", err)
+			}
+			if i == 7 {
+				return fmt.Errorf("parts: via reserve: %w (8 collisions)", via.ErrCollision)
+			}
+		}
+	} else {
+		// Caller-supplied code: reserve it (closes the unenforced-uniqueness gap).
+		if err := s.via.Reserve(p.ViaCode, via.TypePart, p.ID); err != nil {
+			return fmt.Errorf("parts: via reserve %s: %w", p.ViaCode, err)
+		}
 	}
 	if p.CreatedBy == "" {
 		p.CreatedBy = "local"
@@ -158,6 +180,10 @@ func (s *Store) Update(p *Part, expectedVersion int) error {
 	// be stale from an outer Get) and write the in-lock current value. Stock is
 	// AdjustStock's exclusive domain (§5.14); Update must not touch it.
 	p.QtyOnHand = cur.QtyOnHand
+	// Via-code is immutable post-Create (a scannable identity, §5.17). Preserve
+	// the stored value and ignore the caller's, so the via index never needs
+	// re-pointing on a full-record edit.
+	p.ViaCode = cur.ViaCode
 	p.Version = cur.Version + 1
 	p.UpdatedAt = time.Now().UTC()
 	if p.UpdatedBy == "" {
@@ -192,6 +218,10 @@ func (s *Store) Delete(id string) error {
 	if err := s.db.Delete(keys.PartsKey(ws, id), pebble.Sync); err != nil {
 		return fmt.Errorf("parts: delete %s: %w", id, err)
 	}
+	// Release the via index entry. The record is already gone; a Release failure
+	// leaves a dangling index entry → Lookup returns this id → Get misses → 404.
+	// Codes are random, so a dangling entry blocks nothing in practice.
+	_ = s.via.Release(cur.ViaCode)
 	return nil
 }
 

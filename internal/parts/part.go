@@ -10,8 +10,6 @@
 package parts
 
 import (
-	"crypto/rand"
-	"encoding/base32"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -51,13 +49,3 @@ type Part struct {
 // newID returns a ULID — the canonical part identifier used as the Pebble key
 // payload under the parts prefix and as the FTS document id.
 func newID() string { return ulid.Make().String() }
-
-// newViaCode returns a P-prefixed 6-char code (P-XXXXXX). Unique-enough for
-// single-vault v1; uniqueness is enforced by an indexed write in a later task
-// (Store.Create currently relies on ULID id uniqueness; via_code collision is
-// a degenerate case the via-resolver layer will surface).
-func newViaCode() string {
-	var b [5]byte
-	_, _ = rand.Read(b[:])
-	return "P-" + base32.StdEncoding.EncodeToString(b[:])[:6]
-}

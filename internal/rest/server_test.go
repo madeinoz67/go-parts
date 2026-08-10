@@ -20,6 +20,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/madeinoz67/go-parts/internal/index"
 	"github.com/madeinoz67/go-parts/internal/parts"
+	"github.com/madeinoz67/go-parts/internal/via"
 )
 
 // newTestServer wires a real Pebble + FTS + Store + REST Server. The DB lives
@@ -36,7 +37,7 @@ func newTestServer(t *testing.T) *Server {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	fts := index.NewFTS(db)
-	store := parts.NewStore(db, fts)
+	store := parts.NewStore(db, fts, via.NewStore(db))
 	return NewServer(store, fts)
 }
 

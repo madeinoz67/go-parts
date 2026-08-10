@@ -31,6 +31,7 @@ import (
 	"github.com/madeinoz67/go-parts/internal/parts"
 	"github.com/madeinoz67/go-parts/internal/rest"
 	"github.com/madeinoz67/go-parts/internal/storage"
+	"github.com/madeinoz67/go-parts/internal/via"
 )
 
 // TestWalkingSkeleton proves the Phase-1 slice end-to-end: open the storage
@@ -55,7 +56,7 @@ func TestWalkingSkeleton(t *testing.T) {
 		}
 	})
 	fts := index.NewFTS(dbStore.DB)
-	store := parts.NewStore(dbStore.DB, fts)
+	store := parts.NewStore(dbStore.DB, fts, via.NewStore(dbStore.DB))
 	srv := rest.NewServer(store, fts)
 	httpSrv := httptest.NewServer(srv)
 	t.Cleanup(httpSrv.Close)
