@@ -251,3 +251,74 @@ func detectOrphan(s *Store) bool {
 	}
 	return false
 }
+
+// TestUpdateReparentToDeletedParent_Refuses (Slice 5a adversary) pins the
+// serial logic gap the parent-existence check closes: reparenting onto a
+// deleted parent must error (wrapped ErrNotFound), not silently orphan. Before
+// the check, wouldCycle treated the missing parent as "not a cycle, allow" →
+// Y committed pointing at gone X.
+func TestUpdateReparentToDeletedParent_Refuses(t *testing.T) {
+	s, _ := newStore(t)
+	x := &Location{Label: "X"}
+	y := &Location{Label: "Y"}
+	if err := s.Create(x); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(y); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(x.ID); err != nil {
+		t.Fatal(err)
+	}
+	cur, err := s.Get(y.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur.ParentID = x.ID // reparent onto the deleted X
+	if err := s.Update(cur, cur.Version); err == nil {
+		t.Fatal("Update reparent onto deleted parent: expected error, got nil (silent orphan)")
+	}
+	got, _ := s.Get(y.ID)
+	if got.ParentID == x.ID {
+		t.Errorf("Y was orphaned (ParentID=%s points at deleted X)", x.ID)
+	}
+}
+
+// TestConcurrentDeleteVsUpdateReparentNoOrphan (Slice 5a adversary) pins the
+// concurrent shape: Delete(X) ‖ Update(Y→X) must not orphan Y. With the
+// parent-existence check under treeMu, the Update either sees X (before Delete
+// commits) and proceeds, or sees X gone and errors — Y never ends pointing at a
+// deleted id. Run with -race -count.
+func TestConcurrentDeleteVsUpdateReparentNoOrphan(t *testing.T) {
+	const trials = 50
+	for range trials {
+		s, _ := newStore(t)
+		x := &Location{Label: "X"}
+		y := &Location{Label: "Y"}
+		if err := s.Create(x); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Create(y); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = s.Delete(x.ID)
+		}()
+		go func() {
+			defer wg.Done()
+			yp, err := s.Get(y.ID)
+			if err != nil {
+				return
+			}
+			yp.ParentID = x.ID
+			_ = s.Update(yp, yp.Version) // parent-gone → wrapped ErrNotFound is the expected outcome
+		}()
+		wg.Wait()
+		if detectOrphan(s) {
+			t.Fatalf("trial orphaned Y under deleted X (Update reparent lacks the parent-existence check)")
+		}
+	}
+}

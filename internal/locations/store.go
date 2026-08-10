@@ -180,6 +180,18 @@ func (s *Store) Update(l *Location, expectedVersion int) error {
 		if s.wouldCycle(l, l.ParentID) {
 			return ErrCycle
 		}
+		// Slice 5a (adversary): a reparent must also verify the new parent
+		// EXISTS, mirroring Create's check. wouldCycle treats a missing parent
+		// as "terminate the walk, not a cycle, allow" — so without this check,
+		// reparenting onto a just-deleted id silently orphans (Delete(X) ‖
+		// Update(Y→X), or even serially: Delete(X) then Update(Y→X)). Clearing
+		// to "" stays allowed (top-level). Runs under treeMu → serialized with
+		// Delete, no TOCTOU. Returns a wrapped ErrNotFound so callers 404.
+		if l.ParentID != "" {
+			if _, err := s.Get(l.ParentID); err != nil {
+				return fmt.Errorf("locations: parent %s: %w", l.ParentID, err)
+			}
+		}
 	}
 	// Via-code is immutable (§5.17) — preserve the stored value.
 	l.ViaCode = cur.ViaCode
