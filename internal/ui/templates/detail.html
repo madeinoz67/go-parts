@@ -1,7 +1,7 @@
 {{define "detail.html"}}
 <div class="panel-icon">{{template "status-badge.html" (dict "P" .P)}}</div>
 <h2 class="panel-title">{{.P.MPN}}</h2>
-<div class="part-sub">{{.P.Manufacturer}}{{if .P.Tags}} · {{index .P.Tags 0}}{{end}}{{if .P.Footprint}} · {{.P.Footprint}}{{end}}</div>
+<div class="part-sub">{{.P.Manufacturer}}{{if .P.Tags}}{{if .P.Manufacturer}} · {{end}}{{index .P.Tags 0}}{{end}}{{if .P.Footprint}}{{if or .P.Manufacturer .P.Tags}} · {{end}}{{.P.Footprint}}{{end}}</div>
 
 <div class="spec-rows">
   {{range $k, $v := .P.Specs}}

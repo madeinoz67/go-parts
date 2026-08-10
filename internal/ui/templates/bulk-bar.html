@@ -28,8 +28,8 @@
 </div>
 
 <div class="confirm-overlay" id="confirmOverlay">
-  <div class="confirm-panel">
-    <p>delete <span id="confirmCount">0</span> parts? this can't be undone.</p>
+  <div class="confirm-panel" role="dialog" aria-modal="true" aria-labelledby="confirmHeading">
+    <p id="confirmHeading">delete <span id="confirmCount">0</span> parts? this can't be undone.</p>
     <div class="confirm-actions">
       <button class="btn" onclick="hideConfirm()">cancel</button>
       <button class="btn btn-danger" onclick="document.getElementById('bulkDeleteForm').requestSubmit()">delete</button>

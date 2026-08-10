@@ -69,6 +69,8 @@ func TestShellStructure(t *testing.T) {
 		`parts indexed`,             // footer count segment
 		`id="selectAll"`,            // slice 4a — thead select-all checkbox
 		`id="bulkBar"`,              // slice 4a — bulk-action bar
+		`role="dialog"`,             // hardening — confirm overlay ARIA
+		`aria-modal="true"`,         // hardening — confirm overlay ARIA
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("shell missing %q", want)
@@ -695,5 +697,38 @@ func TestDetailRendersSpecRows(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("detail missing %q; body=%s", want, body)
 		}
+	}
+}
+
+// TestDetailSubLineNoLeadingSeparator pins the hardening fix for the .part-sub
+// line in detail.html. When Manufacturer is empty but Tags/Footprint are
+// present, the line must NOT emit a leading " · " separator — it should render
+// "x · 0805" (tag first, then footprint), not " · x · 0805". The fix uses
+// nested {{if}} guards so a separator only appears BEFORE a segment when a
+// PRIOR segment was non-empty. Also asserts the full-manufacturer case still
+// renders "Yageo · resistor · 0805".
+func TestDetailSubLineNoLeadingSeparator(t *testing.T) {
+	srv := newTestServer(t)
+	// Empty Manufacturer, one tag, one footprint — the bug case.
+	empty := &parts.Part{MPN: "SUB1", PartType: "local", Tags: []string{"x"}, Footprint: "0805"}
+	srv.store.Create(empty)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+empty.ID, nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, "x · 0805") {
+		t.Errorf("empty-manufacturer sub-line should render 'x · 0805'; body=%s", body)
+	}
+	if strings.Contains(body, "> · ") {
+		t.Errorf("sub-line must not emit a leading separator ('> · '); body=%s", body)
+	}
+	// Full-manufacturer case — all three segments present, separators between each.
+	full := &parts.Part{MPN: "SUB2", PartType: "local", Manufacturer: "Yageo",
+		Tags: []string{"resistor"}, Footprint: "0805"}
+	srv.store.Create(full)
+	rr2 := httptest.NewRecorder()
+	srv.ServeHTTP(rr2, httptest.NewRequest("GET", "/ui/parts/"+full.ID, nil))
+	body2 := rr2.Body.String()
+	if !strings.Contains(body2, "Yageo · resistor · 0805") {
+		t.Errorf("full sub-line should render 'Yageo · resistor · 0805'; body=%s", body2)
 	}
 }

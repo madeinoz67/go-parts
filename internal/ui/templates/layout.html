@@ -86,6 +86,11 @@ document.addEventListener('keydown', e => {
 
 function updateBulkBar(){
   const checked = document.querySelectorAll('tbody tr .row-checkbox[name=id]:checked');
+  // §7.2: selection persists across a re-sort (same rows reordered) and clears
+  // on a new search (different row set). Sync selectedIds FROM the DOM on every
+  // call — normal checkbox clicks update it live, and afterSwap re-syncs after
+  // re-applying (sort) or clearing (new search).
+  selectedIds = new Set([...checked].map(cb => cb.value));
   const bar = document.getElementById('bulkBar');
   const chips = document.getElementById('chipsRow');
   if (checked.length > 0) {
@@ -117,15 +122,39 @@ document.addEventListener('click', e => {
   lastChecked = cb;
   updateBulkBar();
 });
+let lastTrigger = null;
 function askDelete(){
   const n = document.querySelectorAll('tbody tr .row-checkbox[name=id]:checked').length;
   document.getElementById('confirmCount').textContent = n;
+  lastTrigger = document.activeElement;
   document.getElementById('confirmOverlay').classList.add('active');
+  document.querySelector('#confirmOverlay .btn')?.focus();
 }
-function hideConfirm(){ document.getElementById('confirmOverlay').classList.remove('active'); }
-// htmx swaps the tbody on search/sort; re-sync the bar afterwards.
+function hideConfirm(){
+  document.getElementById('confirmOverlay').classList.remove('active');
+  if (lastTrigger) { lastTrigger.focus(); lastTrigger = null; }
+}
+// htmx swaps the tbody on search/sort; re-sync the bar + selection afterwards.
+// §7.2: a re-sort (unchanged query) preserves selection; a new search (changed
+// query) clears it. selectedIds is module-level so it survives the swap.
+let selectedIds = new Set();
+let lastQuery = "";
 document.body.addEventListener('htmx:afterSwap', e => {
-  if (e.target.id === 'parts-tbody') { lastChecked = null; updateBulkBar(); }
+  if (e.target.id !== 'parts-tbody') return;
+  lastChecked = null;
+  const q = document.getElementById('search').value;
+  if (q === lastQuery) {
+    // Same query → it was a sort/re-fetch of the same row set. Re-apply the
+    // persisted selection to the freshly-rendered (unchecked) rows, then sync.
+    document.querySelectorAll('tbody tr .row-checkbox[name=id]').forEach(cb => {
+      if (selectedIds.has(cb.value)) cb.checked = true;
+    });
+  } else {
+    // New query → different row set. Clear selection explicitly.
+    selectedIds.clear();
+    lastQuery = q;
+  }
+  updateBulkBar();
 });
 </script>
 </body>

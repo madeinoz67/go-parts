@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"sort"
@@ -487,7 +488,13 @@ func (s *Server) handleBulkTag(w http.ResponseWriter, r *http.Request) {
 		if !slices.Contains(p.Tags, newTag) {
 			p.Tags = append(p.Tags, newTag)
 		}
-		_ = s.store.Update(p, p.Version) // optimistic; per-part, current version just loaded
+		// Degrade loudly (constitution §2): a version-conflict here means a
+		// concurrent edit landed between our Get and Update, so the tag was
+		// silently not applied. Surface it as a warning rather than dropping
+		// the error on the floor — the operator can re-tag after a refresh.
+		if err := s.store.Update(p, p.Version); err != nil {
+			slog.Warn("bulk-tag: part skipped (concurrent edit)", "id", id, "tag", newTag, "error", err)
+		}
 	}
 	q := r.PostFormValue("q")
 	low := r.PostFormValue("low") == "1"
