@@ -204,8 +204,11 @@ document.body.addEventListener('click', e => {
 // `if (!p[k])` guard lets an explicit form field override — but the bulk-bar's
 // hidden fields render empty in the shell, so the tracked values win.
 document.body.addEventListener('htmx:configRequest', e => {
-  const path = e.detail.pathInfo && e.detail.pathInfo.requestPath;
-  if (path !== '/ui/parts/bulk-delete' && path !== '/ui/parts/bulk-tag') return;
+  // Check the triggering element (not pathInfo — htmx 2.x's configRequest
+  // doesn't expose pathInfo.requestPath). If the request originates from a
+  // bulk form, inject the live view state so the action preserves the filter.
+  const elt = e.detail.elt;
+  if (!elt || !elt.closest('#bulkDeleteForm, #bulkTagForm')) return;
   const p = e.detail.parameters;
   if (!p['q'])   p['q']   = (document.getElementById('search') || {}).value || '';
   if (!p['sort']) p['sort'] = viewSort;
