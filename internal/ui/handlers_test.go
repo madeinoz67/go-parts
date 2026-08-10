@@ -582,12 +582,11 @@ func TestSearchRefreshesToolbarViewState(t *testing.T) {
 	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search?tag=resistor&low=1&sort=qty&dir=desc", nil))
 	body := rr.Body.String()
 
-	// OOB toolbar swap fired.
-	if !strings.Contains(body, `id="toolbar"`) {
+	// OOB toolbar swap fired — both attrs on the same element (a loose pair
+	// of separate Contains checks could pass from the unrelated #tag-nav OOB
+	// that also carries hx-swap-oob="true").
+	if !strings.Contains(body, `id="toolbar" hx-swap-oob="true"`) {
 		t.Errorf("search response should ship an OOB #toolbar; body=%s", body)
-	}
-	if !strings.Contains(body, `hx-swap-oob="true"`) {
-		t.Errorf("OOB toolbar must carry hx-swap-oob=\"true\"; body=%s", body)
 	}
 	// Hidden view-state fields carry the filter context.
 	for _, want := range []string{
@@ -610,6 +609,42 @@ func TestSearchRefreshesToolbarViewState(t *testing.T) {
 	allInactive := `class="chip"` + " " + `hx-get="/ui/parts/search"`
 	if !strings.Contains(body, allInactive) {
 		t.Errorf("all-parts chip should NOT be active when low=1; body=%s", body)
+	}
+}
+
+// TestBulkDeleteRefreshesToolbarWithFilter pins the actual bug-fix path of
+// PRD §7.2: a bulk action from a filtered view must OOB-swap #toolbar with
+// the SAME view state it received, so the next bulk action's hidden fields
+// stay synced. TestSearchRefreshesToolbarViewState only covers handleSearch;
+// this covers handleBulkDelete (the original bug — "bulk actions reset a
+// filtered view"). Tightened single-element assertion closes review Minor #1
+// (a pair of separate Contains checks could pass from the unrelated #tag-nav
+// OOB that also carries hx-swap-oob="true").
+func TestBulkDeleteRefreshesToolbarWithFilter(t *testing.T) {
+	srv := newTestServer(t)
+	p := &parts.Part{MPN: "DEL", PartType: "local", Tags: []string{"resistor"}}
+	srv.store.Create(p)
+	body := "id=" + p.ID + "&tag=resistor&low=1&sort=qty&dir=desc"
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/bulk-delete", body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bulk-delete = %d, want 200", rr.Code)
+	}
+	got := rr.Body.String()
+	// The OOB toolbar swap fires carrying the same filter (the bug-fix path).
+	// Both attrs on the same element — see TestSearchRefreshesToolbarViewState.
+	if !strings.Contains(got, `id="toolbar" hx-swap-oob="true"`) {
+		t.Errorf("bulk-delete should OOB-swap #toolbar with the filter; body=%s", got)
+	}
+	for _, want := range []string{
+		`name="tag" value="resistor"`,
+		`name="low" value="1"`,
+		`name="sort" value="qty"`,
+		`name="dir" value="desc"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("refreshed toolbar missing %q; body=%s", want, got)
+		}
 	}
 }
 
