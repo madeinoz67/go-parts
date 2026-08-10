@@ -9,6 +9,7 @@ import (
 
 	"github.com/madeinoz67/go-parts/internal/config"
 	"github.com/madeinoz67/go-parts/internal/index"
+	"github.com/madeinoz67/go-parts/internal/label"
 	"github.com/madeinoz67/go-parts/internal/link"
 	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
@@ -43,18 +44,24 @@ func openLocations(dataDir string) (*locations.Store, func(), error) {
 // command). Same one-shot + via-singleton posture as openLocations, plus it
 // injects link.NewPolicy so the single_part_only guard is live on part writes
 // from the CLI too — identical wiring to daemon.Run.
-func openStores(dataDir string) (*parts.Store, *locations.Store, func(), error) {
+// openStores opens BOTH stores + the shared via index for a cross-entity CLI
+// op (delete-refuse-has-parts, the via resolver, labels). Same one-shot +
+// via-singleton posture as openLocations, plus it injects link.NewPolicy so
+// the single_part_only guard is live on part writes from the CLI too. Returns
+// the via store too (Slice 4 — the resolver + the <id|viacode> label path need
+// it); callers that don't need it discard it with _.
+func openStores(dataDir string) (*parts.Store, *locations.Store, *via.Store, func(), error) {
 	dataDir = config.Default(dataDir).DataDir
 	storeDB, err := storage.Open(dataDir)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("open store: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("open store: %w", err)
 	}
 	cleanup := func() { storeDB.Close() }
 	viaStore := via.NewStore(storeDB.DB)
 	ps := parts.NewStore(storeDB.DB, index.NewFTS(storeDB.DB), viaStore)
 	ls := locations.NewStore(storeDB.DB, viaStore)
 	ps.SetLocationPolicy(link.NewPolicy(ps, ls))
-	return ps, ls, cleanup, nil
+	return ps, ls, viaStore, cleanup, nil
 }
 
 func newLocationsCmd(dataDir *string) *cobra.Command {
@@ -67,6 +74,7 @@ func newLocationsCmd(dataDir *string) *cobra.Command {
 	cmd.AddCommand(newLocationsListCmd(dataDir))
 	cmd.AddCommand(newLocationsRemoveCmd(dataDir))
 	cmd.AddCommand(newLocationsTreeCmd(dataDir))
+	cmd.AddCommand(newLocationsLabelCmd(dataDir))
 	return cmd
 }
 
@@ -253,7 +261,7 @@ func newLocationsRemoveCmd(dataDir *string) *cobra.Command {
 			// remove composes both stores: the has-parts refusal needs
 			// parts.CountByLocation, so open both (locations.Store can't see the
 			// parts keyspace, §5.1).
-			ps, s, cleanup, err := openStores(*dataDir)
+			ps, s, _, cleanup, err := openStores(*dataDir)
 			if err != nil {
 				return err
 			}
@@ -323,6 +331,47 @@ func newLocationsTreeCmd(dataDir *string) *cobra.Command {
 			}
 			walk("", 0)
 			return nil
+		},
+	}
+	return cmd
+}
+
+// newLocationsLabelCmd builds `go-parts locations label <id|viacode>` — renders
+// the location's scannable SVG label (§5.17) to stdout (pipe to a file or a
+// browser/print dialog). The QR encodes the configured public_base_url
+// (config.json) + /via/{code}; with no base configured it encodes the relative
+// /via/{code} (a scanner gets a path, less useful but not broken). Accepts an
+// id or an L- via-code.
+func newLocationsLabelCmd(dataDir *string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "label <id|viacode>",
+		Short: "Render the location's scannable label SVG to stdout (§5.17)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, ls, vs, cleanup, err := openStores(*dataDir)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			id := args[0]
+			if strings.HasPrefix(id, "L-") {
+				_, vid, err := vs.Lookup(id)
+				if err != nil {
+					return err
+				}
+				id = vid
+			}
+			loc, err := ls.Get(id)
+			if err != nil {
+				return err
+			}
+			cfg, _ := config.Load(*dataDir) // baseURL is non-secret advice; defaults stand on miss
+			svg, err := label.SVG(loc.ViaCode, loc.Label, cfg.PublicBaseURL)
+			if err != nil {
+				return err
+			}
+			_, err = os.Stdout.Write(svg)
+			return err
 		},
 	}
 	return cmd

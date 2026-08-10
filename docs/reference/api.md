@@ -21,6 +21,9 @@ later rather than a rewrite. There is no auth in v1.
 | `PATCH` | `/parts/{id}` | `200` (+`ETag`) / `428` / `400` / `404` / `409` | edit; `If-Match` required |
 | `DELETE` | `/parts/{id}` | `204` / `404` | remove record + FTS entry |
 | `POST` | `/parts/{id}/stock` | `200` (+`ETag`) / `400` / `404` | commutative stock delta |
+| `GET` | `/via/{code}` | `200` / `404` | generic Via resolver (§5.17, Slice 4): location → `{Type,Location,Contents}`; part → `{Type,Part}` |
+| `POST` | `/parts/{id}/label` | `200` (`image/svg+xml`) / `404` | render the part's scannable label SVG; `{id}` accepts a part id **or** a `P-` via-code |
+| `POST` | `/locations/{id}/label` | `200` (`image/svg+xml`) / `404` | render the location's label SVG; `{id}` accepts a location id **or** an `L-` via-code |
 
 All bodies are `application/json`.
 
@@ -105,3 +108,30 @@ hydrating the top 20 hits via `Store.Get`. If a hit's Part was deleted between
 the FTS read and the hydrate (a benign race — the FTS is eventually
 consistent), that hit is skipped. An empty or absent `q` returns an empty
 list (the tokenizer drops everything → search returns nil).
+
+## Via resolver + labels (§5.17, Slice 4)
+
+`GET /via/{code}` is the **generic** Via resolver — one endpoint, not one per
+entity. It dispatches on the via index's type tag and returns a `Resolved`
+object (PascalCase, no json tags):
+
+- **location** → `{Type:"location", Location:{…}, Contents:[{…part…}]}`. The
+  embedded `Contents` IS scan-to-find — the parts whose `DefaultLocationID`
+  points at this location (`parts.ListByLocation`). `Contents` is `null` when
+  the location holds no parts.
+- **part** → `{Type:"part", Part:{…}}`.
+- unknown code → `404` (`via.ErrNotFound`).
+
+`POST /parts/{id}/label` and `POST /locations/{id}/label` render a black-on-
+white scannable **SVG label** (`Content-Type: image/svg+xml`). The QR encodes
+`{public_base_url}/via/{via_code}` — the resolution URL — with the
+human-readable via-code (monospace) and the entity title (a location's `Label`
+or a part's MPN·description) beneath. `{id}` accepts a bare id **or** the
+entity's via-code (`P-`/`L-`).
+
+**`public_base_url`** (config.json, non-secret §5.18) is the base for the QR
+URL. When unset, the REST label endpoints derive it from the request's
+`scheme://host`; the CLI `locations label` derives it from config and, with no
+base configured, encodes the relative `/via/{code}` (a scanner gets a path —
+less useful but not broken). Physical printing (page layout, the OS print
+dialog) is a client concern; go-parts renders the SVG, not a print driver.

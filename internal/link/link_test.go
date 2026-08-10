@@ -17,6 +17,13 @@ import (
 // injects NewPolicy so the single_part_only guard is live on parts writes —
 // the same wiring daemon.Run and the CLI's openStores do.
 func newPair(t *testing.T) (*parts.Store, *locations.Store) {
+	ps, ls, _ := newPairWithVia(t)
+	return ps, ls
+}
+
+// newPairWithVia is newPair but also returns the shared via.Store (Slice 4 —
+// link.Resolve needs it to drive the resolver).
+func newPairWithVia(t *testing.T) (*parts.Store, *locations.Store, *via.Store) {
 	t.Helper()
 	db, err := pebble.Open(filepath.Join(t.TempDir(), "p"), &pebble.Options{})
 	if err != nil {
@@ -27,7 +34,7 @@ func newPair(t *testing.T) (*parts.Store, *locations.Store) {
 	ps := parts.NewStore(db, index.NewFTS(db), vs)
 	ls := locations.NewStore(db, vs)
 	ps.SetLocationPolicy(NewPolicy(ps, ls))
-	return ps, ls
+	return ps, ls, vs
 }
 
 // TestNewPolicy_MissingLocation pins referential integrity: assigning a part to
@@ -155,5 +162,63 @@ func TestDeleteRefuseHasParts_Composition(t *testing.T) {
 	// Now the location is deletable.
 	if err := ls.Delete(bin.ID); err != nil {
 		t.Fatalf("delete empty bin: %v", err)
+	}
+}
+
+// --- Slice 4: via resolver (link.Resolve) ----------------------------------
+
+// TestResolve_LocationEmbedsContents is scan-to-find (§5.17): resolving a
+// location's via-code returns the location WITH its assigned parts embedded.
+func TestResolve_LocationEmbedsContents(t *testing.T) {
+	ps, ls, vs := newPairWithVia(t)
+	bin := &locations.Location{Label: "Bin"}
+	if err := ls.Create(bin); err != nil {
+		t.Fatal(err)
+	}
+	for _, mpn := range []string{"a", "b"} {
+		if err := ps.Create(&parts.Part{MPN: mpn, PartType: "local", DefaultLocationID: bin.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := Resolve(vs, ps, ls, bin.ViaCode)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if r.Type != "location" || r.Location == nil || r.Location.ID != bin.ID {
+		t.Fatalf("Resolve = %+v, want type=location with the bin", r)
+	}
+	if len(r.Contents) != 2 {
+		t.Errorf("Resolve location contents = %d parts, want 2 (scan-to-find)", len(r.Contents))
+	}
+	if r.Part != nil {
+		t.Errorf("Resolve location should not carry a Part")
+	}
+}
+
+// TestResolve_Part pins the part branch: a P- code resolves to just the part.
+func TestResolve_Part(t *testing.T) {
+	ps, ls, vs := newPairWithVia(t)
+	p := &parts.Part{MPN: "RP", PartType: "local"}
+	if err := ps.Create(p); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Resolve(vs, ps, ls, p.ViaCode)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if r.Type != "part" || r.Part == nil || r.Part.ID != p.ID {
+		t.Fatalf("Resolve = %+v, want type=part with the part", r)
+	}
+	if r.Location != nil || r.Contents != nil {
+		t.Errorf("Resolve part should not carry a location/contents")
+	}
+}
+
+// TestResolve_UnknownCode pins the via-miss → via.ErrNotFound (REST → 404).
+func TestResolve_UnknownCode(t *testing.T) {
+	ps, ls, vs := newPairWithVia(t)
+	_, err := Resolve(vs, ps, ls, "L-NOPE")
+	if !errors.Is(err, via.ErrNotFound) {
+		t.Fatalf("Resolve unknown code err = %v, want via.ErrNotFound", err)
 	}
 }

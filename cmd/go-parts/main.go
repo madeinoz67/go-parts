@@ -43,6 +43,7 @@ func main() {
 	root.AddCommand(newStopCmd(&dataDir))
 	root.AddCommand(newStatusCmd(&dataDir))
 	root.AddCommand(newLocationsCmd(&dataDir))
+	root.AddCommand(newViaCmd(&dataDir)) // Slice 4: generic Via resolver (§5.17)
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

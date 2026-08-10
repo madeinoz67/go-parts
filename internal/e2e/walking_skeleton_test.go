@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	"github.com/madeinoz67/go-parts/internal/index"
+	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
 	"github.com/madeinoz67/go-parts/internal/rest"
 	"github.com/madeinoz67/go-parts/internal/storage"
@@ -56,8 +57,10 @@ func TestWalkingSkeleton(t *testing.T) {
 		}
 	})
 	fts := index.NewFTS(dbStore.DB)
-	store := parts.NewStore(dbStore.DB, fts, via.NewStore(dbStore.DB))
-	srv := rest.NewServer(store, fts)
+	vs := via.NewStore(dbStore.DB)
+	store := parts.NewStore(dbStore.DB, fts, vs)
+	ls := locations.NewStore(dbStore.DB, vs) // Slice 4: the resolver/label handlers read it
+	srv := rest.NewServer(store, fts, vs, ls)
 	httpSrv := httptest.NewServer(srv)
 	t.Cleanup(httpSrv.Close)
 	client := httpSrv.Client()

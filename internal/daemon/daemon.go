@@ -86,7 +86,8 @@ func Run(cfg config.Config) error {
 	locStore := locations.NewStore(storeDB.DB, viaStore)
 	store.SetLocationPolicy(link.NewPolicy(store, locStore))
 	// Compose: UI at /ui/, REST at root, GET / → /ui/ redirect.
-	restSrv := rest.NewServer(store, fts)
+	restSrv := rest.NewServer(store, fts, viaStore, locStore) // Slice 4: + via spine + locations for the resolver/labels
+	restSrv.SetPublicBaseURL(cfg.PublicBaseURL)
 	uiSrv := ui.NewServer(store, fts, locStore)
 	mux := http.NewServeMux()
 	mux.Handle("/ui/", uiSrv)

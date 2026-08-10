@@ -26,26 +26,58 @@ import (
 	"time"
 
 	"github.com/madeinoz67/go-parts/internal/index"
+	"github.com/madeinoz67/go-parts/internal/label"
+	"github.com/madeinoz67/go-parts/internal/link"
+	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
+	"github.com/madeinoz67/go-parts/internal/via"
 )
 
-// Server is a REST handler over one parts.Store + one FTS. Construct with
-// NewServer and serve with http.ListenAndServe(addr, srv). The store and FTS
-// must be the SAME instances the rest of the process uses — the FTS that the
-// store writes to is the FTS the search handler reads from.
+// Server is a REST handler over one parts.Store + one FTS, plus (Slice 4) the
+// shared via index + locations store powering the generic Via resolver and the
+// label endpoints. Construct with NewServer and serve with
+// http.ListenAndServe(addr, srv). The stores must be the SAME instances the
+// rest of the process uses — the FTS that the store writes to is the FTS the
+// search handler reads from, and the via/locations stores are the ones the
+// daemon's injected policy composes with.
 type Server struct {
-	store *parts.Store
-	fts   *index.FTS
-	mux   *http.ServeMux
+	store         *parts.Store
+	fts           *index.FTS
+	via           *via.Store       // Slice 4: GET /via/{code} resolver spine
+	locations     *locations.Store // Slice 4: location branch of the resolver + label endpoint
+	publicBaseURL string           // Slice 4: base for label QR URLs (config; "" = request-derived)
+	mux           *http.ServeMux
 }
 
-// NewServer wires a Server over store + fts and registers every route. It does
-// NOT listen — the caller does http.ListenAndServe(addr, srv) — so the Server
-// is also a http.Handler usable from httptest.NewServer or in-process tests.
-func NewServer(store *parts.Store, fts *index.FTS) *Server {
-	s := &Server{store: store, fts: fts, mux: http.NewServeMux()}
+// NewServer wires a Server over store + fts + the shared via index + locations
+// store, and registers every route. It does NOT listen — the caller does
+// http.ListenAndServe(addr, srv) — so the Server is also a http.Handler usable
+// from httptest.NewServer or in-process tests. Set the label base URL (if any)
+// via SetPublicBaseURL.
+func NewServer(store *parts.Store, fts *index.FTS, viaStore *via.Store, locStore *locations.Store) *Server {
+	s := &Server{store: store, fts: fts, via: viaStore, locations: locStore, mux: http.NewServeMux()}
 	s.routes()
 	return s
+}
+
+// SetPublicBaseURL sets the base URL used for Via-resolver QR URLs in labels
+// (Slice 4, §5.18 non-secret). Empty (the default) means labels derive the
+// base from the HTTP request's scheme+host. The daemon calls this with
+// cfg.PublicBaseURL at bootstrap.
+func (s *Server) SetPublicBaseURL(u string) { s.publicBaseURL = u }
+
+// baseURL resolves the label QR base URL: the configured public_base_url if
+// set, else the request's scheme://host (so a label rendered behind a proxy or
+// on the loopback bind still encodes a scannable absolute URL for the operator).
+func (s *Server) baseURL(r *http.Request) string {
+	if s.publicBaseURL != "" {
+		return s.publicBaseURL
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
 }
 
 // ServeHTTP dispatches through the registered ServeMux. Every route is wrapped
@@ -66,6 +98,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PATCH /parts/{id}", s.auth(s.handlePatch))
 	s.mux.HandleFunc("DELETE /parts/{id}", s.auth(s.handleDelete))
 	s.mux.HandleFunc("POST /parts/{id}/stock", s.auth(s.handleStock))
+	// Slice 4 — generic Via resolver + per-entity label endpoints (§5.17, §8).
+	s.mux.HandleFunc("GET /via/{code}", s.auth(s.handleVia))
+	s.mux.HandleFunc("POST /parts/{id}/label", s.auth(s.handlePartLabel))
+	s.mux.HandleFunc("POST /locations/{id}/label", s.auth(s.handleLocationLabel))
 }
 
 // auth is the §5.8 single interceptor point. v1 is a no-op: every request
@@ -364,4 +400,108 @@ func parseETagVersion(s string) (int, error) {
 		return 0, fmt.Errorf("If-Match version must be >= 1, got %d", v)
 	}
 	return v, nil
+}
+
+// --- Slice 4: generic Via resolver + label endpoints (§5.17, §8) -----------
+
+// handleVia is GET /via/{code} — the generic Via resolver (§5.17, "one
+// endpoint, not one per entity"). link.Resolve dispatches on the via index's
+// type tag: a location resolves WITH its embedded contents (scan-to-find), a
+// part resolves to itself. An unknown code → 404 (via.ErrNotFound). The
+// response shape is link.Resolved (PascalCase, no json tags — api.md §"JSON
+// field names").
+func (s *Server) handleVia(w http.ResponseWriter, r *http.Request) {
+	res, err := link.Resolve(s.via, s.store, s.locations, r.PathValue("code"))
+	if err != nil {
+		if errors.Is(err, via.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "via resolve: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
+}
+
+// handlePartLabel is POST /parts/{id}/label — renders the part's scannable SVG
+// label (§5.17). {id} accepts a part id OR a P- via-code (resolved through the
+// via index). The QR encodes the part's resolution URL; the title is MPN (plus
+// description when set). Content-Type image/svg+xml.
+func (s *Server) handlePartLabel(w http.ResponseWriter, r *http.Request) {
+	p, err := s.partFromPath(r)
+	if err != nil {
+		if errors.Is(err, parts.ErrNotFound) || errors.Is(err, via.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "part label: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	title := p.MPN
+	if p.Description != "" {
+		title = p.MPN + " · " + p.Description
+	}
+	s.writeLabel(w, p.ViaCode, title, r)
+}
+
+// handleLocationLabel is POST /locations/{id}/label — renders the location's
+// scannable SVG label. {id} accepts a location id OR an L- via-code. The title
+// is the location's Label.
+func (s *Server) handleLocationLabel(w http.ResponseWriter, r *http.Request) {
+	l, err := s.locationFromPath(r)
+	if err != nil {
+		if errors.Is(err, locations.ErrNotFound) || errors.Is(err, via.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "location label: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.writeLabel(w, l.ViaCode, l.Label, r)
+}
+
+// partFromPath resolves r.PathValue("id") to a part, accepting either a bare id
+// or a "P-" via-code (resolved through the via index). A via-miss propagates
+// as via.ErrNotFound; a missing record as parts.ErrNotFound — both map to 404
+// in the label handlers.
+func (s *Server) partFromPath(r *http.Request) (*parts.Part, error) {
+	id := r.PathValue("id")
+	if strings.HasPrefix(id, "P-") {
+		_, vid, err := s.via.Lookup(id)
+		if err != nil {
+			return nil, err
+		}
+		id = vid
+	}
+	return s.store.Get(id)
+}
+
+// locationFromPath resolves r.PathValue("id") to a location, accepting either a
+// bare id or an "L-" via-code. A mismatched code (e.g. an L- code on the parts
+// endpoint) surfaces naturally: via.Lookup returns a location id, then
+// store.Get misses → ErrNotFound → 404.
+func (s *Server) locationFromPath(r *http.Request) (*locations.Location, error) {
+	id := r.PathValue("id")
+	if strings.HasPrefix(id, "L-") {
+		_, vid, err := s.via.Lookup(id)
+		if err != nil {
+			return nil, err
+		}
+		id = vid
+	}
+	return s.locations.Get(id)
+}
+
+// writeLabel renders the SVG via internal/label and writes it with an SVG
+// content type. Physical printing (page layout, the OS print dialog) is a
+// client concern — go-parts renders the label, not the print driver (§8).
+func (s *Server) writeLabel(w http.ResponseWriter, code, title string, r *http.Request) {
+	svg, err := label.SVG(code, title, s.baseURL(r))
+	if err != nil {
+		http.Error(w, "label render: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml")
+	_, _ = w.Write(svg)
 }

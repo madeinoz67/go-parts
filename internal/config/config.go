@@ -30,8 +30,9 @@ const DefaultBind = "127.0.0.1:7890"
 // Config is the non-secret run-time configuration. Add fields here when a
 // new non-secret knob lands; never add secrets (§5.18).
 type Config struct {
-	DataDir string `json:"data_dir"`
-	Bind    string `json:"bind"` // loopback by default; non-loopback is opt-in
+	DataDir       string `json:"data_dir"`
+	Bind          string `json:"bind"`            // loopback by default; non-loopback is opt-in
+	PublicBaseURL string `json:"public_base_url"` // Slice 4: base for Via-resolver QR URLs + label links; "" = derive from the request (§5.18 non-secret)
 }
 
 // Default returns the bare-metal configuration for dataDir. An empty dataDir
@@ -83,6 +84,9 @@ func Load(dataDir string) (Config, error) {
 	}
 	if saved.DataDir != "" {
 		c.DataDir = saved.DataDir
+	}
+	if saved.PublicBaseURL != "" {
+		c.PublicBaseURL = saved.PublicBaseURL
 	}
 	return c, nil
 }

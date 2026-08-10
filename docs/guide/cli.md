@@ -223,6 +223,29 @@ locations; nesting follows `parent_id`).
 go-parts locations tree
 ```
 
+### `go-parts locations label`
+
+Renders the location's scannable SVG label (§5.17) to stdout — pipe to a file
+(`> bin.svg`) or open in a browser/print dialog. The QR encodes the configured
+`public_base_url` + `/via/{code}`; with no base configured (config.json) it
+encodes the relative `/via/{code}`. Accepts an id or an `L-` via-code.
+
+```
+go-parts locations label <id|viacode>
+```
+
+## Via
+
+`go-parts via` resolves a Via code (§5.17) — the generic resolver at the CLI.
+A `P-` code resolves to its part; an `L-` code resolves to its location **with
+its contents embedded** (scan-to-find — the parts whose `DefaultLocationID`
+points there). Output is JSON (the same shape as `GET /via/{code}`); pipe
+through `jq` for a readable view. A unknown code exits non-zero.
+
+```
+go-parts via <code>
+```
+
 ## Defaults and safety
 
 - **Loopback bind** — `127.0.0.1:7890` (config `DefaultBind`, PRD §5.18). go-parts

@@ -42,8 +42,10 @@ func newTestServer(t *testing.T) *Server {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	fts := index.NewFTS(db)
-	store := parts.NewStore(db, fts, via.NewStore(db))
-	return NewServer(store, fts)
+	vs := via.NewStore(db)
+	store := parts.NewStore(db, fts, vs)
+	ls := locations.NewStore(db, vs) // Slice 4: resolver + label handlers read it
+	return NewServer(store, fts, vs, ls)
 }
 
 // newTestServerWithLocations wires a REST server whose parts.Store has the
@@ -63,7 +65,7 @@ func newTestServerWithLocations(t *testing.T) (*Server, *locations.Store) {
 	ps := parts.NewStore(db, fts, vs)
 	ls := locations.NewStore(db, vs)
 	ps.SetLocationPolicy(link.NewPolicy(ps, ls))
-	return NewServer(ps, fts), ls
+	return NewServer(ps, fts, vs, ls), ls
 }
 
 // post/get/patch/delete are thin dispatch helpers that drive srv.ServeHTTP via
@@ -457,5 +459,103 @@ func TestPatchConcurrentSinglePartOnlyExactlyOneWins(t *testing.T) {
 	wg.Wait()
 	if ok != 1 {
 		t.Errorf("concurrent PATCH onto single-part-only: %d ok, want exactly 1 (locLocks not holding on REST surface)", ok)
+	}
+}
+
+// --- Slice 4: generic Via resolver + label endpoints ----------------------
+
+// checkLabel is the shared label-response assertion: 200, image/svg+xml, an
+// SVG body, and the human-readable via-code present in the markup.
+func checkLabel(t *testing.T, rr *httptest.ResponseRecorder, code string) {
+	t.Helper()
+	if rr.Code != http.StatusOK {
+		t.Fatalf("label = %d: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "image/svg+xml" {
+		t.Errorf("label Content-Type = %q, want image/svg+xml", ct)
+	}
+	body := rr.Body.String()
+	if !strings.HasPrefix(body, "<svg") {
+		t.Errorf("label body is not an SVG: %q", body)
+	}
+	if !strings.Contains(body, code) {
+		t.Errorf("label missing the via-code %q in the markup", code)
+	}
+}
+
+// TestViaResolvesLocationWithContents pins scan-to-find (§5.17): resolving a
+// location's code returns the location WITH its assigned parts embedded.
+func TestViaResolvesLocationWithContents(t *testing.T) {
+	srv, ls := newTestServerWithLocations(t)
+	bin := &locations.Location{Label: "Bin"}
+	if err := ls.Create(bin); err != nil {
+		t.Fatal(err)
+	}
+	post(srv, "/parts", `{"MPN":"a","PartType":"local","DefaultLocationID":"`+bin.ID+`"}`)
+	post(srv, "/parts", `{"MPN":"b","PartType":"local","DefaultLocationID":"`+bin.ID+`"}`)
+	rr := get(srv, "/via/"+bin.ViaCode)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("via = %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `"Type":"location"`) {
+		t.Errorf("via body missing Type=location: %s", body)
+	}
+	// 2 parts embedded (2 DefaultLocationID occurrences in Contents).
+	if c := strings.Count(body, `"DefaultLocationID"`); c != 2 {
+		t.Errorf("via body has %d part DefaultLocationID fields, want 2 (contents embedded): %s", c, body)
+	}
+}
+
+// TestViaResolvesPart pins the part branch: a P- code → type=part + the part.
+func TestViaResolvesPart(t *testing.T) {
+	srv, _ := newTestServerWithLocations(t)
+	p := restCreate(t, srv, `{"MPN":"VP","PartType":"local"}`)
+	rr := get(srv, "/via/"+p.ViaCode)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("via part = %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `"Type":"part"`) || !strings.Contains(body, p.ID) {
+		t.Errorf("via part body wrong: %s", body)
+	}
+}
+
+// TestViaUnknown404 pins the via-miss → 404.
+func TestViaUnknown404(t *testing.T) {
+	srv, _ := newTestServerWithLocations(t)
+	if rr := get(srv, "/via/L-NOPE"); rr.Code != http.StatusNotFound {
+		t.Errorf("via unknown = %d, want 404", rr.Code)
+	}
+}
+
+// TestPartLabelSVG pins POST /parts/{id}/label renders an SVG, by id AND by
+// via-code.
+func TestPartLabelSVG(t *testing.T) {
+	srv, _ := newTestServerWithLocations(t)
+	p := restCreate(t, srv, `{"MPN":"LBL","Description":"desc","PartType":"local"}`)
+	checkLabel(t, post(srv, "/parts/"+p.ID+"/label", ""), p.ViaCode)
+	checkLabel(t, post(srv, "/parts/"+p.ViaCode+"/label", ""), p.ViaCode)
+}
+
+// TestLocationLabelSVG pins POST /locations/{id}/label, by id AND via-code.
+func TestLocationLabelSVG(t *testing.T) {
+	srv, ls := newTestServerWithLocations(t)
+	loc := &locations.Location{Label: "Bin Z"}
+	if err := ls.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	checkLabel(t, post(srv, "/locations/"+loc.ID+"/label", ""), loc.ViaCode)
+	checkLabel(t, post(srv, "/locations/"+loc.ViaCode+"/label", ""), loc.ViaCode)
+}
+
+// TestLabelUnknown404 pins a missing entity on a label endpoint → 404.
+func TestLabelUnknown404(t *testing.T) {
+	srv, _ := newTestServerWithLocations(t)
+	if rr := post(srv, "/parts/no-such/label", ""); rr.Code != http.StatusNotFound {
+		t.Errorf("label unknown part = %d, want 404", rr.Code)
+	}
+	if rr := post(srv, "/locations/no-such/label", ""); rr.Code != http.StatusNotFound {
+		t.Errorf("label unknown location = %d, want 404", rr.Code)
 	}
 }
