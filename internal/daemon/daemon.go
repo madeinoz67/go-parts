@@ -87,7 +87,7 @@ func Run(cfg config.Config) error {
 	store.SetLocationPolicy(link.NewPolicy(store, locStore))
 	// Compose: UI at /ui/, REST at root, GET / → /ui/ redirect.
 	restSrv := rest.NewServer(store, fts)
-	uiSrv := ui.NewServer(store, fts)
+	uiSrv := ui.NewServer(store, fts, locStore)
 	mux := http.NewServeMux()
 	mux.Handle("/ui/", uiSrv)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {

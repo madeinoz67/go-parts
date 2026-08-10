@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/madeinoz67/go-parts/internal/index"
+	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
 )
 
@@ -19,13 +20,18 @@ var embedded embed.FS
 // Server is the /ui/* http.Handler. It shares the same *parts.Store and
 // *index.FTS instances as the REST server (constructed once in the daemon).
 type Server struct {
-	store *parts.Store
-	fts   *index.FTS
-	mux   *http.ServeMux
-	tmpl  *template.Template
+	store     *parts.Store
+	fts       *index.FTS
+	locations *locations.Store // Slice 3b: feeds the part-detail + create-form location picker (server-rendered, in-process)
+	mux       *http.ServeMux
+	tmpl      *template.Template
 }
 
-func NewServer(store *parts.Store, fts *index.FTS) *Server {
+// NewServer wires a /ui/* Server over store + fts + locStore. The locations
+// store populates the location picker (in-process — the UI does not call REST).
+// locStore may be nil in tests that don't exercise the picker; the handlers
+// guard a nil locations list as empty.
+func NewServer(store *parts.Store, fts *index.FTS, locStore *locations.Store) *Server {
 	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
 		// dict builds a map[string]any from key/value pairs so a child template
 		// invoked via {{template "x" (dict "P" .)}} receives named fields
@@ -42,9 +48,20 @@ func NewServer(store *parts.Store, fts *index.FTS) *Server {
 		"formatTags": formatTags,
 		"formatKV":   formatKV,
 	}).ParseFS(embedded, "templates/*.html"))
-	s := &Server{store: store, fts: fts, tmpl: tmpl, mux: http.NewServeMux()}
+	s := &Server{store: store, fts: fts, locations: locStore, tmpl: tmpl, mux: http.NewServeMux()}
 	s.routes()
 	return s
+}
+
+// locationOptions returns the locations for the part-detail + create-form
+// pickers, nil-safe (a test Server with no locations store renders an empty
+// picker). Read in-process from the locations store — the UI does not call REST
+// (PRD §5.2). Slice 3b.
+func (s *Server) locationOptions() []*locations.Location {
+	if s.locations == nil {
+		return nil
+	}
+	return s.locations.List()
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
@@ -61,6 +78,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /ui/parts", s.handleCreate)                 // create → new-row fragment
 	s.mux.HandleFunc("POST /ui/parts/bulk-delete", s.handleBulkDelete) // bulk delete → refreshed tbody + OOB tag-nav (§7.2, hx-include name=id)
 	s.mux.HandleFunc("POST /ui/parts/bulk-tag", s.handleBulkTag)       // bulk tag → refreshed tbody + OOB tag-nav (§7.2)
+	s.mux.HandleFunc("POST /ui/parts/bulk-move", s.handleBulkMove)     // bulk move-to-location → refreshed tbody (§7.2, Slice 3b)
 	s.mux.HandleFunc("POST /ui/parts/{id}", s.handleEdit)              // inline edit → updated detail (409 on stale version)
 	s.mux.HandleFunc("POST /ui/parts/{id}/stock", s.handleStock)       // inline stock-adjust → updated detail (404 on miss)
 }
@@ -74,9 +92,10 @@ func (s *Server) routes() {
 func (s *Server) handleShell(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "layout.html", map[string]any{
-		"Version": "dev",
-		"Count":   s.store.Count(),
-		"Tags":    s.store.TagCounts(),
+		"Version":   "dev",
+		"Count":     s.store.Count(),
+		"Tags":      s.store.TagCounts(),
+		"Locations": s.locationOptions(), // Slice 3b: feeds the bulk-bar Move picker
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

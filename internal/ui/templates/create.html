@@ -1,5 +1,6 @@
 {{define "create.html"}}
 <form class="create" hx-post="/ui/parts" hx-target="#parts-tbody" hx-swap="afterbegin">
+  {{if .Error}}<div class="conflict"><p>{{.Error}}</p></div>{{end}}
   <input name="mpn" placeholder="MPN" required>
   <input name="description" placeholder="description">
   <select name="part_type">
@@ -14,6 +15,10 @@
   <input name="tags" placeholder="tags (comma-sep)">
   <input name="unit_of_measure" placeholder="unit (pieces, m, g...)">
   <input name="package_qty" placeholder="pkg qty" type="number" min="0">
+  <select name="default_location_id">
+    <option value="">location (optional)</option>
+    {{range .Locations}}<option value="{{.ID}}">{{.Label}} · {{.ViaCode}}</option>{{end}}
+  </select>
   <button class="btn btn-primary" type="submit">create</button>
 </form>
 {{end}}

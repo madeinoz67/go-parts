@@ -322,6 +322,7 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{
 		"P":          p,
 		"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
+		"Locations":  s.locationOptions(),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -335,6 +336,7 @@ func (s *Server) handleCreateForm(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "create.html", map[string]any{
 		"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
+		"Locations":  s.locationOptions(),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -368,13 +370,14 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := &parts.Part{
-		MPN:           r.PostFormValue("mpn"),
-		Description:   r.PostFormValue("description"),
-		PartType:      r.PostFormValue("part_type"),
-		Manufacturer:  r.PostFormValue("manufacturer"),
-		Footprint:     r.PostFormValue("footprint"),
-		UnitOfMeasure: r.PostFormValue("unit_of_measure"),
-		Tags:          parseTags(r.PostFormValue("tags")),
+		MPN:               r.PostFormValue("mpn"),
+		Description:       r.PostFormValue("description"),
+		PartType:          r.PostFormValue("part_type"),
+		Manufacturer:      r.PostFormValue("manufacturer"),
+		Footprint:         r.PostFormValue("footprint"),
+		UnitOfMeasure:     r.PostFormValue("unit_of_measure"),
+		Tags:              parseTags(r.PostFormValue("tags")),
+		DefaultLocationID: r.PostFormValue("default_location_id"), // Slice 3b; guard fires in store.Create
 	}
 	if v := r.PostFormValue("qty"); v != "" {
 		fmt.Sscanf(v, "%d", &p.QtyOnHand)
@@ -386,6 +389,16 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(v, "%d", &p.PackageQty)
 	}
 	if err := s.store.Create(p); err != nil {
+		// Slice 3b: a single_part_only / missing-location guard failure on create
+		// is a user error, not a 500. Map the sentinels to a readable status.
+		if errors.Is(err, parts.ErrLocationSinglePartConflict) {
+			http.Error(w, "that bin is single-part-only and already holds a different part", http.StatusConflict)
+			return
+		}
+		if errors.Is(err, parts.ErrLocationNotFound) {
+			http.Error(w, "that location does not exist", http.StatusBadRequest)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -449,6 +462,11 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	cur.Manufacturer = r.PostFormValue("manufacturer")
 	cur.UnitOfMeasure = r.PostFormValue("unit_of_measure")
+	// Slice 3b: location assignment. Read explicitly (not zero-skip) so the
+	// <select>'s empty option clears DefaultLocationID (the guard allows "").
+	// The checkbox submits only when checked; unchecked → "" → false.
+	cur.DefaultLocationID = r.PostFormValue("default_location_id")
+	cur.DefaultLocationMandatory = r.PostFormValue("default_location_mandatory") == "true"
 	cur.Tags = parseTags(r.PostFormValue("tags"))
 	cur.Specs = parseKV(r.PostFormValue("specs"))
 	cur.CustomFields = parseKV(r.PostFormValue("custom_fields"))
@@ -459,6 +477,27 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(v, "%d", &cur.PackageQty)
 	}
 	if err := s.store.Update(cur, expected); err != nil {
+		// Slice 3b: location-assignment guard errors (3a's injected policy) →
+		// re-render the detail form with the user's edits preserved + a banner
+		// so they pick a different bin. Distinct from a version conflict (the
+		// record changed under you → conflict.html reload). The banner reuses
+		// the .conflict styling.
+		if errors.Is(err, parts.ErrLocationSinglePartConflict) || errors.Is(err, parts.ErrLocationNotFound) {
+			msg := "that bin is single-part-only and already holds a different part"
+			if errors.Is(err, parts.ErrLocationNotFound) {
+				msg = "that location no longer exists"
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if tErr := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{
+				"P":          cur,
+				"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
+				"Locations":  s.locationOptions(),
+				"Error":      msg,
+			}); tErr != nil {
+				http.Error(w, tErr.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusConflict)
 		if tErr := s.tmpl.ExecuteTemplate(w, "conflict.html", map[string]any{"ID": id}); tErr != nil {
@@ -469,7 +508,11 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{"P": cur, "Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints())}); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{
+		"P":          cur,
+		"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
+		"Locations":  s.locationOptions(),
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -620,6 +663,59 @@ func (s *Server) handleBulkTag(w http.ResponseWriter, r *http.Request) {
 	// body, injected client-side by layout.html's htmx:configRequest handler —
 	// the OOB #toolbar swap was removed in 720daba, so bulk filter-preservation
 	// is now a client-side concern, not a server-fed one (§7.2).
+	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
+		"Parts":  pts,
+		"Q":      q,
+		"Tags":   s.store.TagCounts(),
+		"Active": tagFilter,
+		"Tag":    tagFilter,
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleBulkMove sets DefaultLocationID on every selected part to the chosen
+// location (the bulk-action bar's move form, §7.2, Slice 3b). Per-part
+// Get/set-location/Update — the single_part_only guard fires per part under
+// each part's own lock + the target location's locLock. Moving N parts onto a
+// shared location succeeds for all N; onto a SinglePartOnly location exactly
+// one succeeds and the rest conflict → slog.Warn per skip (the same
+// degrade-loudly posture as handleBulkTag's concurrent-edit warn). An empty
+// target short-circuits (the "move to…" placeholder option).
+//
+// Re-renders the current view (q/tag/low/sort/dir read from the POST body —
+// injected client-side by layout.html's htmx:configRequest handler for
+// #bulkMoveForm, same mechanism as delete/tag).
+func (s *Server) handleBulkMove(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	tagFilter := r.PostFormValue("tag")
+	target := r.PostFormValue("move_location")
+	for _, id := range r.PostForm["id"] {
+		if target == "" {
+			break
+		}
+		p, err := s.store.Get(id)
+		if err != nil {
+			continue // unknown id → skip (idempotent per-row)
+		}
+		p.DefaultLocationID = target
+		// A guard conflict (SinglePartOnly holds another, or the location
+		// vanished) or a version conflict → skip this part + warn. The operator
+		// sees the part didn't move on the refreshed view.
+		if err := s.store.Update(p, p.Version); err != nil {
+			slog.Warn("bulk-move: part skipped", "id", id, "location", target, "error", err)
+		}
+	}
+	q := r.PostFormValue("q")
+	lowParam := r.PostFormValue("low")
+	low := lowParam == "1"
+	sortKey := r.PostFormValue("sort")
+	sortDir := r.PostFormValue("dir")
+	pts := s.filteredParts(q, tagFilter, low, sortKey, sortDir)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
 		"Parts":  pts,
 		"Q":      q,

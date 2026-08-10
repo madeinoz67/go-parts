@@ -23,6 +23,18 @@
       <input name="new_tag" placeholder="tag" required>
       <button type="submit" class="btn-bulk">tag</button>
     </form>
+    <form hx-post="/ui/parts/bulk-move" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" hx-include="[name=id]" id="bulkMoveForm">
+      <input type="hidden" name="q" value="{{or .Q ""}}">
+      <input type="hidden" name="tag" value="{{or .Tag ""}}">
+      <input type="hidden" name="low" value="{{or .Low ""}}">
+      <input type="hidden" name="sort" value="{{or .Sort ""}}">
+      <input type="hidden" name="dir" value="{{or .Dir ""}}">
+      <select name="move_location" required>
+        <option value="">move to…</option>
+        {{range .Locations}}<option value="{{.ID}}">{{.Label}} · {{.ViaCode}}</option>{{end}}
+      </select>
+      <button type="submit" class="btn-bulk">move</button>
+    </form>
     <button class="btn-bulk" onclick="clearSelection()">clear</button>
   </div>
 </div>

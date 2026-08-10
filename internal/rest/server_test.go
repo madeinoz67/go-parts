@@ -14,11 +14,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/madeinoz67/go-parts/internal/index"
+	"github.com/madeinoz67/go-parts/internal/link"
+	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
 	"github.com/madeinoz67/go-parts/internal/via"
 )
@@ -39,6 +44,26 @@ func newTestServer(t *testing.T) *Server {
 	fts := index.NewFTS(db)
 	store := parts.NewStore(db, fts, via.NewStore(db))
 	return NewServer(store, fts)
+}
+
+// newTestServerWithLocations wires a REST server whose parts.Store has the
+// single_part_only guard live (link.NewPolicy over a locations.Store), so PATCH
+// /parts DefaultLocationID assignment exercises the guard through the HTTP
+// layer. Mirrors daemon wiring. Slice 3b — this is the surface that makes 3a's
+// locLocks TOCTOU fix reachable.
+func newTestServerWithLocations(t *testing.T) (*Server, *locations.Store) {
+	t.Helper()
+	db, err := pebble.Open(filepath.Join(t.TempDir(), "p"), &pebble.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	fts := index.NewFTS(db)
+	vs := via.NewStore(db)
+	ps := parts.NewStore(db, fts, vs)
+	ls := locations.NewStore(db, vs)
+	ps.SetLocationPolicy(link.NewPolicy(ps, ls))
+	return NewServer(ps, fts), ls
 }
 
 // post/get/patch/delete are thin dispatch helpers that drive srv.ServeHTTP via
@@ -340,5 +365,97 @@ func TestSearchEmptyQuery(t *testing.T) {
 	body := strings.TrimSpace(rr.Body.String())
 	if body != "null" && body != "[]" {
 		t.Fatalf("empty search body = %q, want null or []", body)
+	}
+}
+
+// --- Slice 3b: REST DefaultLocationID + the guard on the PATCH surface -----
+
+// restCreate POSTs a part body and returns the decoded stored record (with the
+// server-assigned ID + Version). Slice 3b helper.
+func restCreate(t *testing.T, srv *Server, body string) parts.Part {
+	t.Helper()
+	rr := post(srv, "/parts", body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", rr.Code, rr.Body.String())
+	}
+	var p parts.Part
+	if err := json.Unmarshal(rr.Body.Bytes(), &p); err != nil {
+		t.Fatalf("decode created part: %v", err)
+	}
+	return p
+}
+
+// TestPatchSetsDefaultLocation pins applyPatch copies DefaultLocationID into the
+// store (the guard fires in Update). Slice 3b.
+func TestPatchSetsDefaultLocation(t *testing.T) {
+	srv, ls := newTestServerWithLocations(t)
+	loc := &locations.Location{Label: "RA"}
+	if err := ls.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	p := restCreate(t, srv, `{"MPN":"R-LOC","PartType":"local"}`)
+	etag := strconv.Quote(strconv.Itoa(p.Version))
+	rr := patch(srv, "/parts/"+p.ID, `{"DefaultLocationID":"`+loc.ID+`"}`, etag)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("patch = %d: %s", rr.Code, rr.Body.String())
+	}
+	got, _ := srv.store.Get(p.ID)
+	if got.DefaultLocationID != loc.ID {
+		t.Errorf("stored DefaultLocationID = %q, want %q", got.DefaultLocationID, loc.ID)
+	}
+}
+
+// TestPatchGuardConflict409 pins the guard surfaces as 409 on the PATCH surface
+// (a second distinct part onto an occupied SinglePartOnly location).
+func TestPatchGuardConflict409(t *testing.T) {
+	srv, ls := newTestServerWithLocations(t)
+	solo := &locations.Location{Label: "SOLO", SinglePartOnly: true}
+	if err := ls.Create(solo); err != nil {
+		t.Fatal(err)
+	}
+	restCreate(t, srv, `{"MPN":"A","PartType":"local","DefaultLocationID":"`+solo.ID+`"}`) // sole occupant
+	b := restCreate(t, srv, `{"MPN":"B","PartType":"local"}`)
+	etag := strconv.Quote(strconv.Itoa(b.Version))
+	rr := patch(srv, "/parts/"+b.ID, `{"DefaultLocationID":"`+solo.ID+`"}`, etag)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("patch into occupied single-part-only = %d, want 409; body=%s", rr.Code, rr.Body)
+	}
+}
+
+// TestPatchConcurrentSinglePartOnlyExactlyOneWins is the load-bearing
+// confirmation that 3a's locLocks hold on the now-reachable REST PATCH surface:
+// N concurrent PATCHes, each assigning a distinct part to the SAME
+// SinglePartOnly location, must yield exactly one 200 — the rest get 409. Before
+// 3a's locLocks this would multi-win; before 3b's applyPatch the surface could
+// not even set the field. Run with -race.
+func TestPatchConcurrentSinglePartOnlyExactlyOneWins(t *testing.T) {
+	srv, ls := newTestServerWithLocations(t)
+	solo := &locations.Location{Label: "SOLO", SinglePartOnly: true}
+	if err := ls.Create(solo); err != nil {
+		t.Fatal(err)
+	}
+	const N = 30
+	ids := make([]string, N)
+	vers := make([]int, N)
+	for i := range N {
+		p := restCreate(t, srv, `{"MPN":"C","PartType":"local"}`)
+		ids[i], vers[i] = p.ID, p.Version
+	}
+	var wg sync.WaitGroup
+	var ok int32
+	for i := range N {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			etag := strconv.Quote(strconv.Itoa(vers[i]))
+			rr := patch(srv, "/parts/"+ids[i], `{"DefaultLocationID":"`+solo.ID+`"}`, etag)
+			if rr.Code == http.StatusOK {
+				atomic.AddInt32(&ok, 1)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if ok != 1 {
+		t.Errorf("concurrent PATCH onto single-part-only: %d ok, want exactly 1 (locLocks not holding on REST surface)", ok)
 	}
 }

@@ -4,13 +4,17 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/madeinoz67/go-parts/internal/index"
+	"github.com/madeinoz67/go-parts/internal/link"
+	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
 	"github.com/madeinoz67/go-parts/internal/via"
 )
@@ -23,7 +27,11 @@ func newTestServer(t *testing.T) *Server {
 	}
 	t.Cleanup(func() { db.Close() })
 	fts := index.NewFTS(db)
-	return NewServer(parts.NewStore(db, fts, via.NewStore(db)), fts)
+	vs := via.NewStore(db)
+	ps := parts.NewStore(db, fts, vs)
+	ls := locations.NewStore(db, vs)
+	ps.SetLocationPolicy(link.NewPolicy(ps, ls)) // guard live, mirroring daemon/CLI wiring (Slice 3a)
+	return NewServer(ps, fts, ls)
 }
 
 func TestStaticAssetsServe(t *testing.T) {
@@ -828,5 +836,204 @@ func TestEditWithSpecsAndCustomFields(t *testing.T) {
 	}
 	if got.UnitOfMeasure != "pieces" || got.PackageQty != 10 {
 		t.Errorf("UoM=%q PackageQty=%d", got.UnitOfMeasure, got.PackageQty)
+	}
+}
+
+// --- Slice 3b: part↔location surfaces -------------------------------------
+
+// uiCreateLocation creates a location via the test server's locations store
+// (white-box — the test is in package ui). Returns it for its ID/ViaCode.
+func uiCreateLocation(t *testing.T, srv *Server, label string, single bool) *locations.Location {
+	t.Helper()
+	l := &locations.Location{Label: label, SinglePartOnly: single}
+	if err := srv.locations.Create(l); err != nil {
+		t.Fatalf("create location %q: %v", label, err)
+	}
+	return l
+}
+
+func uiCreatePart(t *testing.T, srv *Server, mpn string) *parts.Part {
+	t.Helper()
+	p := &parts.Part{MPN: mpn, PartType: "local"}
+	if err := srv.store.Create(p); err != nil {
+		t.Fatalf("create part %q: %v", mpn, err)
+	}
+	return p
+}
+
+// TestDetailRendersLocationPicker pins that the detail panel embeds a
+// default_location_id <select> populated with the location options.
+func TestDetailRendersLocationPicker(t *testing.T) {
+	srv := newTestServer(t)
+	loc := uiCreateLocation(t, srv, "Drawer 12", false)
+	p := uiCreatePart(t, srv, "PICK-1")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+p.ID, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET detail = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "name=\"default_location_id\"") {
+		t.Errorf("detail missing the default_location_id select; body: %s", body)
+	}
+	if !strings.Contains(body, `value="`+loc.ID+`"`) {
+		t.Errorf("detail picker missing the location option %s; body: %s", loc.ID, body)
+	}
+}
+
+// TestEditSetsDefaultLocation pins the edit form's location <select> sets
+// DefaultLocationID via store.Update (the guard fires in Update).
+func TestEditSetsDefaultLocation(t *testing.T) {
+	srv := newTestServer(t)
+	loc := uiCreateLocation(t, srv, "Bin A", false)
+	p := uiCreatePart(t, srv, "LOC-1")
+	body := url.Values{"version": {strconv.Itoa(p.Version)}, "default_location_id": {loc.ID}}.Encode()
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p.ID, body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("edit = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	got, _ := srv.store.Get(p.ID)
+	if got.DefaultLocationID != loc.ID {
+		t.Errorf("stored DefaultLocationID = %q, want %q", got.DefaultLocationID, loc.ID)
+	}
+}
+
+// TestEditClearsDefaultLocation pins that the <select>'s empty option clears
+// DefaultLocationID (the guard allows clearing to "").
+func TestEditClearsDefaultLocation(t *testing.T) {
+	srv := newTestServer(t)
+	loc := uiCreateLocation(t, srv, "Bin B", false)
+	p := uiCreatePart(t, srv, "LOC-2")
+	p.DefaultLocationID = loc.ID
+	if err := srv.store.Update(p, p.Version); err != nil {
+		t.Fatal(err)
+	}
+	body := url.Values{"version": {strconv.Itoa(p.Version)}, "default_location_id": {""}}.Encode()
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p.ID, body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("edit clear = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	got, _ := srv.store.Get(p.ID)
+	if got.DefaultLocationID != "" {
+		t.Errorf("stored DefaultLocationID = %q, want cleared", got.DefaultLocationID)
+	}
+}
+
+// TestEditGuardErrorRendersBanner pins the 3a single_part_only guard surfacing
+// as a form banner (re-rendered detail with the user's edits preserved), NOT a
+// 409 conflict.html reload. The second distinct part into a SinglePartOnly
+// location is rejected; p2 stays unassigned.
+func TestEditGuardErrorRendersBanner(t *testing.T) {
+	srv := newTestServer(t)
+	solo := uiCreateLocation(t, srv, "Solo", true)
+	p1 := &parts.Part{MPN: "SOLO-1", PartType: "local", DefaultLocationID: solo.ID}
+	if err := srv.store.Create(p1); err != nil {
+		t.Fatal(err)
+	}
+	p2 := uiCreatePart(t, srv, "SOLO-2") // unassigned
+	body := url.Values{"version": {strconv.Itoa(p2.Version)}, "default_location_id": {solo.ID}}.Encode()
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p2.ID, body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("guard-error edit = %d (want 200 banner, not 409); body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "single-part-only") {
+		t.Errorf("guard-error banner missing 'single-part-only'; body: %s", rr.Body.String())
+	}
+	got, _ := srv.store.Get(p2.ID)
+	if got.DefaultLocationID == solo.ID {
+		t.Error("p2 was assigned to the single-part-only location despite the guard")
+	}
+}
+
+// TestEditMandatoryToggle pins the DefaultLocationMandatory checkbox round-trips.
+func TestEditMandatoryToggle(t *testing.T) {
+	srv := newTestServer(t)
+	loc := uiCreateLocation(t, srv, "Bin C", false)
+	p := uiCreatePart(t, srv, "MAND-1")
+	body := url.Values{
+		"version":                    {strconv.Itoa(p.Version)},
+		"default_location_id":        {loc.ID},
+		"default_location_mandatory": {"true"},
+	}.Encode()
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p.ID, body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("edit mandatory = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	got, _ := srv.store.Get(p.ID)
+	if !got.DefaultLocationMandatory {
+		t.Errorf("DefaultLocationMandatory = false, want true")
+	}
+}
+
+// TestCreateWithLocation pins the create form carries default_location_id into
+// store.Create (the guard fires in Create).
+func TestCreateWithLocation(t *testing.T) {
+	srv := newTestServer(t)
+	loc := uiCreateLocation(t, srv, "Bin D", false)
+	body := url.Values{"mpn": {"NEW-LOC"}, "part_type": {"local"}, "default_location_id": {loc.ID}}.Encode()
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts", body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("create = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	for _, p := range srv.store.List() {
+		if p.MPN == "NEW-LOC" {
+			if p.DefaultLocationID != loc.ID {
+				t.Errorf("created DefaultLocationID = %q, want %q", p.DefaultLocationID, loc.ID)
+			}
+			return
+		}
+	}
+	t.Fatal("created part NEW-LOC not found")
+}
+
+// TestBulkMove pins the bulk-Move action: N selected parts → all assigned to a
+// shared target location via per-part Update.
+func TestBulkMove(t *testing.T) {
+	srv := newTestServer(t)
+	loc := uiCreateLocation(t, srv, "Drawer M", false)
+	p1 := uiCreatePart(t, srv, "MV-1")
+	p2 := uiCreatePart(t, srv, "MV-2")
+	body := url.Values{"id": {p1.ID, p2.ID}, "move_location": {loc.ID}}.Encode()
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/bulk-move", body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bulk-move = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	for _, id := range []string{p1.ID, p2.ID} {
+		got, _ := srv.store.Get(id)
+		if got.DefaultLocationID != loc.ID {
+			t.Errorf("part %s DefaultLocationID = %q, want %q", id, got.DefaultLocationID, loc.ID)
+		}
+	}
+}
+
+// TestBulkMoveSinglePartOnlyOneWins pins the bulk-move semantics onto a
+// SinglePartOnly target: of N selected parts exactly one is assigned; the rest
+// are skipped (slog.Warn) without failing the request.
+func TestBulkMoveSinglePartOnlyOneWins(t *testing.T) {
+	srv := newTestServer(t)
+	solo := uiCreateLocation(t, srv, "SoloBin", true)
+	ps := []*parts.Part{uiCreatePart(t, srv, "SP-1"), uiCreatePart(t, srv, "SP-2"), uiCreatePart(t, srv, "SP-3")}
+	ids := []string{ps[0].ID, ps[1].ID, ps[2].ID}
+	body := url.Values{"id": ids, "move_location": {solo.ID}}.Encode()
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/bulk-move", body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bulk-move = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	assigned := 0
+	for _, id := range ids {
+		got, _ := srv.store.Get(id)
+		if got.DefaultLocationID == solo.ID {
+			assigned++
+		}
+	}
+	if assigned != 1 {
+		t.Errorf("bulk-move onto single-part-only: %d assigned, want exactly 1", assigned)
 	}
 }

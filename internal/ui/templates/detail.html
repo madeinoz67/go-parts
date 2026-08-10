@@ -25,6 +25,7 @@
 <hr>
 
 <form class="inline edit" hx-post="/ui/parts/{{.P.ID}}" hx-target="#detail-panel">
+  {{if .Error}}<div class="conflict"><p>{{.Error}}</p></div>{{end}}
   <input type="hidden" name="version" value="{{.P.Version}}">
   <div class="spec-rows">
     <div class="spec-row"><span>Description</span><input type="text" name="description" value="{{.P.Description}}" style="flex:1"></div>
@@ -35,6 +36,14 @@
     <div class="spec-row"><span>Tags</span><input type="text" name="tags" value="{{formatTags .P.Tags}}" placeholder="comma-sep" style="flex:1"></div>
     <div class="spec-row"><span>Unit</span><input type="text" name="unit_of_measure" value="{{.P.UnitOfMeasure}}" style="flex:1"></div>
     <div class="spec-row"><span>Pkg qty</span><input type="number" name="package_qty" value="{{.P.PackageQty}}" min="0" style="width:5em"></div>
+    <div class="spec-row">
+      <span>Location</span>
+      <select name="default_location_id" style="flex:1">
+        <option value="">(unassigned)</option>
+        {{range .Locations}}<option value="{{.ID}}"{{if eq $.P.DefaultLocationID .ID}} selected{{end}}>{{.Label}} · {{.ViaCode}}</option>{{end}}
+      </select>
+    </div>
+    <div class="spec-row"><span>Mandatory</span><label style="flex:1;display:flex;align-items:center;gap:6px"><input type="checkbox" name="default_location_mandatory" value="true"{{if .P.DefaultLocationMandatory}} checked{{end}}> stock only at this location</label></div>
   </div>
   <div style="margin-top:8px">
     <div class="eyebrow" style="margin-bottom:4px">Specs (key=value per line)</div>

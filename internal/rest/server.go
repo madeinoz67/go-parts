@@ -110,6 +110,15 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	p.CreatedAt = time.Time{}
 	p.UpdatedAt = time.Time{}
 	if err := s.store.Create(&p); err != nil {
+		// Slice 3b: a DefaultLocationID on create can trip the guard.
+		if errors.Is(err, parts.ErrLocationNotFound) {
+			http.Error(w, "location not found: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if errors.Is(err, parts.ErrLocationSinglePartConflict) {
+			http.Error(w, "single-part-only conflict: "+err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, "create: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -185,12 +194,22 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.Update(loaded, expectedVersion); err != nil {
 		// Update calls Get under the striped lock, so a part deleted between
 		// our outer Get and Update surfaces here as parts.ErrNotFound → 404
-		// (mirrors handleDelete/handleStock's not-found handling). The only
-		// other recoverable path is a version conflict (the expectedVersion no
-		// longer matches the in-lock stored version) — the §5.14 race window
-		// optimistic concurrency exists for → 409.
+		// (mirrors handleDelete/handleStock's not-found handling). Slice 3b:
+		// a DefaultLocationID assignment can trip the single_part_only guard
+		// (ErrLocationSinglePartConflict → 409) or reference a missing location
+		// (ErrLocationNotFound → 400). The remaining case is a version conflict
+		// (the expectedVersion no longer matches the in-lock stored version) —
+		// the §5.14 race window optimistic concurrency exists for → 409.
 		if errors.Is(err, parts.ErrNotFound) {
 			http.NotFound(w, r)
+			return
+		}
+		if errors.Is(err, parts.ErrLocationNotFound) {
+			http.Error(w, "location not found: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if errors.Is(err, parts.ErrLocationSinglePartConflict) {
+			http.Error(w, "single-part-only conflict: "+err.Error(), http.StatusConflict)
 			return
 		}
 		http.Error(w, "version conflict: "+err.Error(), http.StatusConflict)
@@ -246,6 +265,9 @@ func applyPatch(dst, src *parts.Part) {
 	}
 	if src.DatasheetRef != "" {
 		dst.DatasheetRef = src.DatasheetRef
+	}
+	if src.DefaultLocationID != "" {
+		dst.DefaultLocationID = src.DefaultLocationID // Slice 3b — guard fires in Update (zero-skip: omit to leave unchanged; REST cannot CLEAR — see plan §1.4)
 	}
 }
 
