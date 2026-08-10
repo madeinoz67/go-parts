@@ -162,15 +162,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// ("1" or "") — not the bool — so bulk-bar.html can populate the hidden
 	// field and gate the chip-active class without re-deriving it.
 	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
-		"Parts":   pts,
-		"Q":       q,
-		"Tags":    s.store.TagCounts(),
-		"Active":  tag,
-		"Tag":     tag,
-		"Low":     lowParam,
-		"Sort":    sortKey,
-		"Dir":     sortDir,
-		"Toolbar": true,
+		"Parts":  pts,
+		"Q":      q,
+		"Tags":   s.store.TagCounts(),
+		"Active": tag,
+		"Tag":    tag,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -461,15 +457,11 @@ func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
 	// bulk-bar re-renders with the post-action view state so its hidden fields
 	// stay synced for the NEXT bulk action from the same filtered view.
 	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
-		"Parts":   pts,
-		"Q":       q,
-		"Tags":    s.store.TagCounts(),
-		"Active":  tag,
-		"Tag":     tag,
-		"Low":     lowParam,
-		"Sort":    sortKey,
-		"Dir":     sortDir,
-		"Toolbar": true,
+		"Parts":  pts,
+		"Q":      q,
+		"Tags":   s.store.TagCounts(),
+		"Active": tag,
+		"Tag":    tag,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -533,15 +525,11 @@ func (s *Server) handleBulkTag(w http.ResponseWriter, r *http.Request) {
 	// a filtered view must preserve the filter context in the re-rendered
 	// bulk-bar so the next bulk action doesn't reset to all-parts (§7.2).
 	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
-		"Parts":   pts,
-		"Q":       q,
-		"Tags":    s.store.TagCounts(),
-		"Active":  tagFilter,
-		"Tag":     tagFilter,
-		"Low":     lowParam,
-		"Sort":    sortKey,
-		"Dir":     sortDir,
-		"Toolbar": true,
+		"Parts":  pts,
+		"Q":      q,
+		"Tags":   s.store.TagCounts(),
+		"Active": tagFilter,
+		"Tag":    tagFilter,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
