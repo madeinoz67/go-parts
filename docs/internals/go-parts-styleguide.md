@@ -69,6 +69,8 @@ Custom line-art SVGs styled as schematic symbols — resistor zigzag, capacitor 
 
 **Fallback for tags with no hand-drawn icon.** Six common tag values (`resistor`, `capacitor`, `ic`, `connector`, `sensor`, `hardware`) have bespoke art; anything else (a tag nobody anticipated — `optocoupler`, `crystal`, whatever) needs to render *something*, not a broken icon slot or a mismatched generic-flat icon that breaks the "never generic/rounded" rule. The fallback is a dashed-outline rectangle, `--text-faint` stroke rather than full icon color — the same convention KiCad and other CAD tools already use for an unassigned/undefined footprint placeholder, so it reads as "no specific symbol designed yet" rather than as a mistake. Every tag not in the hand-drawn six gets the same fallback; they're differentiated by their text label, not a bespoke icon. Adding real art for a new tag later is a deliberate choice when one earns it through actual use, not something solved upfront for every conceivable tag.
 
+**Implementation.** The icon mapping lives in `internal/ui/templates/tag-nav.html` as a Go template `{{if eq .Tag "resistor"}}<svg>…</svg>{{else if eq .Tag "capacitor"}}…{{end}}` chain — string-match the tag name, render the matching SVG (or the `<span class="cat-fallback">` dashed rectangle for anything else). To add an icon for a new tag: edit `tag-nav.html`, add an `{{else if eq .Tag "newtag"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">…</svg>` clause before the `{{else}}` fallback, following the schematic-symbol style above. No config table or registry — it's deliberately in the template so the art + the markup live together.
+
 ---
 
 ## 6. Components
