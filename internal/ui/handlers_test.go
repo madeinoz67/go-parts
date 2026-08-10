@@ -1183,3 +1183,62 @@ func TestLocationEditCycleBanner(t *testing.T) {
 		t.Errorf("cycle banner missing 'cycle'; body: %s", rr.Body.String())
 	}
 }
+
+// TestLocationEditVersionConflictReload pins §5.14 on the locations surface: a
+// stale expectedVersion → 409 + the reload prompt (NOT a banner). The banner
+// path would re-render with the canonical Version + the user's stale fields,
+// enabling a blind-overwrite on retry; the reload forces a re-fetch. The
+// stale edit must NOT be applied.
+func TestLocationEditVersionConflictReload(t *testing.T) {
+	srv := newTestServer(t)
+	a := uiCreateLocation(t, srv, "VC", false)
+	// Bump the stored version so the form's expected (1) is stale.
+	cur, _ := srv.locations.Get(a.ID)
+	cur.Notes = "concurrent-edit"
+	if err := srv.locations.Update(cur, cur.Version); err != nil { // now version 2
+		t.Fatal(err)
+	}
+	body := url.Values{"version": {"1"}, "label": {"VC-overwrite"}, "parent_id": {""}}.Encode()
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/"+a.ID, body))
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("version-conflict edit = %d, want 409; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "reload") {
+		t.Errorf("version-conflict should render the reload prompt; body: %s", rr.Body.String())
+	}
+	got, _ := srv.locations.Get(a.ID)
+	if got.Label == "VC-overwrite" {
+		t.Error("the stale version-conflict edit was applied (blind overwrite — §5.14 violation)")
+	}
+}
+
+// TestLocationEditParentMissBanner pins the 5a parent-existence fix at the UI
+// layer: reparenting onto a just-deleted parent → a banner (not 500, not a
+// silent orphan).
+func TestLocationEditParentMissBanner(t *testing.T) {
+	srv := newTestServer(t)
+	parent := uiCreateLocation(t, srv, "PM-Parent", false)
+	child := uiCreateLocation(t, srv, "PM-Child", false)
+	if err := srv.locations.Delete(parent.ID); err != nil { // releases the id
+		t.Fatal(err)
+	}
+	cur, _ := srv.locations.Get(child.ID)
+	body := url.Values{
+		"version":   {strconv.Itoa(cur.Version)},
+		"label":     {cur.Label},
+		"parent_id": {parent.ID},
+	}.Encode()
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/"+child.ID, body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("parent-miss edit = %d (want 200 banner, not 500); body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "not found") {
+		t.Errorf("parent-miss banner missing 'not found'; body: %s", rr.Body.String())
+	}
+	got, _ := srv.locations.Get(child.ID)
+	if got.ParentID == parent.ID {
+		t.Error("child was orphaned under the deleted parent")
+	}
+}

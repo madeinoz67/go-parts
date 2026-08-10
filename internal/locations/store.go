@@ -25,6 +25,13 @@ var ErrHasChildren = errors.New("locations: has children")
 // (the new parent is the location itself or one of its descendants).
 var ErrCycle = errors.New("locations: parent change would form a cycle")
 
+// ErrVersionConflict is returned by Update when the stored Version no longer
+// matches expectedVersion (§5.14 — reject, never silently overwrite). A
+// sentinel (not a plain fmt.Errorf) so the UI handler can distinguish it from
+// ErrCycle / a missing parent and surface a reload prompt (the operator's
+// stale-field edit must not be applied onto a record state they never saw).
+var ErrVersionConflict = errors.New("locations: version conflict")
+
 // ErrHasParts is returned by the delete-path composition (the CLI's `locations
 // remove`; the daemon delete handler when Slice 5/6 wires the locations
 // transport) when a location still has parts assigned to it. locations.Store
@@ -174,7 +181,7 @@ func (s *Store) Update(l *Location, expectedVersion int) error {
 		return err
 	}
 	if cur.Version != expectedVersion {
-		return fmt.Errorf("locations: version conflict for %s: stored %d != expected %d", l.ID, cur.Version, expectedVersion)
+		return fmt.Errorf("locations: version conflict for %s: stored %d != expected %d: %w", l.ID, cur.Version, expectedVersion, ErrVersionConflict)
 	}
 	if l.ParentID != cur.ParentID {
 		if s.wouldCycle(l, l.ParentID) {

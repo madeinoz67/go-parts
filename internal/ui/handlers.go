@@ -515,7 +515,7 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusConflict)
-		if tErr := s.tmpl.ExecuteTemplate(w, "conflict.html", map[string]any{"ID": id}); tErr != nil {
+		if tErr := s.tmpl.ExecuteTemplate(w, "conflict.html", map[string]any{"Reload": "/ui/parts/" + id}); tErr != nil {
 			// Header already sent (409); the best we can do is nothing — the
 			// fragment is short and the template engine doesn't error mid-write.
 			_ = tErr
@@ -848,6 +848,19 @@ func (s *Server) handleLocationEdit(w http.ResponseWriter, r *http.Request) {
 	cur.Notes = r.PostFormValue("notes")
 	cur.SinglePartOnly = r.PostFormValue("single_part_only") == "true"
 	if err := s.locations.Update(cur, expected); err != nil {
+		// §5.14 cross-surface: a version conflict → 409 + reload prompt (NOT a
+		// banner). The banner path would re-render with the canonical record's
+		// Version but the user's stale fields, enabling a blind-overwrite on
+		// retry; the reload forces a re-fetch. Mirrors the parts handleEdit UX;
+		// conflict.html is parametrized by Reload. (Header not sent yet.)
+		if errors.Is(err, locations.ErrVersionConflict) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusConflict)
+			_ = s.tmpl.ExecuteTemplate(w, "conflict.html", map[string]any{"Reload": "/ui/locations/" + id})
+			return
+		}
+		// cycle / parent-miss → banner (the operator fixes the input, not a
+		// concurrent edit). Header not sent yet (200 implied).
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", map[string]any{
 			"L":         cur,
