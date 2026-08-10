@@ -119,6 +119,52 @@ go-parts locations add --label "Bin A3" [--parent ID] [--single-part-only] [--no
 | `--notes` | `""` | free-text notes |
 | `--dry-run` | `false` | print what would happen without executing |
 
+### `go-parts locations bulk`
+
+Creates many locations at once by enumerating labels along a numeric row, a
+2-D grid (alpha rows × numeric columns), or a 3-D grid (numeric levels × alpha
+rows × numeric columns). Four creation methods are expressed as flag
+combinations on the one `bulk` subcommand (§7.1); each generated label is
+passed to `Store.CreateBulk`, which loops `Create` with the shared opts. For a
+single location use `go-parts locations add`.
+
+```
+go-parts locations bulk --method row|grid|3d --prefix box \
+  [--from N --to N] \
+  [--row-from A --row-to B --col-from N --col-to N] \
+  [--level-from N --level-to N] \
+  [--parent ID] [--single-part-only] [--notes ...] [--dry-run]
+```
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--method` | (required) | `row`, `grid`, or `3d` (single uses `add`) |
+| `--prefix` | `""` | label prefix (e.g. `box`, `shelf`, `rack`) |
+| `--from`, `--to` | `0` | `row`: numeric range start/end (inclusive) |
+| `--row-from`, `--row-to` | `""` | `grid`/`3d`: first and last row letter (A-Z, inclusive) |
+| `--col-from`, `--col-to` | `0` | `grid`/`3d`: first and last column (inclusive) |
+| `--level-from`, `--level-to` | `0` | `3d`: first and last level (inclusive) |
+| `--parent` | `""` | parent location id (every row is nested under it) |
+| `--single-part-only` | `false` | each bin holds only one part type |
+| `--notes` | `""` | free-text notes applied to every row |
+| `--dry-run` | `false` | print the labels that would be created without writing |
+
+The four methods, by flag combination:
+
+- **Row** — `go-parts locations bulk --method row --prefix box --from 1 --to 5`
+  yields `box1`, `box2`, `box3`, `box4`, `box5`.
+- **Grid** — `go-parts locations bulk --method grid --prefix shelf --row-from A --row-to B --col-from 1 --col-to 2`
+  yields `shelf-A1`, `shelf-A2`, `shelf-B1`, `shelf-B2`.
+- **3-D grid** — `go-parts locations bulk --method 3d --prefix rack --level-from 1 --level-to 2 --row-from A --row-to B --col-from 1 --col-to 2`
+  yields `rack-1-A1` … `rack-2-B2` (8 labels).
+- **Nest under a parent** — `--parent <id>` puts every generated location under
+  the same parent (use `locations tree` to confirm the hierarchy). `--dry-run`
+  prints the labels without touching the store (no flock, no writes).
+
+`--dry-run` runs the same label generator and prints `--dry-run: would create
+N location(s):` followed by the labels — the store is never opened, so it is
+safe to run against a live data dir.
+
 ### `go-parts locations list`
 
 Lists every location in Pebble key order (ULID-ordered). `--json` emits the

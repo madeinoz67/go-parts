@@ -40,6 +40,7 @@ func newLocationsCmd(dataDir *string) *cobra.Command {
 		Short: "Manage physical storage locations (§7.1)",
 	}
 	cmd.AddCommand(newLocationsAddCmd(dataDir))
+	cmd.AddCommand(newLocationsBulkCmd(dataDir))
 	cmd.AddCommand(newLocationsListCmd(dataDir))
 	cmd.AddCommand(newLocationsRemoveCmd(dataDir))
 	cmd.AddCommand(newLocationsTreeCmd(dataDir))
@@ -88,6 +89,87 @@ func newLocationsAddCmd(dataDir *string) *cobra.Command {
 	cmd.Flags().BoolVar(&singlePartOnly, "single-part-only", false, "bin holds only one part type")
 	cmd.Flags().StringVar(&notes, "notes", "", "free-text notes")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print what would happen without executing")
+	return cmd
+}
+
+func newLocationsBulkCmd(dataDir *string) *cobra.Command {
+	var (
+		method             string
+		prefix             string
+		from, to           int    // row numeric range
+		rowFrom, rowTo     string // grid/3d alpha rows
+		colFrom, colTo     int    // grid/3d numeric cols
+		levelFrom, levelTo int    // 3d numeric levels
+		parent             string
+		singlePartOnly     bool
+		notes              string
+		dryRun             bool
+	)
+	cmd := &cobra.Command{
+		Use:   "bulk --method row|grid|3d --prefix box [--from/--to|--row-from/--row-to/--col-from/--col-to|--level-from/--level-to] [--parent ID]",
+		Short: "Create many locations at once (row/grid/3d-grid, §7.1)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// The CLI surface is `--method 3d`; the canonical value in
+			// internal/locations (GenerateLabels + BulkOpts.CreationMethod)
+			// is "3d_grid". Normalize here so the adapter accepts the short
+			// alias and the stored CreationMethod matches the canonical set
+			// documented on BulkOpts.
+			canonical := method
+			if canonical == "3d" {
+				canonical = "3d_grid"
+			}
+			p := locations.LabelParams{
+				Prefix: prefix,
+				From:   from, To: to,
+				RowFrom: rowFrom, RowTo: rowTo, ColFrom: colFrom, ColTo: colTo,
+				LevelFrom: levelFrom, LevelTo: levelTo,
+			}
+			labels, err := locations.GenerateLabels(canonical, p)
+			if err != nil {
+				return err
+			}
+			if dryRun {
+				fmt.Printf("--dry-run: would create %d location(s):\n", len(labels))
+				for _, l := range labels {
+					fmt.Println("  " + l)
+				}
+				return nil
+			}
+			s, cleanup, err := openLocations(*dataDir)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			created, err := s.CreateBulk(labels, locations.BulkOpts{
+				ParentID:       parent,
+				SinglePartOnly: singlePartOnly,
+				Notes:          notes,
+				CreationMethod: canonical,
+			})
+			for _, l := range created {
+				fmt.Printf("created %s  via=%s  id=%s\n", l.Label, l.ViaCode, l.ID)
+			}
+			if err != nil {
+				return fmt.Errorf("bulk create failed after %d ok: %w", len(created), err)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&method, "method", "", "creation method: row|grid|3d (single uses `add`)")
+	cmd.MarkFlagRequired("method")
+	cmd.Flags().StringVar(&prefix, "prefix", "", "label prefix (e.g. box, shelf, rack)")
+	cmd.Flags().IntVar(&from, "from", 0, "row: numeric range start (inclusive)")
+	cmd.Flags().IntVar(&to, "to", 0, "row: numeric range end (inclusive)")
+	cmd.Flags().StringVar(&rowFrom, "row-from", "", "grid/3d: first row letter (A-Z)")
+	cmd.Flags().StringVar(&rowTo, "row-to", "", "grid/3d: last row letter (A-Z)")
+	cmd.Flags().IntVar(&colFrom, "col-from", 0, "grid/3d: first column (inclusive)")
+	cmd.Flags().IntVar(&colTo, "col-to", 0, "grid/3d: last column (inclusive)")
+	cmd.Flags().IntVar(&levelFrom, "level-from", 0, "3d: first level (inclusive)")
+	cmd.Flags().IntVar(&levelTo, "level-to", 0, "3d: last level (inclusive)")
+	cmd.Flags().StringVar(&parent, "parent", "", "parent location id (nested storage)")
+	cmd.Flags().BoolVar(&singlePartOnly, "single-part-only", false, "each bin holds only one part type")
+	cmd.Flags().StringVar(&notes, "notes", "", "free-text notes applied to every row")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the labels that would be created without writing")
 	return cmd
 }
 
