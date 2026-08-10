@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/madeinoz67/go-parts/internal/config"
@@ -104,19 +105,34 @@ func newLocationsBulkCmd(dataDir *string) *cobra.Command {
 		singlePartOnly     bool
 		notes              string
 		dryRun             bool
+		maxLabels          int
 	)
 	cmd := &cobra.Command{
 		Use:   "bulk --method row|grid|3d --prefix box [--from/--to|--row-from/--row-to/--col-from/--col-to|--level-from/--level-to] [--parent ID]",
 		Short: "Create many locations at once (row/grid/3d-grid, §7.1)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Case-fold before the 3d→3d_grid alias so --method ROW / 3D / Row
+			// all work (Fix C / O4).
+			canonical := strings.ToLower(method)
 			// The CLI surface is `--method 3d`; the canonical value in
 			// internal/locations (GenerateLabels + BulkOpts.CreationMethod)
 			// is "3d_grid". Normalize here so the adapter accepts the short
 			// alias and the stored CreationMethod matches the canonical set
 			// documented on BulkOpts.
-			canonical := method
 			if canonical == "3d" {
 				canonical = "3d_grid"
+			}
+			// Single locations use `add`, not bulk — surface that clearly at
+			// the CLI layer rather than letting it fall through to a confusing
+			// GenerateLabels error (Fix G).
+			if canonical == "single" {
+				return fmt.Errorf("single locations use 'go-parts locations add', not bulk")
+			}
+			// Fat-finger guard: the --from/--to default of 0,0 silently
+			// produces one "box0" for the row method. Require an explicit
+			// range (Fix B / RedTeam #3).
+			if canonical == "row" && from == 0 && to == 0 {
+				return fmt.Errorf("--from/--to required for row bulk (default 0,0 would produce a single %s0)", prefix)
 			}
 			p := locations.LabelParams{
 				Prefix: prefix,
@@ -124,7 +140,7 @@ func newLocationsBulkCmd(dataDir *string) *cobra.Command {
 				RowFrom: rowFrom, RowTo: rowTo, ColFrom: colFrom, ColTo: colTo,
 				LevelFrom: levelFrom, LevelTo: levelTo,
 			}
-			labels, err := locations.GenerateLabels(canonical, p)
+			labels, err := locations.GenerateLabels(canonical, p, maxLabels)
 			if err != nil {
 				return err
 			}
@@ -155,9 +171,10 @@ func newLocationsBulkCmd(dataDir *string) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&method, "method", "", "creation method: row|grid|3d (single uses `add`)")
+	cmd.Flags().StringVar(&method, "method", "", "creation method: row, grid, or 3d (single uses 'go-parts locations add')")
 	cmd.MarkFlagRequired("method")
 	cmd.Flags().StringVar(&prefix, "prefix", "", "label prefix (e.g. box, shelf, rack)")
+	cmd.MarkFlagRequired("prefix")
 	cmd.Flags().IntVar(&from, "from", 0, "row: numeric range start (inclusive)")
 	cmd.Flags().IntVar(&to, "to", 0, "row: numeric range end (inclusive)")
 	cmd.Flags().StringVar(&rowFrom, "row-from", "", "grid/3d: first row letter (A-Z)")
@@ -170,6 +187,7 @@ func newLocationsBulkCmd(dataDir *string) *cobra.Command {
 	cmd.Flags().BoolVar(&singlePartOnly, "single-part-only", false, "each bin holds only one part type")
 	cmd.Flags().StringVar(&notes, "notes", "", "free-text notes applied to every row")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the labels that would be created without writing")
+	cmd.Flags().IntVar(&maxLabels, "max-labels", 100, "maximum labels a single bulk may generate (sanity cap)")
 	return cmd
 }
 

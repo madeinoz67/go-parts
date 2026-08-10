@@ -165,6 +165,20 @@ The four methods, by flag combination:
 N location(s):` followed by the labels — the store is never opened, so it is
 safe to run against a live data dir.
 
+`--max-labels N` (default 100) caps how many labels a single bulk may generate.
+The generator checks the total BEFORE allocating anything, so a pathological
+input (e.g. `--to 9223372036854775807`) returns a clean error instead of a
+panic. Raise the cap for larger bulks; set it to 0 or negative and the call
+errors immediately.
+
+**Partial failure:** `CreateBulk` is NOT atomic — a failure mid-bulk returns the
+successfully-created rows so far plus the error. It does NOT roll back. To
+recover from a partial failure, list the created locations (`go-parts locations
+list`), diff against intent, and delete the unwanted rows (`go-parts locations
+remove`). Re-running the same bulk collides on already-reserved via-codes and
+creates duplicates (same labels, different codes). A true idempotent-retry
+design (batch-id, deterministic codes) is deferred to a later slice.
+
 ### `go-parts locations list`
 
 Lists every location in Pebble key order (ULID-ordered). `--json` emits the

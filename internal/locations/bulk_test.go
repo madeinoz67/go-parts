@@ -72,6 +72,22 @@ func TestCreateBulk_PartialOnFailure(t *testing.T) {
 	}
 }
 
+// TestCreateBulk_TruePartialMidBulk is a DEFERRED test (Fix F). The contract it
+// would pin: CreateBulk returns [N created], error when the N+1th Create fails
+// mid-bulk (the "report-not-rollback" contract, N > 0). The code-correctness is
+// clear by inspection — store.go's CreateBulk does `return out, err` on the
+// first Create failure, where `out` holds the successfully-created rows so far.
+//
+// A clean, deterministic injection is not achievable without refactoring:
+// Create has no label-dependent failure mode (labels don't collide; via codes
+// are random; ParentID/opts are shared across all rows in a bulk). The only way
+// to make the N+1th Create fail while the first N succeed is to mutate external
+// state mid-loop (close the DB, delete the parent concurrently), which is a
+// racy, fragile test. An interface-based mock would require changing Store.db
+// from *pebble.DB to an interface — a larger refactor than this fix-wave's
+// scope. Left as a follow-up; the empty-partial case (above) covers the
+// all-fail path, and the code path is straight-line inspection.
+
 // TestCreateBulk_BulkRowsAreIndependent — a row created by bulk is editable +
 // removable like any single-created location (creation_method is metadata only).
 func TestCreateBulk_RowsAreIndependent(t *testing.T) {

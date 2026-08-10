@@ -296,6 +296,14 @@ type BulkOpts struct {
 // reported, not rolled back). Each row is an ordinary Location — creation_method
 // is reference metadata, so anything created in bulk can be renamed/reparented/
 // removed individually afterward (§7.1).
+//
+// Recovery: a partial bulk is NOT rolled back; re-running collides on
+// already-reserved caller-supplied via-codes and creates duplicate locations on
+// random codes (same labels, different codes). To recover from a partial
+// failure, list the created locations, diff against intent, and delete the
+// unwanted rows. A true idempotent-retry design (batch-id, deterministic codes)
+// is deferred to Slice 5 when REST lands; v1 is CLI-only with no daemon
+// transport for locations.
 func (s *Store) CreateBulk(labels []string, opts BulkOpts) ([]*Location, error) {
 	out := make([]*Location, 0, len(labels))
 	for _, label := range labels {
