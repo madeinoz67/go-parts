@@ -368,13 +368,22 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := &parts.Part{
-		MPN:         r.PostFormValue("mpn"),
-		Description: r.PostFormValue("description"),
-		PartType:    r.PostFormValue("part_type"),
-		Footprint:   r.PostFormValue("footprint"),
+		MPN:           r.PostFormValue("mpn"),
+		Description:   r.PostFormValue("description"),
+		PartType:      r.PostFormValue("part_type"),
+		Manufacturer:  r.PostFormValue("manufacturer"),
+		Footprint:     r.PostFormValue("footprint"),
+		UnitOfMeasure: r.PostFormValue("unit_of_measure"),
+		Tags:          parseTags(r.PostFormValue("tags")),
 	}
 	if v := r.PostFormValue("qty"); v != "" {
 		fmt.Sscanf(v, "%d", &p.QtyOnHand)
+	}
+	if v := r.PostFormValue("reorder_threshold"); v != "" {
+		fmt.Sscanf(v, "%d", &p.ReorderPoint)
+	}
+	if v := r.PostFormValue("package_qty"); v != "" {
+		fmt.Sscanf(v, "%d", &p.PackageQty)
 	}
 	if err := s.store.Create(p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -437,6 +446,17 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	if v := r.PostFormValue("footprint"); v != "" {
 		cur.Footprint = v
+	}
+	cur.Manufacturer = r.PostFormValue("manufacturer")
+	cur.UnitOfMeasure = r.PostFormValue("unit_of_measure")
+	cur.Tags = parseTags(r.PostFormValue("tags"))
+	cur.Specs = parseKV(r.PostFormValue("specs"))
+	cur.CustomFields = parseKV(r.PostFormValue("custom_fields"))
+	if v := r.PostFormValue("reorder_threshold"); v != "" {
+		fmt.Sscanf(v, "%d", &cur.ReorderPoint)
+	}
+	if v := r.PostFormValue("package_qty"); v != "" {
+		fmt.Sscanf(v, "%d", &cur.PackageQty)
 	}
 	if err := s.store.Update(cur, expected); err != nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

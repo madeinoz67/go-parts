@@ -765,3 +765,67 @@ func TestFormatKVSorted(t *testing.T) {
 		t.Errorf("formatKV should be sorted: %q", got)
 	}
 }
+
+func TestCreateWithAllFields(t *testing.T) {
+	srv := newTestServer(t)
+	body := "mpn=NEW1&part_type=local&manufacturer=Yageo&reorder_threshold=50&tags=resistor,smd&unit_of_measure=pieces&package_qty=100&footprint=0805"
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts", body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("create = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	pts := srv.store.List()
+	if len(pts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(pts))
+	}
+	p := pts[0]
+	if p.Manufacturer != "Yageo" {
+		t.Errorf("Manufacturer = %q, want Yageo", p.Manufacturer)
+	}
+	if p.ReorderPoint != 50 {
+		t.Errorf("ReorderPoint = %d, want 50", p.ReorderPoint)
+	}
+	if !slices.Contains(p.Tags, "resistor") || !slices.Contains(p.Tags, "smd") {
+		t.Errorf("Tags = %v, want [resistor smd]", p.Tags)
+	}
+	if p.UnitOfMeasure != "pieces" {
+		t.Errorf("UnitOfMeasure = %q, want pieces", p.UnitOfMeasure)
+	}
+	if p.PackageQty != 100 {
+		t.Errorf("PackageQty = %d, want 100", p.PackageQty)
+	}
+}
+
+func TestEditWithSpecsAndCustomFields(t *testing.T) {
+	srv := newTestServer(t)
+	p := &parts.Part{MPN: "EDT1", PartType: "local"}
+	srv.store.Create(p)
+	body := "version=" + fmt.Sprintf("%d", p.Version) +
+		"&manufacturer=STMicro&reorder_threshold=10&tags=ic,power" +
+		"&unit_of_measure=pieces&package_qty=10" +
+		"&specs=voltage=3.3V%0Acurrent=1A&custom_fields=shelf=2024"
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p.ID, body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("edit = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	got, _ := srv.store.Get(p.ID)
+	if got.Manufacturer != "STMicro" {
+		t.Errorf("Manufacturer = %q", got.Manufacturer)
+	}
+	if got.ReorderPoint != 10 {
+		t.Errorf("ReorderPoint = %d", got.ReorderPoint)
+	}
+	if !slices.Contains(got.Tags, "ic") || !slices.Contains(got.Tags, "power") {
+		t.Errorf("Tags = %v", got.Tags)
+	}
+	if got.Specs["voltage"] != "3.3V" || got.Specs["current"] != "1A" {
+		t.Errorf("Specs = %v", got.Specs)
+	}
+	if got.CustomFields["shelf"] != "2024" {
+		t.Errorf("CustomFields = %v", got.CustomFields)
+	}
+	if got.UnitOfMeasure != "pieces" || got.PackageQty != 10 {
+		t.Errorf("UoM=%q PackageQty=%d", got.UnitOfMeasure, got.PackageQty)
+	}
+}
