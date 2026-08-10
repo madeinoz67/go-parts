@@ -1,8 +1,8 @@
 {{define "bulk-bar.html"}}
-<div class="toolbar">
+<div class="toolbar" id="toolbar"{{if .OOB}} hx-swap-oob="true"{{end}}>
   <div class="chips" id="chipsRow">
-    <a class="chip active" hx-get="/ui/parts/search" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" hx-push-url="true">all parts</a>
-    <a class="chip" hx-get="/ui/parts/search?low=1" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" hx-push-url="true">low stock</a>
+    <a class="chip{{if not .Low}} active{{end}}" hx-get="/ui/parts/search" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" hx-push-url="true">all parts</a>
+    <a class="chip{{if eq .Low "1"}} active{{end}}" hx-get="/ui/parts/search?low=1" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" hx-push-url="true">low stock</a>
   </div>
   <div class="bulk-bar" id="bulkBar">
     <span class="count" id="bulkCount">0 selected</span>

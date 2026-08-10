@@ -140,7 +140,8 @@ func (s *Server) footprintNeedsConfirm(fp string) bool {
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	tag := r.URL.Query().Get("tag")
-	low := r.URL.Query().Get("low") == "1"
+	lowParam := r.URL.Query().Get("low")
+	low := lowParam == "1"
 	sortKey := r.URL.Query().Get("sort") // "mpn" | "qty" | ""
 	sortDir := r.URL.Query().Get("dir")  // "asc" | "desc"
 
@@ -152,11 +153,24 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// the primary swap, so every search/keystroke refreshes the sidebar with
 	// the active tag highlighted (cat-item active) — without it, layout.html's
 	// inline render hard-codes Active="" and the copper highlight never lands.
+	//
+	// Tag/Low/Sort/Dir + the Toolbar flag drive the OOB #toolbar swap (§7.2):
+	// every search/keystroke also re-renders the bulk-bar with the current
+	// view state, keeping its hidden q/tag/low/sort/dir fields synced. Without
+	// it, a bulk delete/tag from a filtered view submits empty hidden fields
+	// and the post-action re-render resets to all-parts. Low is the raw STRING
+	// ("1" or "") — not the bool — so bulk-bar.html can populate the hidden
+	// field and gate the chip-active class without re-deriving it.
 	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
-		"Parts":  pts,
-		"Q":      q,
-		"Tags":   s.store.TagCounts(),
-		"Active": tag,
+		"Parts":   pts,
+		"Q":       q,
+		"Tags":    s.store.TagCounts(),
+		"Active":  tag,
+		"Tag":     tag,
+		"Low":     lowParam,
+		"Sort":    sortKey,
+		"Dir":     sortDir,
+		"Toolbar": true,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -431,19 +445,31 @@ func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.PostFormValue("q")
 	tag := r.PostFormValue("tag")
-	low := r.PostFormValue("low") == "1"
-	pts := s.filteredParts(q, tag, low, r.PostFormValue("sort"), r.PostFormValue("dir"))
+	lowParam := r.PostFormValue("low")
+	low := lowParam == "1"
+	sortKey := r.PostFormValue("sort")
+	sortDir := r.PostFormValue("dir")
+	pts := s.filteredParts(q, tag, low, sortKey, sortDir)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// Tags + Active drive the rows.html OOB #tag-nav swap (Task 4) — without
 	// them, deleting the last part carrying a tag would leave the sidebar
 	// showing a stale count. Passing them here means a bulk-delete refreshes
 	// the sidebar live (htmx applies the hx-swap-oob element after the primary
 	// tbody swap), matching handleSearch/handleBulkTag.
+	//
+	// Tag/Low/Sort/Dir + Toolbar drive the OOB #toolbar swap (§7.2): the
+	// bulk-bar re-renders with the post-action view state so its hidden fields
+	// stay synced for the NEXT bulk action from the same filtered view.
 	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
-		"Parts":  pts,
-		"Q":      q,
-		"Tags":   s.store.TagCounts(),
-		"Active": tag,
+		"Parts":   pts,
+		"Q":       q,
+		"Tags":    s.store.TagCounts(),
+		"Active":  tag,
+		"Tag":     tag,
+		"Low":     lowParam,
+		"Sort":    sortKey,
+		"Dir":     sortDir,
+		"Toolbar": true,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -497,14 +523,25 @@ func (s *Server) handleBulkTag(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	q := r.PostFormValue("q")
-	low := r.PostFormValue("low") == "1"
-	pts := s.filteredParts(q, tagFilter, low, r.PostFormValue("sort"), r.PostFormValue("dir"))
+	lowParam := r.PostFormValue("low")
+	low := lowParam == "1"
+	sortKey := r.PostFormValue("sort")
+	sortDir := r.PostFormValue("dir")
+	pts := s.filteredParts(q, tagFilter, low, sortKey, sortDir)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Same OOB #tag-nav + #toolbar swap as handleBulkDelete — a bulk-tag from
+	// a filtered view must preserve the filter context in the re-rendered
+	// bulk-bar so the next bulk action doesn't reset to all-parts (§7.2).
 	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
-		"Parts":  pts,
-		"Q":      q,
-		"Tags":   s.store.TagCounts(),
-		"Active": tagFilter,
+		"Parts":   pts,
+		"Q":       q,
+		"Tags":    s.store.TagCounts(),
+		"Active":  tagFilter,
+		"Tag":     tagFilter,
+		"Low":     lowParam,
+		"Sort":    sortKey,
+		"Dir":     sortDir,
+		"Toolbar": true,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

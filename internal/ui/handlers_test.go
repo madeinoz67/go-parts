@@ -563,6 +563,56 @@ func TestTagFilterNoTagLeavesNothingActive(t *testing.T) {
 	}
 }
 
+// TestSearchRefreshesToolbarViewState pins the OOB #toolbar swap on search:
+// when handleSearch runs with ?tag/low/sort/dir, it must emit, alongside
+// #parts-tbody and #tag-nav, an OOB <div id="toolbar" hx-swap-oob="true">
+// carrying the current view state so the bulk-bar's hidden q/tag/low/sort/dir
+// fields stay synced. Without it, a bulk delete/tag from a filtered view
+// submits empty hidden fields and the post-action re-render resets to
+// all-parts — the bug this test locks in (PRD §7.2).
+//
+// The chip-active assertion also closes the M6 "hardcoded active" finding:
+// the low-stock chip must carry "chip active" (not the all-parts chip) when
+// low=1 is in the URL. Before the fix, the all-parts chip was hardcoded active
+// regardless of the filter.
+func TestSearchRefreshesToolbarViewState(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "R-LOW", PartType: "local", Tags: []string{"resistor"}, QtyOnHand: 0, ReorderPoint: 5})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search?tag=resistor&low=1&sort=qty&dir=desc", nil))
+	body := rr.Body.String()
+
+	// OOB toolbar swap fired.
+	if !strings.Contains(body, `id="toolbar"`) {
+		t.Errorf("search response should ship an OOB #toolbar; body=%s", body)
+	}
+	if !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Errorf("OOB toolbar must carry hx-swap-oob=\"true\"; body=%s", body)
+	}
+	// Hidden view-state fields carry the filter context.
+	for _, want := range []string{
+		`name="tag" value="resistor"`,
+		`name="low" value="1"`,
+		`name="sort" value="qty"`,
+		`name="dir" value="desc"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("toolbar hidden field missing: %s; body=%s", want, body)
+		}
+	}
+	// Low-stock chip is active (tied to its hx-get URL so the check can't
+	// conflate with the all-parts chip).
+	lowActive := `class="chip active"` + " " + `hx-get="/ui/parts/search?low=1"`
+	if !strings.Contains(body, lowActive) {
+		t.Errorf("low-stock chip should be active when low=1; body=%s", body)
+	}
+	// All-parts chip is NOT active (no " active" before its hx-get URL).
+	allInactive := `class="chip"` + " " + `hx-get="/ui/parts/search"`
+	if !strings.Contains(body, allInactive) {
+		t.Errorf("all-parts chip should NOT be active when low=1; body=%s", body)
+	}
+}
+
 func TestBulkDeleteRemovesParts(t *testing.T) {
 	srv := newTestServer(t)
 	p1 := &parts.Part{MPN: "D1", PartType: "local"}
