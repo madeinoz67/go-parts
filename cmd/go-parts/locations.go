@@ -6,6 +6,7 @@ import (
 	"os"
 	"text/tabwriter"
 
+	"github.com/madeinoz67/go-parts/internal/config"
 	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/storage"
 	"github.com/madeinoz67/go-parts/internal/via"
@@ -17,7 +18,13 @@ import (
 // posture: stop the daemon for bulk CLI ops, or use the future web UI). The
 // via.Store is the only one in this process — the via-singleton invariant
 // (one *via.Store per DB per process) holds.
+//
+// The empty --data-dir default is resolved via config.Default BEFORE
+// storage.Open, mirroring how `start` resolves it via config.Load — without
+// this, `go-parts locations add` with no --data-dir fails (mkdir ""). See
+// Slice 1 Gate fix-wave I1.
 func openLocations(dataDir string) (*locations.Store, func(), error) {
+	dataDir = config.Default(dataDir).DataDir
 	storeDB, err := storage.Open(dataDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open store: %w", err)
@@ -44,6 +51,7 @@ func newLocationsAddCmd(dataDir *string) *cobra.Command {
 		parent         string
 		singlePartOnly bool
 		notes          string
+		dryRun         bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add --label \"Bin A3\" [--parent ID] [--single-part-only] [--notes ...]",
@@ -52,6 +60,10 @@ func newLocationsAddCmd(dataDir *string) *cobra.Command {
 			label, _ := cmd.Flags().GetString("label")
 			if label == "" {
 				return fmt.Errorf("--label is required")
+			}
+			if dryRun {
+				fmt.Printf("would create location label=%q parent=%q single-part-only=%v notes=%q\n", label, parent, singlePartOnly, notes)
+				return nil
 			}
 			s, cleanup, err := openLocations(*dataDir)
 			if err != nil {
@@ -75,6 +87,7 @@ func newLocationsAddCmd(dataDir *string) *cobra.Command {
 	cmd.Flags().StringVar(&parent, "parent", "", "parent location id (nested storage)")
 	cmd.Flags().BoolVar(&singlePartOnly, "single-part-only", false, "bin holds only one part type")
 	cmd.Flags().StringVar(&notes, "notes", "", "free-text notes")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print what would happen without executing")
 	return cmd
 }
 
@@ -90,6 +103,9 @@ func newLocationsListCmd(dataDir *string) *cobra.Command {
 			}
 			defer cleanup()
 			all := s.List()
+			if all == nil {
+				all = []*locations.Location{} // emit [] not null on empty (jq-friendly)
+			}
 			if asJSON {
 				return json.NewEncoder(os.Stdout).Encode(all)
 			}
@@ -106,6 +122,7 @@ func newLocationsListCmd(dataDir *string) *cobra.Command {
 }
 
 func newLocationsRemoveCmd(dataDir *string) *cobra.Command {
+	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "remove <id|viacode>",
 		Short: "Remove a location (refuses if it has children)",
@@ -125,6 +142,14 @@ func newLocationsRemoveCmd(dataDir *string) *cobra.Command {
 				}
 				id = l.ID
 			}
+			if dryRun {
+				if n := len(s.Children(id)); n > 0 {
+					fmt.Printf("would remove id=%s — REFUSE (%d children; reparent first)\n", id, n)
+				} else {
+					fmt.Printf("would remove id=%s\n", id)
+				}
+				return nil
+			}
 			if err := s.Delete(id); err != nil {
 				return err
 			}
@@ -132,6 +157,7 @@ func newLocationsRemoveCmd(dataDir *string) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print what would happen without executing")
 	return cmd
 }
 
@@ -153,7 +179,7 @@ func newLocationsTreeCmd(dataDir *string) *cobra.Command {
 			var walk func(parentID string, depth int)
 			walk = func(parentID string, depth int) {
 				for _, l := range byParent[parentID] {
-					for i := 0; i < depth; i++ {
+					for range depth {
 						fmt.Print("  ")
 					}
 					fmt.Printf("- %s (%s)\n", l.Label, l.ViaCode)

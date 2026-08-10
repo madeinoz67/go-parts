@@ -16,9 +16,9 @@ go-parts [--data-dir DIR] [--version] <command> [flags]
 | `--data-dir` | empty → `~/.go-parts` | every subcommand (persistent) |
 | `--version` / `-v` | — | root; prints the binary version and exits |
 
-`--data-dir` is persistent: it applies to `start`, `stop`, and `status`. An
-empty value resolves to `~/.go-parts` (mirrors go-rag / MuninnDB's home-dir
-default).
+`--data-dir` is persistent: it applies to `start`, `stop`, `status`, and
+`locations`. An empty value resolves to `~/.go-parts` (mirrors go-rag /
+MuninnDB's home-dir default).
 
 ## Subcommands
 
@@ -83,6 +83,77 @@ A missing state file yields `running:false` with no error (the canonical
 "not running" state). A state file pointing at a dead PID also yields
 `running:false` (stale fixture left by an unclean exit) — the file's presence
 is never trusted over the liveness probe.
+
+## Locations
+
+`go-parts locations` manages physical storage locations (bins, drawers,
+shelves, boxes — optionally nested). Locations are addressed by a Via code
+(`L-XXXXXX`, §5.17) and are navigated/scanned, **not** full-text-indexed (no
+FTS, unlike parts). Defined in `internal/locations`; records live under the
+`locations` keyspace (`0x11`, see [data model](../reference/data-model.md)).
+
+The `locations` subcommands open the store directly (they do not talk to the
+daemon). They hold the Pebble flock, so they **fail if the daemon is running**
+— stop the daemon first for bulk CLI ops, or use the future web UI (v1
+single-operator posture).
+
+```
+go-parts locations [--data-dir DIR] <subcommand> [flags]
+```
+
+### `go-parts locations add`
+
+Creates a single location record. Via code is auto-assigned (`L-XXXXXX`) unless
+`--parent` is given, in which case the parent must already exist (cycle guard
+runs on `update`, not on `create` — a missing parent is rejected here).
+
+```
+go-parts locations add --label "Bin A3" [--parent ID] [--single-part-only] [--notes ...] [--dry-run]
+```
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--label` | (required) | location label, e.g. `"Bin A3"` |
+| `--parent` | `""` (top-level) | parent location id (nested storage) |
+| `--single-part-only` | `false` | bin holds only one part type |
+| `--notes` | `""` | free-text notes |
+| `--dry-run` | `false` | print what would happen without executing |
+
+### `go-parts locations list`
+
+Lists every location in Pebble key order (ULID-ordered). `--json` emits the
+record array (empty result is `[]`, not `null`).
+
+```
+go-parts locations list [--json]
+```
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--json` | `false` | machine-readable JSON array |
+
+### `go-parts locations remove`
+
+Removes a location by id or Via code (`L-...` resolves to the id). **Refuses if
+the location has children** (`ErrHasChildren`) — reparent or delete the
+children first; never cascade.
+
+```
+go-parts locations remove <id|viacode> [--dry-run]
+```
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--dry-run` | `false` | print what would happen (incl. child-count refusal) without executing |
+
+### `go-parts locations tree`
+
+Prints the location hierarchy as an indented tree (roots are top-level
+locations; nesting follows `parent_id`).
+
+```
+go-parts locations tree
+```
 
 ## Defaults and safety
 

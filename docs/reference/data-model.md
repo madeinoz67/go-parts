@@ -52,6 +52,46 @@ from each Part (`indexText`). Weights:
 - **BODY (1.0)** — everything else (`tags`, and `spec:`/`custom:` prefixed
   map entries, which fall through to the body-weight default branch)
 
+## The Location record
+
+A single physical storage location (PRD §6.1, §7.1). Defined in
+`internal/locations/location.go`, serialized as JSON under the `locations`
+keyspace (`0x11`). Locations model bins/drawers/shelves/boxes (optionally
+nested via `parent_id`), are addressed by a Via code, and are
+navigated/scanned — **they are NOT full-text-indexed** (no FTS, unlike parts).
+Optimistic concurrency on `Version` mirrors Part's discipline.
+
+| Field | Type | Notes |
+|---|---|---|
+| `ID` | string | ULID, assigned by `Store.Create`; the Pebble key payload |
+| `Label` | string | "Bin A3", "Drawer 12" |
+| `ViaCode` | string | `L-XXXXXX` — random 6-char code, assigned on create (§5.17); immutable post-Create |
+| `ParentID` | string | nested storage; `""` = top-level |
+| `CreationMethod` | string | `single` / `row` / `grid` / `3d_grid` — reference metadata (§7.1) |
+| `SinglePartOnly` | bool | bin dedicated to one part type |
+| `Notes` | string | free text |
+| `CreatedBy` | string | `"local"` in v1 (no auth); caller identity post-auth |
+| `CreatedAt` | `time.Time` | UTC, set by `Create` |
+| `UpdatedAt` | `time.Time` | UTC, bumped by `Update` |
+| `Version` | int | optimistic-concurrency token (same discipline as Part, §5.14) |
+
+**Notable differences from the Part record:**
+
+- **No `UpdatedBy`.** v1 ships no `updated_by` on Location (locations are a
+  lower-traffic surface; the field is additive later without a schema change
+  since JSON is forwards-compatible). Part has it; Location does not.
+- **No FTS.** Locations are never indexed into the `search_index` keyspace.
+  `Store.Create`/`Update`/`Delete` touch only the `locations` keyspace and the
+  shared `via` index — never the FTS. There is nothing to reindex.
+- **Delete refuses if the location has children** (`ErrHasChildren`) — the
+  caller must reparent first; never cascade.
+- **`Update` runs a parent-chain cycle guard** before accepting a `parent_id`
+  change (`ErrCycle`). Via-code is immutable post-Create (preserved from the
+  stored record).
+
+JSON field names are Go PascalCase — the struct has **no `json:` tags**, same
+convention as Part.
+
 ## Optimistic concurrency (§5.14)
 
 `Version` is the optimistic-concurrency token. The contract has two halves:
@@ -107,6 +147,7 @@ so every prefix is [registered](../internals/keyspace-registry.md).
 | Keyspace | Byte | Purpose |
 |---|---|---|
 | `parts` | `0x10` | Part records, keyed by ULID |
+| `locations` | `0x11` | Location records (nested storage), keyed by ULID — **no FTS** (navigated/scanned, not full-text-searched) |
 | `via` | `0x12` | Via-code index (§5.17) — code → {type, id}; shared spine across entity types |
 | `meta` | `0xF0` | `schema_version` marker + future migration cursors, sub-keyed by payload (`"schemaver"`) |
 | `search_index` FTS postings | `0x05` | term → id (verbatim shape from go-rag) |

@@ -78,7 +78,7 @@ func (s *Store) Create(l *Location) error {
 		}
 	}
 	if l.ViaCode == "" {
-		for i := 0; i < 8; i++ {
+		for i := 0; i < 8; i++ { // index used for last-iteration detection (i == 7)
 			code := via.NewCode("L-")
 			if err := s.via.Reserve(code, via.TypeLocation, l.ID); err == nil {
 				l.ViaCode = code
@@ -247,6 +247,14 @@ func (s *Store) ByVia(code string) (*Location, error) {
 // acyclic-forest invariant the guard maintains; a missing ancestor terminates
 // the walk (not a cycle). Caller MUST hold lockFor(l.ID); Get does not take
 // locks, so there is no nested locking.
+//
+// Concurrency caveat (adversary-confirmed, Slice 5 follow-up): the guard is
+// sound under serial execution — Update holds lockFor(l.ID) for the RMW.
+// Concurrent multi-writer reparenting of DIFFERENT ids (e.g. A→B while B→A on
+// two separate striped locks) is not serialized by a single per-id lock and
+// would require a tree-write lock to exclude. This is a v2+ multi-user concern;
+// v1 is single-operator serial (one CLI or one daemon), so the gap is
+// unreachable today and filed for Slice 5.
 func (s *Store) wouldCycle(l *Location, newParentID string) bool {
 	if newParentID == "" {
 		return false
@@ -257,7 +265,7 @@ func (s *Store) wouldCycle(l *Location, newParentID string) bool {
 	// Walk the new parent's ancestor chain; if it reaches l.ID, the new parent
 	// is a descendant of l → cycle.
 	cur := newParentID
-	for i := 0; i < 1000; i++ { // hard cap defends a corrupted cyclic store
+	for range 1000 { // hard cap defends a corrupted cyclic store
 		if cur == "" {
 			return false
 		}
