@@ -134,3 +134,120 @@ func TestConcurrentUpdateVsDeleteNoResurrection(t *testing.T) {
 		_ = updErr // Update may legitimately error (stale version / not-found) under contention
 	}
 }
+
+// --- Slice 5a: treeMu closes the two v1-unreachable tree gaps --------------
+
+// TestConcurrentCrossNodeReparentNoCycle pins the cross-node reparent cycle the
+// treeMu closes. Without treeMu, two concurrent reparents (X→A ‖ A→X) each
+// pass the wouldCycle snapshot walk (the other hasn't committed) and both
+// commit, forming a real A↔X cycle. With treeMu the structural ops serialize:
+// the second sees the first's commit → ErrCycle. Run with -race -count.
+func TestConcurrentCrossNodeReparentNoCycle(t *testing.T) {
+	const trials = 50
+	for range trials {
+		s, _ := newStore(t)
+		x := &Location{Label: "X"}
+		a := &Location{Label: "A"}
+		if err := s.Create(x); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Create(a); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			xp, err := s.Get(x.ID)
+			if err != nil {
+				return
+			}
+			xp.ParentID = a.ID
+			_ = s.Update(xp, xp.Version) // ErrCycle is the expected loser outcome
+		}()
+		go func() {
+			defer wg.Done()
+			ap, err := s.Get(a.ID)
+			if err != nil {
+				return
+			}
+			ap.ParentID = x.ID
+			_ = s.Update(ap, ap.Version)
+		}()
+		wg.Wait()
+		if detectCycle(s) {
+			t.Fatalf("trial formed an A↔X cycle (treeMu did not serialize the cross-node reparents)")
+		}
+	}
+}
+
+// TestConcurrentDeleteCreateNoOrphan pins the Delete/Create TOCTOU the treeMu
+// closes. Without treeMu, a Delete (Children check passes — the child not yet
+// committed) races a Create-child-under-L; the child can land after the parent
+// is gone → an orphan (child.ParentID = a deleted id). With treeMu the two
+// serialize: child-first → Delete sees it → ErrHasChildren, or delete-first →
+// Create's parent check fails → no orphan. Run with -race -count.
+func TestConcurrentDeleteCreateNoOrphan(t *testing.T) {
+	const trials = 50
+	for range trials {
+		s, _ := newStore(t)
+		parent := &Location{Label: "P"}
+		if err := s.Create(parent); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = s.Delete(parent.ID) // ErrHasChildren is the expected outcome if the child landed first
+		}()
+		go func() {
+			defer wg.Done()
+			_ = s.Create(&Location{Label: "child", ParentID: parent.ID}) // parent-miss is expected if the delete landed first
+		}()
+		wg.Wait()
+		if detectOrphan(s) {
+			t.Fatalf("trial produced an orphan child (treeMu did not serialize Delete/Create)")
+		}
+	}
+}
+
+// detectCycle walks every location's ancestor chain (capped) and reports whether
+// any loops back on itself — the signature of a cross-node reparent cycle.
+func detectCycle(s *Store) bool {
+	for _, l := range s.List() {
+		seen := map[string]bool{}
+		cur := l.ParentID
+		for range 1000 {
+			if cur == "" {
+				break
+			}
+			if seen[cur] {
+				return true
+			}
+			seen[cur] = true
+			p, err := s.Get(cur)
+			if err != nil {
+				break // missing parent terminates (not a cycle)
+			}
+			cur = p.ParentID
+		}
+	}
+	return false
+}
+
+// detectOrphan reports whether any location's non-empty ParentID points at a
+// location that no longer exists — the Delete/Create TOCTOU signature.
+func detectOrphan(s *Store) bool {
+	all := s.List()
+	exists := make(map[string]bool, len(all))
+	for _, l := range all {
+		exists[l.ID] = true
+	}
+	for _, l := range all {
+		if l.ParentID != "" && !exists[l.ParentID] {
+			return true
+		}
+	}
+	return false
+}

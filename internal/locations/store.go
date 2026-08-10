@@ -42,17 +42,28 @@ const stripeShards = 64
 // Store is the Location entity's CRUD authority (PRD §6.1, §5.14). No FTS —
 // locations are navigated/scanned, not full-text-searched. Optimistic
 // concurrency on Version backs Update; a per-id striped-lock pool serializes
-// Update's read-check-write RMW (including the parent-chain cycle walk) and
-// Delete's has-children-check-then-delete.
+// each id's read-check-write RMW.
 //
-// Lock ordering: lockFor(id) is the OUTERMOST lock. Under it the code calls
-// Get/write, and Create/Delete touch the via index (via.Reserve/Release →
-// via.mu). Neither via nor (trivially) anything else calls back into locations,
-// so there is no cycle. locations MUST NOT import parts.
+// STRUCTURAL tree ops (Create-with-parent, Update reparent, Delete) are
+// serialized across ALL nodes by treeMu (Slice 5a) — a single tree-write lock,
+// taken OUTERMOST. The per-id striped locks alone can't serialize cross-node
+// reparents (X→A ‖ A→X each take different shards, both pass the cycle walk,
+// both commit → a real A↔X cycle) or the Delete/Create-child TOCTOU (an orphan
+// child under a deleted parent). treeMu makes the cycle-guard's ancestor walk
+// + the has-children check see a consistent, unchanging tree.
+//
+// Lock ordering: treeMu (outermost, structural ops only) → lockFor(id) (the
+// version RMW) → via.mu (Create/Delete's Reserve/Release). A clean total order;
+// no reverse edge. Get/List/Children/ByVia take NO lock (best-effort reads;
+// each is a single Pebble op or a scan snapshot, consistent pre- or post-write).
+// The 3a single_part_only policy calls locations.Get (lock-free) under parts'
+// locLock — it never takes treeMu, so the parts + locations lock domains are
+// disjoint (no cross-store cycle). locations MUST NOT import parts.
 type Store struct {
-	db    *pebble.DB
-	via   *via.Store
-	locks [stripeShards]sync.Mutex
+	db     *pebble.DB
+	via    *via.Store
+	locks  [stripeShards]sync.Mutex
+	treeMu sync.Mutex // Slice 5a: serializes structural tree ops across nodes (reparent cycle-guard, delete has-children, create parent-existence)
 }
 
 // NewStore returns a Location store over db whose via codes are reserved in the
@@ -77,6 +88,14 @@ func (s *Store) lockFor(id string) *sync.Mutex {
 // (reserve-then-write; Release on write failure so a caller-supplied code is
 // never permanently burned). If ParentID is set, the parent must exist.
 func (s *Store) Create(l *Location) error {
+	// Slice 5a: a nested create's parent-existence check + write serialize
+	// against a concurrent Delete of the parent (the Delete/Create TOCTOU that
+	// would orphan this child). Top-level creates (no parent) need no tree
+	// serialization — nothing to orphan, no cycle. treeMu is OUTERMOST.
+	if l.ParentID != "" {
+		s.treeMu.Lock()
+		defer s.treeMu.Unlock()
+	}
 	now := time.Now().UTC()
 	if l.ID == "" {
 		l.ID = newID()
@@ -138,6 +157,15 @@ func (s *Store) Get(id string) (*Location, error) {
 // cur). ParentID changes run the cycle guard (Task 3 adds that; here Update
 // preserves via-code + bumps version only — cycle guard lands with Children).
 func (s *Store) Update(l *Location, expectedVersion int) error {
+	// Slice 5a: treeMu OUTERMOST. It's taken for every Update (not just
+	// reparents) because whether this is a reparent can only be known after the
+	// in-lock read of cur — and a consistent lock order requires treeMu before
+	// lockFor (Delete takes treeMu→lockFor too). Over-serialization of
+	// non-structural edits is negligible (location edits are rare). treeMu
+	// makes the wouldCycle ancestor walk see an unchanging tree, closing the
+	// cross-node reparent cycle.
+	s.treeMu.Lock()
+	defer s.treeMu.Unlock()
 	mu := s.lockFor(l.ID)
 	mu.Lock()
 	defer mu.Unlock()
@@ -163,6 +191,12 @@ func (s *Store) Update(l *Location, expectedVersion int) error {
 // Delete removes a location. Task 2: plain delete + via release. Task 3 adds
 // the has-children refusal before the record delete.
 func (s *Store) Delete(id string) error {
+	// Slice 5a: treeMu OUTERMOST. The has-children check + the delete serialize
+	// against a concurrent Create-child (the Delete/Create TOCTOU that would
+	// orphan a child under a deleted parent) and against a concurrent child
+	// reparent. treeMu before lockFor — same order as Update (no inversion).
+	s.treeMu.Lock()
+	defer s.treeMu.Unlock()
 	mu := s.lockFor(id)
 	mu.Lock()
 	defer mu.Unlock()
@@ -254,16 +288,14 @@ func (s *Store) ByVia(code string) (*Location, error) {
 // cycle: true if newParentID == l.ID, or newParentID is a descendant of l (the
 // new parent's ancestor chain reaches l.ID). The walk is bounded by the
 // acyclic-forest invariant the guard maintains; a missing ancestor terminates
-// the walk (not a cycle). Caller MUST hold lockFor(l.ID); Get does not take
-// locks, so there is no nested locking.
+// the walk (not a cycle).
 //
-// Concurrency caveat (adversary-confirmed, Slice 5 follow-up): the guard is
-// sound under serial execution — Update holds lockFor(l.ID) for the RMW.
-// Concurrent multi-writer reparenting of DIFFERENT ids (e.g. A→B while B→A on
-// two separate striped locks) is not serialized by a single per-id lock and
-// would require a tree-write lock to exclude. This is a v2+ multi-user concern;
-// v1 is single-operator serial (one CLI or one daemon), so the gap is
-// unreachable today and filed for Slice 5.
+// Caller MUST hold treeMu AND lockFor(l.ID) (Update acquires treeMu outermost,
+// then lockFor). treeMu (Slice 5a) is what makes the walk sound under
+// concurrency: it serializes ALL structural tree ops, so no concurrent reparent
+// can change the ancestor chain mid-walk. (The slice-1 adversary flagged the
+// cross-node reparent cycle this closes — v1-unreachable then, now closed
+// before the daemon becomes a multi-writer in 5b.)
 func (s *Store) wouldCycle(l *Location, newParentID string) bool {
 	if newParentID == "" {
 		return false
