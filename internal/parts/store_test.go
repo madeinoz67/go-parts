@@ -265,3 +265,77 @@ func TestCreate_CallerSuppliedViaCodeReserved(t *testing.T) {
 		t.Fatalf("duplicate via-code create err = %v, want via.ErrCollision", err)
 	}
 }
+
+// TestUpdatePreservesViaCode pins §5.17's via-code immutability: a full-record
+// Update MUST silently drop any caller-supplied ViaCode change and preserve
+// the stored value, so the via index never needs re-pointing on edit. Without
+// this guard, slice 3's part-location edits could accidentally regress the
+// immutability invariant. (Update already preserves QtyOnHand for the F3
+// invariant — this is its via-code analogue.)
+func TestUpdatePreservesViaCode(t *testing.T) {
+	s := newStore(t)
+	p := &Part{MPN: "IMMUT-1", PartType: "local", Footprint: "0805"}
+	if err := s.Create(p); err != nil {
+		t.Fatal(err)
+	}
+	original := p.ViaCode
+	if original == "" {
+		t.Fatal("Create did not assign a ViaCode")
+	}
+	// Caller attempts to change the ViaCode on edit.
+	p.MPN = "IMMUT-1-edited"
+	p.ViaCode = "P-HACKED"
+	if err := s.Update(p, p.Version); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	got, err := s.Get(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ViaCode != original {
+		t.Fatalf("stored ViaCode = %q, want %q (via-code MUST be immutable post-Create, §5.17)", got.ViaCode, original)
+	}
+	if got.MPN != "IMMUT-1-edited" {
+		t.Errorf("stored MPN = %q, want IMMUT-1-edited (the legitimate edit must land)", got.MPN)
+	}
+}
+
+// TestRelease_MakesCodeReservableAgain proves the via.Release compensation
+// mechanism works: after Release, a previously-reserved code can be reserved
+// again. This is the recovery the Create tail's `s.via.Release(p.ViaCode)`
+// gives a caller when write(p) fails — without that compensation, a
+// caller-supplied code that failed write would be permanently burned
+// (via.ErrCollision forever; Delete can't release it because the part was
+// never stored).
+//
+// Why this tests the mechanism rather than triggering Create's write-failure
+// directly: both via.Reserve and Store.write use the SAME *pebble.DB, so any
+// fault that breaks write also breaks the earlier Reserve — there is no
+// narrow window between them reachable without refactoring parts.Store to
+// take a write interface. (The Tier-3 adversary reproduced this reachability
+// gap.) So we prove the mechanism — Release flips a reserved code back to
+// reservable — which is exactly the property the compensation relies on.
+func TestRelease_MakesCodeReservableAgain(t *testing.T) {
+	_, vs := newStoreWithVia(t)
+	const code = "P-COMP01"
+	if err := vs.Reserve(code, via.TypePart, "part-1"); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	// Simulate the compensation path: write failed → Release the reserved code.
+	if err := vs.Release(code); err != nil {
+		t.Fatalf("release (compensation): %v", err)
+	}
+	// The same code MUST be re-reservable now — this is the recovery the
+	// compensation gives a caller after a Create write-failure.
+	if err := vs.Reserve(code, via.TypePart, "part-2"); err != nil {
+		t.Fatalf("re-reserve after Release: %v (compensation mechanism broken — caller code stays burned)", err)
+	}
+	// And the re-reserve points at the new id (the retry's fresh part).
+	tt, id, err := vs.Lookup(code)
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if tt != via.TypePart || id != "part-2" {
+		t.Fatalf("lookup = (%q,%q), want (part,part-2)", tt, id)
+	}
+}

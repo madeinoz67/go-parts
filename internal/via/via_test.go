@@ -97,7 +97,7 @@ func TestReserve_ConcurrentSameCode(t *testing.T) {
 	var wg sync.WaitGroup
 	var errs [2]error
 	start := make(chan struct{})
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		i := i
 		wg.Add(1)
 		go func() {

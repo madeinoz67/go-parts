@@ -40,13 +40,18 @@ const stripeShards = 64
 // concurrent writers on one part cannot both pass the version check (silent
 // overwrite) and two concurrent AdjustStock calls always net their sum.
 //
-// Lock ordering: lockFor(id) is the OUTERMOST lock for any part operation.
-// Under it the code calls Get/write/writePartsKey, and write calls
-// fts.Index/fts.Delete which take the FTS's internal mu; Create/Delete also
-// touch the via index (via.Reserve/Release → via.mu). So the order is
-// parts.lockFor(id) → fts.mu, and parts.lockFor(id) → via.mu, one direction
-// each. Neither the FTS nor the via index ever calls back into parts, so there
-// is no cycle.
+// Lock ordering: lockFor(id) is the OUTERMOST lock for any part operation
+// that takes it (Update, AdjustStock, Delete). Under it the code calls
+// Get/write/writePartsKey, and write calls fts.Index/fts.Delete which take
+// the FTS's internal mu. Delete also touches the via index (via.Release →
+// via.mu) within the lockFor critical section, after fts.Delete. So the
+// order under lockFor(id) is: fts.mu then via.mu, taken sequentially (never
+// simultaneously).
+//
+// Create does NOT take lockFor (new ULID — no contender can exist) and never
+// holds via.mu + fts.mu simultaneously: via.Reserve takes and releases via.mu
+// before Create's tail calls write, which then takes fts.mu. Neither the FTS
+// nor the via index ever calls back into parts, so there is no cycle.
 type Store struct {
 	db    *pebble.DB
 	fts   *index.FTS
@@ -88,15 +93,14 @@ func (s *Store) Create(p *Part) error {
 	if p.ViaCode == "" {
 		// Generate + reserve with collision-retry. Astronomically rare, but the
 		// index is the uniqueness authority, so we loop until Reserve succeeds.
-		for i := 0; i < 8; i++ {
+		for i := range 8 {
 			code := via.NewCode("P-")
 			if err := s.via.Reserve(code, via.TypePart, p.ID); err == nil {
 				p.ViaCode = code
 				break
 			} else if !errors.Is(err, via.ErrCollision) {
 				return fmt.Errorf("parts: via reserve: %w", err)
-			}
-			if i == 7 {
+			} else if i == 7 {
 				return fmt.Errorf("parts: via reserve: %w (8 collisions)", via.ErrCollision)
 			}
 		}
@@ -112,7 +116,20 @@ func (s *Store) Create(p *Part) error {
 	p.UpdatedBy = p.CreatedBy
 	p.CreatedAt, p.UpdatedAt = now, now
 	p.Version = 1
-	return s.write(p)
+	// Compensate the via reservation if the write fails. By this point
+	// via.Reserve has already recorded code→{type,id}; a write failure means
+	// the part is NOT stored, so without a Release the reserved code would be
+	// orphaned. For auto-generated codes a retry makes a fresh code (harmless);
+	// for caller-supplied codes the operator's chosen code would be permanently
+	// burned (via.ErrCollision forever — Delete requires the part to exist, so
+	// nothing else would ever Release it). Release is best-effort: a Release
+	// failure leaves a dangling index entry (random codes block nothing in
+	// practice), which is strictly better than the burned-code outcome.
+	if err := s.write(p); err != nil {
+		_ = s.via.Release(p.ViaCode)
+		return err
+	}
+	return nil
 }
 
 // Get reads a single part record by id. Returns a wrapped parts.ErrNotFound

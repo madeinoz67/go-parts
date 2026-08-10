@@ -46,6 +46,11 @@ type entry struct {
 // 5 random bytes → base32 (10 chars) → first 6. Unique-enough for single-vault
 // v1; the index + collision-retry make actual uniqueness hold even on the
 // astronomically rare dup. Generalized from parts.newViaCode.
+//
+// prefix is the "<letter>-" entity convention ("P-" for parts, "L-" for
+// locations). Callers MUST NOT pass empty or garbage — the result would be a
+// 6-char code with no entity discriminant, breaking the resolver's
+// human-readable shape and colliding visually across entity types.
 func NewCode(prefix string) string {
 	var b [5]byte
 	_, _ = rand.Read(b[:])
@@ -59,7 +64,14 @@ type Store struct {
 	mu sync.Mutex // serializes Reserve's check-then-write (see TestReserve_ConcurrentSameCode)
 }
 
-// NewStore returns a via index over db.
+// NewStore returns a via index over db. The mutex is per-instance, so there
+// must be exactly ONE *Store per *pebble.DB — constructing two over the same
+// DB re-opens the same-code collision hole (each instance's Get-then-Set RMW
+// is invisible to the other; with two instances, two concurrent Reserves of
+// the same code both observe not-present and both write). The daemon
+// constructs one *Store at bootstrap and threads it to every entity store
+// (parts, later locations); any new caller (including test helpers) MUST
+// reuse that instance, not call NewStore again for the same DB.
 func NewStore(db *pebble.DB) *Store {
 	return &Store{db: db}
 }
@@ -112,8 +124,10 @@ func (s *Store) Lookup(code string) (EntityType, string, error) {
 
 // Release removes the index entry. Called on entity delete. Pebble Delete is
 // idempotent (a missing key is a no-op), so releasing a twice-deleted code is
-// safe. Takes mu for parity with Reserve (avoids a Release-vs-Reserve race on
-// the same key racing the Get in Reserve).
+// safe. Takes mu for defensive parity with Reserve so the Release path shares
+// Reserve's serialization discipline (pure Delete interleavings on disjoint
+// keys cannot corrupt the index; mu keeps the Release API posture uniform
+// with Reserve's RMW).
 func (s *Store) Release(code string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

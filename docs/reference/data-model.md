@@ -107,6 +107,7 @@ so every prefix is [registered](../internals/keyspace-registry.md).
 | Keyspace | Byte | Purpose |
 |---|---|---|
 | `parts` | `0x10` | Part records, keyed by ULID |
+| `via` | `0x12` | Via-code index (§5.17) — code → {type, id}; shared spine across entity types |
 | `meta` | `0xF0` | `schema_version` marker + future migration cursors, sub-keyed by payload (`"schemaver"`) |
 | `search_index` FTS postings | `0x05` | term → id (verbatim shape from go-rag) |
 | `search_index` FTS indexed-set | `0x07` | ids already indexed |
