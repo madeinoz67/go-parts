@@ -139,6 +139,10 @@ function hideConfirm(){
 // query) clears it. selectedIds is module-level so it survives the swap.
 let selectedIds = new Set();
 let lastQuery = "";
+// §7.2 filter-preservation: track the live view state so the bulk-action
+// configRequest handler below can inject it into the POST body. q is read
+// live from #search at submit time; sort/dir/tag/low are tracked here.
+let viewSort = '', viewDir = '', viewTag = '', viewLow = '';
 document.body.addEventListener('htmx:afterSwap', e => {
   if (e.target.id !== 'parts-tbody') return;
   lastChecked = null;
@@ -155,6 +159,59 @@ document.body.addEventListener('htmx:afterSwap', e => {
     lastQuery = q;
   }
   updateBulkBar();
+});
+
+// §7.2 filter-preservation: bulk delete/tag from a filtered view must re-render
+// THAT view, not reset to all-parts. The bulk-bar's hidden q/tag/low/sort/dir
+// fields render EMPTY in this shell (layout.html inline) and #toolbar is no
+// longer OOB-swapped (removed in 720daba — the OOB mechanism mangled <form>s
+// in table context), so the browser must supply the live view state with the
+// bulk POST. The Go handlers already read these values from r.PostForm — this
+// is the missing client half.
+//
+// Click delegation on document.body survives the OOB #tag-nav swap that fires
+// on every keystroke (direct listeners on tag anchors would die on the first
+// search). Sort headers live in the stable <thead>; chips live in the stable
+// #toolbar — delegation covers all three uniformly.
+document.body.addEventListener('click', e => {
+  const a = e.target.closest('a[hx-get]');
+  if (!a) return;
+  const params = new URL(a.getAttribute('hx-get'), location.href).searchParams;
+  // Sort headers: <th><a hx-get="...?sort=mpn&dir=asc">.
+  if (params.has('sort')) {
+    viewSort = params.get('sort') || '';
+    viewDir  = params.get('dir')  || '';
+  }
+  // Tag sidebar: #tag-nav a[hx-get*="tag="].
+  if (a.closest('#tag-nav') && params.has('tag')) {
+    viewTag = params.get('tag') || '';
+  }
+  // Chips inside #toolbar: low-stock sets low=1; the all-parts chip (its
+  // hx-get is /ui/parts/search with no params) clears low AND tag — it is
+  // the unfiltered root view.
+  if (a.closest('#toolbar')) {
+    if (params.has('low')) {
+      viewLow = params.get('low') || '';
+    } else if (a.classList.contains('chip')) {
+      viewLow = '';
+      viewTag = '';
+    }
+  }
+});
+
+// htmx fires htmx:configRequest before every AJAX request; evt.detail.parameters
+// is mutable. For bulk-delete/bulk-tag ONLY, inject the live view state. The
+// `if (!p[k])` guard lets an explicit form field override — but the bulk-bar's
+// hidden fields render empty in the shell, so the tracked values win.
+document.body.addEventListener('htmx:configRequest', e => {
+  const path = e.detail.pathInfo && e.detail.pathInfo.requestPath;
+  if (path !== '/ui/parts/bulk-delete' && path !== '/ui/parts/bulk-tag') return;
+  const p = e.detail.parameters;
+  if (!p['q'])   p['q']   = (document.getElementById('search') || {}).value || '';
+  if (!p['sort']) p['sort'] = viewSort;
+  if (!p['dir'])  p['dir']  = viewDir;
+  if (!p['tag'])  p['tag']  = viewTag;
+  if (!p['low'])  p['low']  = viewLow;
 });
 </script>
 </body>

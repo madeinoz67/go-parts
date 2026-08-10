@@ -154,13 +154,15 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// the active tag highlighted (cat-item active) — without it, layout.html's
 	// inline render hard-codes Active="" and the copper highlight never lands.
 	//
-	// Tag/Low/Sort/Dir + the Toolbar flag drive the OOB #toolbar swap (§7.2):
-	// every search/keystroke also re-renders the bulk-bar with the current
-	// view state, keeping its hidden q/tag/low/sort/dir fields synced. Without
-	// it, a bulk delete/tag from a filtered view submits empty hidden fields
-	// and the post-action re-render resets to all-parts. Low is the raw STRING
-	// ("1" or "") — not the bool — so bulk-bar.html can populate the hidden
-	// field and gate the chip-active class without re-deriving it.
+	// View-state for the bulk-bar's hidden fields is NOT fed from here. The OOB
+	// #toolbar swap was removed in 720daba (it mangled <form>s in table context),
+	// so the hidden q/tag/low/sort/dir fields render EMPTY in the shell and stay
+	// empty. Bulk-action filter-preservation is now client-side: layout.html's
+	// htmx:configRequest handler injects the live view state into the bulk POST
+	// body (§7.2), and the bulk handlers below read it back out of r.PostForm.
+	// The data map here therefore passes only what rows.html itself consumes
+	// (Parts/Q/Tags/Active); Low/Sort/Dir travel only as URL query params on the
+	// GET that rendered the current view, tracked in the browser.
 	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
 		"Parts":  pts,
 		"Q":      q,
@@ -428,9 +430,11 @@ func (s *Server) handleStock(w http.ResponseWriter, r *http.Request) {
 // the form's hx-include="[name=id]"). Each id is deleted in-process via
 // store.Delete; an unknown id is skipped (idempotent per-row — ErrNotFound is
 // not a failure here). After deleting, the current view (q/tag/low/sort/dir,
-// carried as hidden form fields) is re-rendered via filteredParts so the table
-// reflects the post-delete state and the selection clears (the deleted rows'
-// checkboxes are gone, so the client's updateBulkBar reverts to the chip row).
+// read from the POST body — injected client-side by layout.html's
+// htmx:configRequest handler, since the bulk-bar's hidden fields render empty
+// in the shell) is re-rendered via filteredParts so the table reflects the
+// post-delete state and the selection clears (the deleted rows' checkboxes are
+// gone, so the client's updateBulkBar reverts to the chip row).
 func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -453,9 +457,11 @@ func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
 	// the sidebar live (htmx applies the hx-swap-oob element after the primary
 	// tbody swap), matching handleSearch/handleBulkTag.
 	//
-	// Tag/Low/Sort/Dir + Toolbar drive the OOB #toolbar swap (§7.2): the
-	// bulk-bar re-renders with the post-action view state so its hidden fields
-	// stay synced for the NEXT bulk action from the same filtered view.
+	// The view state itself (q/tag/low/sort/dir) arrives via the POST body, not
+	// a server-fed hidden field: layout.html's htmx:configRequest handler
+	// injects it client-side (§7.2 filter-preservation). The OOB #toolbar swap
+	// was removed in 720daba, so the bulk-bar's hidden fields render empty in
+	// the shell and are never re-rendered server-side — the browser owns them.
 	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
 		"Parts":  pts,
 		"Q":      q,
@@ -480,8 +486,9 @@ func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
 // input for the new tag is name="new_tag"; the hidden field name="tag" carries
 // the current filter context (mirroring the delete form). The new tag is read
 // unambiguously from r.PostFormValue("new_tag"); tagFilter (the hidden filter)
-// drives filteredParts + the sidebar Active highlight, and is currently dead in
-// production (correct when filter-preservation lands).
+// drives filteredParts + the sidebar Active highlight. That hidden field
+// renders empty in the shell — layout.html's htmx:configRequest handler
+// populates it client-side with the active tag filter (§7.2 filter-preservation).
 //
 // Idempotency: the slices.Contains guard skips the append when the tag is
 // already on the part, so re-tagging p1 with a tag it already has neither
@@ -521,9 +528,11 @@ func (s *Server) handleBulkTag(w http.ResponseWriter, r *http.Request) {
 	sortDir := r.PostFormValue("dir")
 	pts := s.filteredParts(q, tagFilter, low, sortKey, sortDir)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// Same OOB #tag-nav + #toolbar swap as handleBulkDelete — a bulk-tag from
-	// a filtered view must preserve the filter context in the re-rendered
-	// bulk-bar so the next bulk action doesn't reset to all-parts (§7.2).
+	// Same OOB #tag-nav swap as handleBulkDelete (Tags + Active refresh the
+	// sidebar live). Filter context for the re-render arrives via the POST
+	// body, injected client-side by layout.html's htmx:configRequest handler —
+	// the OOB #toolbar swap was removed in 720daba, so bulk filter-preservation
+	// is now a client-side concern, not a server-fed one (§7.2).
 	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
 		"Parts":  pts,
 		"Q":      q,
