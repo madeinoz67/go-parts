@@ -281,6 +281,39 @@ func (s *Store) wouldCycle(l *Location, newParentID string) bool {
 	return true // chain too deep → treat as cycle (defensive; store invariant broken)
 }
 
+// BulkOpts carries the shared fields applied to every location created by a
+// bulk run. Label is NOT here — each row gets its own label from GenerateLabels.
+type BulkOpts struct {
+	ParentID       string
+	SinglePartOnly bool
+	Notes          string
+	CreationMethod string // "single" | "row" | "grid" | "3d_grid" — reference metadata
+}
+
+// CreateBulk mints one Location per label (shared opts), looping Create. It is
+// NOT atomic: a failure mid-bulk returns the successfully-created rows so far
+// plus the error (Pebble has no cross-key transactions in v1; a partial bulk is
+// reported, not rolled back). Each row is an ordinary Location — creation_method
+// is reference metadata, so anything created in bulk can be renamed/reparented/
+// removed individually afterward (§7.1).
+func (s *Store) CreateBulk(labels []string, opts BulkOpts) ([]*Location, error) {
+	out := make([]*Location, 0, len(labels))
+	for _, label := range labels {
+		l := &Location{
+			Label:          label,
+			ParentID:       opts.ParentID,
+			SinglePartOnly: opts.SinglePartOnly,
+			Notes:          opts.Notes,
+			CreationMethod: opts.CreationMethod,
+		}
+		if err := s.Create(l); err != nil {
+			return out, err // partial: created-so-far + the error
+		}
+		out = append(out, l)
+	}
+	return out, nil
+}
+
 // write serializes l and writes it under the location key. No FTS.
 func (s *Store) write(l *Location) error {
 	var ws [8]byte
