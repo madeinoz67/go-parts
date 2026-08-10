@@ -5,6 +5,7 @@ package keys
 
 const (
 	partsPrefix          byte = 0x10
+	locationPrefix       byte = 0x11 // Location records (nested storage)
 	metaPrefix           byte = 0xF0
 	viaPrefix            byte = 0x12 // via-code index (code string → {type,id}); §5.17
 	ftsPostingPrefix     byte = 0x05 // verbatim from go-rag
@@ -43,6 +44,24 @@ func ViaKey(ws [8]byte, code string) []byte { return viaKey(ws, code) }
 func ViaPrefixBound(ws [8]byte) (lower, upper []byte) {
 	lower = scopedBytes(viaPrefix, ws)
 	upper = scopedBytes(viaPrefix+1, ws)
+	return lower, upper
+}
+
+func locationKey(ws [8]byte, id string) []byte {
+	return scopedString(locationPrefix, ws, id)
+}
+
+// LocationKey is the exported alias for locationKey, for internal/locations.
+func LocationKey(ws [8]byte, id string) []byte { return locationKey(ws, id) }
+
+// LocationPrefixBound returns the [lower, upper) range covering every location
+// record, for prefix scans (List/Count/Children). locationPrefix+1 (0x12) is
+// the via prefix, NOT a free byte — but the bound is [0x11, 0x12) which covers
+// ONLY 0x11 keys; it never overlaps 0x12 because the upper bound is exclusive.
+// (Same < 0xFF caveat as PartsPrefixBound; 0x11+1 = 0x12, no wrap.)
+func LocationPrefixBound(ws [8]byte) (lower, upper []byte) {
+	lower = scopedBytes(locationPrefix, ws)
+	upper = scopedBytes(locationPrefix+1, ws)
 	return lower, upper
 }
 
