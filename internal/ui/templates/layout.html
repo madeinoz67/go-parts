@@ -70,6 +70,8 @@
   </footer>
 </div>
 <script>
+// Slice 6: a via-scan redirect lands on /ui/?part={id}; auto-open the detail.
+(function(){ const p = new URLSearchParams(location.search).get('part'); if (p) htmx.ajax('GET', '/ui/parts/'+p, {target:'#detail-panel'}); })();
 document.addEventListener('keydown', e => {
   if (e.key === '/' && document.activeElement.id !== 'search') { e.preventDefault(); document.getElementById('search').focus(); }
   if (e.key === 'Escape') {

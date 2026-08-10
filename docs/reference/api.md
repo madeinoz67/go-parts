@@ -122,6 +122,8 @@ object (PascalCase, no json tags):
 - **part** → `{Type:"part", Part:{…}}`.
 - unknown code → `404` (`via.ErrNotFound`).
 
+**Browser redirect (Slice 6, content-negotiation):** a client sending `Accept: text/html` (a browser scanning the QR) is `303`-redirected to the entity's UI deep-link — a part → `/ui/?part={id}`, a location → `/ui/locations?loc={id}`. API clients (`Accept: application/json`, or curl's `*/*`) still get the JSON above. So the QR's encoded `/via/{code}` URL serves both a browser scan (lands on the entity open in the UI) and an API call, without a separate endpoint or re-cutting labels.
+
 `POST /parts/{id}/label` and `POST /locations/{id}/label` render a black-on-
 white scannable **SVG label** (`Content-Type: image/svg+xml`). The QR encodes
 `{public_base_url}/via/{via_code}` — the resolution URL — with the

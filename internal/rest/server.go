@@ -431,6 +431,21 @@ func (s *Server) handleVia(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "via resolve: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Slice 6: a BROWSER scanning the QR (Accept: text/html) is redirected to
+	// the entity's UI deep-link; API clients (Accept: application/json, or curl's
+	// */*) keep getting JSON. One endpoint serves both — the slice-4 QR (encoding
+	// /via/{code}) becomes browser-friendly without re-cutting labels.
+	if strings.Contains(r.Header.Get("Accept"), "text/html") {
+		switch res.Type {
+		case string(via.TypePart):
+			http.Redirect(w, r, "/ui/?part="+res.Part.ID, http.StatusSeeOther)
+		case string(via.TypeLocation):
+			http.Redirect(w, r, "/ui/locations?loc="+res.Location.ID, http.StatusSeeOther)
+		default:
+			http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+		}
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res)
 }

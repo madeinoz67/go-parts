@@ -584,3 +584,61 @@ func TestLabelUnknown404(t *testing.T) {
 		t.Errorf("label unknown location = %d, want 404", rr.Code)
 	}
 }
+
+// --- Slice 6: via-resolver browser redirect (content-negotiation) ----------
+
+// viaGet is a GET /via/{code} with a caller-set Accept header (content-
+// negotiation: text/html → browser redirect; else JSON).
+func viaGet(srv *Server, code, accept string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/via/"+code, nil)
+	req.Header.Set("Accept", accept)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	return rr
+}
+
+// TestViaBrowserRedirect pins the Slice-6 content-negotiation: a browser (Accept
+// text/html) scanning /via/{code} is 303-redirected to the entity's UI deep-link
+// (part → /ui/?part=, location → /ui/locations?loc=); an API client (Accept
+// json or curl's */*) still gets JSON; an unknown code → 404 either way. This
+// keeps the slice-4 QR (/via/{code}) browser-friendly without a separate
+// endpoint or re-cutting labels.
+func TestViaBrowserRedirect(t *testing.T) {
+	srv, ls := newTestServerWithLocations(t)
+	loc := &locations.Location{Label: "RB"}
+	if err := ls.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	p := restCreate(t, srv, `{"MPN":"RB","PartType":"local"}`)
+
+	// location, browser → /ui/locations?loc={id}
+	rr := viaGet(srv, loc.ViaCode, "text/html,application/xhtml+xml")
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("via location (html) = %d, want 303; body=%s", rr.Code, rr.Body)
+	}
+	if got := rr.Header().Get("Location"); !strings.Contains(got, "/ui/locations?loc=") {
+		t.Errorf("location redirect = %q, want /ui/locations?loc=...", got)
+	}
+	// part, browser → /ui/?part={id}
+	rr2 := viaGet(srv, p.ViaCode, "text/html")
+	if rr2.Code != http.StatusSeeOther || !strings.Contains(rr2.Header().Get("Location"), "/ui/?part=") {
+		t.Fatalf("via part (html) = %d %q, want 303 /ui/?part=", rr2.Code, rr2.Header().Get("Location"))
+	}
+	// API client (json) → still JSON
+	rr3 := viaGet(srv, p.ViaCode, "application/json")
+	if rr3.Code != http.StatusOK || !strings.Contains(rr3.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("via part (json) = %d %s, want 200 json", rr3.Code, rr3.Header().Get("Content-Type"))
+	}
+	// curl-style */* → JSON (only browsers redirect)
+	rr4 := viaGet(srv, p.ViaCode, "*/*")
+	if rr4.Code != http.StatusOK {
+		t.Fatalf("via part (*/*) = %d, want 200 json (curl gets JSON, only browsers redirect)", rr4.Code)
+	}
+	// unknown → 404 (browser + api)
+	if rr := viaGet(srv, "L-NOPE", "text/html"); rr.Code != http.StatusNotFound {
+		t.Errorf("via unknown (html) = %d, want 404", rr.Code)
+	}
+	if rr := viaGet(srv, "L-NOPE", "application/json"); rr.Code != http.StatusNotFound {
+		t.Errorf("via unknown (json) = %d, want 404", rr.Code)
+	}
+}

@@ -65,6 +65,10 @@
     <span class="seg ver" style="margin-left:auto">v2.1 · dev</span>
   </footer>
 </div>
+<script>
+// Slice 6: a via-scan redirect lands on /ui/locations?loc={id}; auto-open it.
+(function(){ const l = new URLSearchParams(location.search).get('loc'); if (l) htmx.ajax('GET', '/ui/locations/'+l, {target:'#loc-detail'}); })();
+</script>
 </body>
 </html>
 {{end}}
