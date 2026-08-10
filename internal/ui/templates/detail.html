@@ -7,6 +7,13 @@
   {{range $k, $v := .P.Specs}}
   <div class="spec-row"><span>{{$k}}</span><span class="phos">{{$v}}</span></div>
   {{end}}
+  {{range $k, $v := .P.CustomFields}}
+  <div class="spec-row"><span>{{$k}}</span><span>{{$v}}</span></div>
+  {{end}}
+  <div class="spec-row"><span>Via</span><span class="phos">{{.P.ViaCode}}</span></div>
+  <div class="spec-row"><span>Reorder at</span><span class="phos">{{.P.ReorderPoint}}</span></div>
+  {{if .P.UnitOfMeasure}}<div class="spec-row"><span>Unit</span><span>{{.P.UnitOfMeasure}}</span></div>{{end}}
+  {{if .P.PackageQty}}<div class="spec-row"><span>Pkg qty</span><span>{{.P.PackageQty}}</span></div>{{end}}
   <div class="spec-row">
     <span>On hand</span>
     <form class="qty-stepper" hx-post="/ui/parts/{{.P.ID}}/stock" hx-target="#detail-panel" hx-swap="innerHTML">
@@ -23,8 +30,15 @@
 <form class="inline edit" hx-post="/ui/parts/{{.P.ID}}" hx-target="#detail-panel">
   <input type="hidden" name="version" value="{{.P.Version}}">
   <input type="text" name="description" value="{{.P.Description}}" placeholder="description" style="flex:1;min-width:12em">
+  <input type="text" name="manufacturer" value="{{.P.Manufacturer}}" placeholder="manufacturer" style="width:10em">
   <input type="text" name="footprint" value="{{.P.Footprint}}" list="footprints-list" placeholder="footprint" style="width:8em">
   <datalist id="footprints-list">{{range .Footprints}}<option value="{{.}}">{{end}}</datalist>
+  <input type="number" name="reorder_threshold" value="{{.P.ReorderPoint}}" placeholder="reorder" style="width:6em" min="0">
+  <input type="text" name="tags" value="{{formatTags .P.Tags}}" placeholder="tags (comma-sep)" style="flex:1;min-width:10em">
+  <input type="text" name="unit_of_measure" value="{{.P.UnitOfMeasure}}" placeholder="unit" style="width:8em">
+  <input type="number" name="package_qty" value="{{.P.PackageQty}}" placeholder="pkg qty" style="width:6em" min="0">
+  <textarea name="specs" placeholder="specs (key=value per line)" rows="3" style="width:100%">{{formatKV .P.Specs}}</textarea>
+  <textarea name="custom_fields" placeholder="custom fields (key=value per line)" rows="2" style="width:100%">{{formatKV .P.CustomFields}}</textarea>
   <button class="btn btn-primary" type="submit">save</button>
 </form>
 {{end}}

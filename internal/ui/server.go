@@ -39,6 +39,8 @@ func NewServer(store *parts.Store, fts *index.FTS) *Server {
 			}
 			return m
 		},
+		"formatTags": formatTags,
+		"formatKV":   formatKV,
 	}).ParseFS(embedded, "templates/*.html"))
 	s := &Server{store: store, fts: fts, tmpl: tmpl, mux: http.NewServeMux()}
 	s.routes()

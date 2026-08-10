@@ -6,9 +6,14 @@
     <option value="linked">linked</option>
     <option value="local">local</option>
   </select>
+  <input name="manufacturer" placeholder="manufacturer">
   <input name="footprint" list="footprints-list" placeholder="footprint">
   <datalist id="footprints-list">{{range .Footprints}}<option value="{{.}}">{{end}}</datalist>
   <input name="qty" placeholder="qty" type="number" min="0">
+  <input name="reorder_threshold" placeholder="reorder at" type="number" min="0">
+  <input name="tags" placeholder="tags (comma-sep)">
+  <input name="unit_of_measure" placeholder="unit (pieces, m, g...)">
+  <input name="package_qty" placeholder="pkg qty" type="number" min="0">
   <button class="btn btn-primary" type="submit">create</button>
 </form>
 {{end}}
