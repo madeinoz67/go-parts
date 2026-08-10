@@ -42,6 +42,7 @@ func main() {
 	root.AddCommand(newStartCmd(&dataDir))
 	root.AddCommand(newStopCmd(&dataDir))
 	root.AddCommand(newStatusCmd(&dataDir))
+	root.AddCommand(newLocationsCmd(&dataDir))
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
