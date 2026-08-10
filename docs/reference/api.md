@@ -16,7 +16,7 @@ later rather than a rewrite. There is no auth in v1.
 | `GET` | `/healthz` | `200` | liveness probe; returns text/plain `ok`, no store touch |
 | `GET` | `/stats` | `200` | `{"parts_total": N}` via `Store.Count()` |
 | `GET` | `/parts?q=…` | `200` | BM25 search (FTS); empty/absent `q` → empty list |
-| `POST` | `/parts` | `201` (+`ETag`) / `400` / `500` | create; caller MUST NOT set `ID`/`Version`/audit |
+| `POST` | `/parts` | `201` (+`ETag`) / `400` / `409` / `500` | create; caller MUST NOT set `ID`/`Version`/audit. `400` if `DefaultLocationID` references a missing location; `409` if it targets an occupied `SinglePartOnly` location (Slice 3b) |
 | `GET` | `/parts/{id}` | `200` (+`ETag`) / `404` | one part by ID |
 | `PATCH` | `/parts/{id}` | `200` (+`ETag`) / `428` / `400` / `404` / `409` | edit; `If-Match` required |
 | `DELETE` | `/parts/{id}` | `204` / `404` | remove record + FTS entry |
@@ -59,6 +59,24 @@ changes go to `POST /parts/{id}/stock`.
 
 Authoritative fields never taken from the patch body: `ID`, `Version`,
 `QtyOnHand`, `CreatedAt`/`CreatedBy`, `UpdatedAt`/`UpdatedBy`.
+
+**`DefaultLocationID` (Slice 3b) is writable but cannot be CLEARED over REST.**
+A patch carrying a non-empty `DefaultLocationID` assigns the part's home
+location (the `single_part_only` guard runs in `Store.Update`: `409 Conflict`
+if the target is a `SinglePartOnly` location already holding a different part;
+`400 Bad Request` if the id references no location). Because `applyPatch` uses
+zero-means-skip, a patch omitting the field leaves it unchanged and a patch
+carrying `"DefaultLocationID": ""` is skipped (not a clear). Clearing over REST
+needs a dedicated path (a field-clear convention or a `DELETE …/location`),
+deferred — the web UI clears via the `<select>`'s explicit `(unassigned)`
+option, which the handler reads directly (not through `applyPatch`).
+
+**Two distinct `409 Conflict` cases on PATCH** (both surface as 409; the
+response body distinguishes them): (1) the `expectedVersion` no longer matches
+the in-lock stored version — the §5.14 optimistic-concurrency race, "edited
+elsewhere"; (2) a `DefaultLocationID` assignment that trips the
+`single_part_only` guard, "that bin holds another part". A client should read
+the body to tell them apart.
 
 ## Stock endpoint
 

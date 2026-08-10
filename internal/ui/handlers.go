@@ -389,14 +389,28 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(v, "%d", &p.PackageQty)
 	}
 	if err := s.store.Create(p); err != nil {
-		// Slice 3b: a single_part_only / missing-location guard failure on create
-		// is a user error, not a 500. Map the sentinels to a readable status.
-		if errors.Is(err, parts.ErrLocationSinglePartConflict) {
-			http.Error(w, "that bin is single-part-only and already holds a different part", http.StatusConflict)
-			return
-		}
-		if errors.Is(err, parts.ErrLocationNotFound) {
-			http.Error(w, "that location does not exist", http.StatusBadRequest)
+		// Slice 3b: a single_part_only / missing-location guard failure on
+		// create is a user error, not a 500. Re-render the create form into
+		// #detail-panel with a banner (the form's own hx-target is #parts-tbody,
+		// so retarget — same mechanism as renderConfirmFootprint). A fresh form
+		// is rendered (the rare create-path guard failure doesn't preserve the
+		// typed entries, unlike handleEdit which preserves via the Get-then-edit
+		// cur); the banner carries the reason.
+		if errors.Is(err, parts.ErrLocationSinglePartConflict) || errors.Is(err, parts.ErrLocationNotFound) {
+			msg := "that bin is single-part-only and already holds a different part"
+			if errors.Is(err, parts.ErrLocationNotFound) {
+				msg = "that location does not exist"
+			}
+			w.Header().Set("Hx-Retarget", "#detail-panel")
+			w.Header().Set("Hx-Reswap", "innerHTML")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if tErr := s.tmpl.ExecuteTemplate(w, "create.html", map[string]any{
+				"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
+				"Locations":  s.locationOptions(),
+				"Error":      msg,
+			}); tErr != nil {
+				http.Error(w, tErr.Error(), http.StatusInternalServerError)
+			}
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)

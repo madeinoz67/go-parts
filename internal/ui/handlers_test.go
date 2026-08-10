@@ -933,18 +933,57 @@ func TestEditGuardErrorRendersBanner(t *testing.T) {
 		t.Fatal(err)
 	}
 	p2 := uiCreatePart(t, srv, "SOLO-2") // unassigned
-	body := url.Values{"version": {strconv.Itoa(p2.Version)}, "default_location_id": {solo.ID}}.Encode()
+	body := url.Values{
+		"version":             {strconv.Itoa(p2.Version)},
+		"default_location_id": {solo.ID},
+		"description":         {"edited-desc"}, // a non-location edit the re-render must preserve
+	}.Encode()
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p2.ID, body))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("guard-error edit = %d (want 200 banner, not 409); body=%s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "single-part-only") {
-		t.Errorf("guard-error banner missing 'single-part-only'; body: %s", rr.Body.String())
+	resp := rr.Body.String()
+	if !strings.Contains(resp, "single-part-only") {
+		t.Errorf("guard-error banner missing 'single-part-only'; body: %s", resp)
+	}
+	// The re-render must carry the user's other edits (Get-then-edit preserves
+	// them on cur), not a fresh/stored snapshot.
+	if !strings.Contains(resp, "edited-desc") {
+		t.Errorf("guard-error re-render lost the user's description edit; body: %s", resp)
 	}
 	got, _ := srv.store.Get(p2.ID)
 	if got.DefaultLocationID == solo.ID {
 		t.Error("p2 was assigned to the single-part-only location despite the guard")
+	}
+}
+
+// TestCreateGuardErrorRendersForm pins the create-path guard branch (S2): a
+// create into an occupied SinglePartOnly location re-renders the create form
+// into #detail-panel with a banner (Hx-Retarget), not a bare http.Error into
+// #parts-tbody.
+func TestCreateGuardErrorRendersForm(t *testing.T) {
+	srv := newTestServer(t)
+	solo := uiCreateLocation(t, srv, "Solo", true)
+	// sole occupant via the store
+	if err := srv.store.Create(&parts.Part{MPN: "FIRST", PartType: "local", DefaultLocationID: solo.ID}); err != nil {
+		t.Fatal(err)
+	}
+	body := url.Values{"mpn": {"SECOND"}, "part_type": {"local"}, "default_location_id": {solo.ID}}.Encode()
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts", body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("guard-error create = %d (want 200 form+banner); body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Hx-Retarget"); got != "#detail-panel" {
+		t.Errorf("Hx-Retarget = %q, want #detail-panel (so the form lands in the panel, not the tbody)", got)
+	}
+	resp := rr.Body.String()
+	if !strings.Contains(resp, "single-part-only") {
+		t.Errorf("create guard-error banner missing 'single-part-only'; body: %s", resp)
+	}
+	if !strings.Contains(resp, `name="mpn"`) {
+		t.Errorf("create guard-error did not re-render the create form; body: %s", resp)
 	}
 }
 
