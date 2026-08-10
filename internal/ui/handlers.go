@@ -49,6 +49,73 @@ func mergeFootprints(common, db []string) []string {
 	return out
 }
 
+// parseTags splits a comma-separated string into a trimmed []string (empty
+// entries dropped). normalizeTags (store.Create/Update) lowercases on save.
+func parseTags(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// formatTags joins a []string into a comma-separated display string (for
+// pre-filling an edit form's tags input).
+func formatTags(tags []string) string {
+	return strings.Join(tags, ", ")
+}
+
+// parseKV parses a "key=value\nkey=value" textarea into map[string]string.
+// Blank lines and lines without '=' are skipped. Used for Specs + CustomFields.
+func parseKV(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+	m := make(map[string]string)
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		if k != "" {
+			m[k] = strings.TrimSpace(v)
+		}
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+// formatKV renders a map as sorted "key=value\n" text (for pre-filling an
+// edit form's textarea). Keys sorted for deterministic display.
+func formatKV(m map[string]string) string {
+	if len(m) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	lines := make([]string, 0, len(keys))
+	for _, k := range keys {
+		lines = append(lines, k+"="+m[k])
+	}
+	return strings.Join(lines, "\n")
+}
+
 // formField is a single name/value pair rendered as a hidden input by
 // confirm-footprint.html, so the confirm re-submit preserves the original
 // form values the user entered (not just the footprint).

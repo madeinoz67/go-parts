@@ -732,3 +732,36 @@ func TestDetailSubLineNoLeadingSeparator(t *testing.T) {
 		t.Errorf("full sub-line should render 'Yageo · resistor · 0805'; body=%s", body2)
 	}
 }
+
+func TestParseTags(t *testing.T) {
+	got := parseTags("resistor, smd , ic,,")
+	if len(got) != 3 || got[0] != "resistor" || got[1] != "smd" || got[2] != "ic" {
+		t.Errorf("parseTags = %v, want [resistor smd ic]", got)
+	}
+	if parseTags("") != nil {
+		t.Errorf("parseTags(\"\") should return nil")
+	}
+}
+
+func TestParseKV(t *testing.T) {
+	got := parseKV("resistance=10k\ntolerance=1%\n\nbadline\n =empty")
+	if len(got) != 2 || got["resistance"] != "10k" || got["tolerance"] != "1%" {
+		t.Errorf("parseKV = %v, want {resistance:10k tolerance:1%%}", got)
+	}
+	if parseKV("") != nil {
+		t.Errorf("parseKV(\"\") should return nil")
+	}
+}
+
+func TestFormatTags(t *testing.T) {
+	if got := formatTags([]string{"resistor", "smd"}); got != "resistor, smd" {
+		t.Errorf("formatTags = %q, want \"resistor, smd\"", got)
+	}
+}
+
+func TestFormatKVSorted(t *testing.T) {
+	got := formatKV(map[string]string{"b": "2", "a": "1"})
+	if got != "a=1\nb=2" {
+		t.Errorf("formatKV should be sorted: %q", got)
+	}
+}
