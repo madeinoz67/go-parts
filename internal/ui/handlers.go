@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
 )
 
@@ -739,6 +740,124 @@ func (s *Server) handleBulkMove(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// --- Slice 5b: the Storage tab (locations management UI) ------------------
+
+// locationCounts tallies parts per location in ONE parts scan (map[locID]count)
+// — the contents-count column in the locations list. O(parts), the cheaper
+// direction at homelab scale (not locations×parts scans).
+func (s *Server) locationCounts() map[string]int {
+	counts := make(map[string]int)
+	for _, p := range s.store.List() {
+		if p.DefaultLocationID != "" {
+			counts[p.DefaultLocationID]++
+		}
+	}
+	return counts
+}
+
+// handleLocationsPage renders the Storage tab: the location list (label · via ·
+// contents-count) + an empty detail panel + the create-single form. List rows
+// hx-get the detail fragment into #loc-detail on click (htmx).
+func (s *Server) handleLocationsPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "locations.html", map[string]any{
+		"Locations": s.locationOptions(),
+		"Counts":    s.locationCounts(),
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleLocationDetail renders the location-detail.html fragment (htmx into
+// #loc-detail on row click): the fields, CONTENTS (parts.ListByLocation —
+// scan-to-find, the point of opening a bin), an edit form (parent as a select
+// of other locations — the cycle guard is the authority), and a print-label
+// button. locations.ErrNotFound → 404.
+func (s *Server) handleLocationDetail(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	l, err := s.locations.Get(id)
+	if err != nil {
+		if errors.Is(err, locations.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "location-detail.html", map[string]any{
+		"L":         l,
+		"Contents":  s.store.ListByLocation(id),
+		"Locations": s.locationOptions(),
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleLocationCreate handles the create-single form (POST /ui/locations): a
+// plain form that POSTs then redirects to the page (full reload — robust, no
+// htmx partial). On a guard error (e.g. missing parent) re-renders the page
+// with a banner.
+func (s *Server) handleLocationCreate(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	l := &locations.Location{
+		Label:          r.PostFormValue("label"),
+		ParentID:       r.PostFormValue("parent_id"),
+		SinglePartOnly: r.PostFormValue("single_part_only") == "true",
+		Notes:          r.PostFormValue("notes"),
+	}
+	if err := s.locations.Create(l); err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = s.tmpl.ExecuteTemplate(w, "locations.html", map[string]any{
+			"Locations": s.locationOptions(),
+			"Counts":    s.locationCounts(),
+			"Error":     err.Error(),
+		})
+		return
+	}
+	http.Redirect(w, r, "/ui/locations", http.StatusSeeOther)
+}
+
+// handleLocationEdit handles the edit form (POST /ui/locations/{id}): Get-then-
+// edit + Update with the version. On success redirect to the page; on a cycle,
+// parent-miss, or version conflict re-render the detail with a banner (mirrors
+// the parts edit UX).
+func (s *Server) handleLocationEdit(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cur, err := s.locations.Get(id)
+	if err != nil {
+		if errors.Is(err, locations.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	expected, _ := strconv.Atoi(r.PostFormValue("version"))
+	cur.Label = r.PostFormValue("label")
+	cur.ParentID = r.PostFormValue("parent_id")
+	cur.Notes = r.PostFormValue("notes")
+	cur.SinglePartOnly = r.PostFormValue("single_part_only") == "true"
+	if err := s.locations.Update(cur, expected); err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", map[string]any{
+			"L":         cur,
+			"Contents":  s.store.ListByLocation(id),
+			"Locations": s.locationOptions(),
+			"Error":     err.Error(),
+		})
+		return
+	}
+	http.Redirect(w, r, "/ui/locations", http.StatusSeeOther)
 }
 
 // applySort re-orders pts in place by the requested key/direction. No-op when

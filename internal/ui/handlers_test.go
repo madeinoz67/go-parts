@@ -1076,3 +1076,110 @@ func TestBulkMoveSinglePartOnlyOneWins(t *testing.T) {
 		t.Errorf("bulk-move onto single-part-only: %d assigned, want exactly 1", assigned)
 	}
 }
+
+// --- Slice 5b: the Storage tab (locations management UI) ------------------
+
+// TestLocationsPageRendersList pins the Storage page: it lists locations with
+// their contents-count (one parts scan → map).
+func TestLocationsPageRendersList(t *testing.T) {
+	srv := newTestServer(t)
+	drawer := uiCreateLocation(t, srv, "Drawer 1", false)
+	uiCreateLocation(t, srv, "Bin A", false)
+	// one part in Drawer 1 → contents-count "1 part(s)"
+	p := uiCreatePart(t, srv, "LP")
+	p.DefaultLocationID = drawer.ID
+	if err := srv.store.Update(p, p.Version); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/locations", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("page = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Drawer 1") || !strings.Contains(body, "Bin A") {
+		t.Errorf("page missing a location; body: %s", body)
+	}
+	if !strings.Contains(body, "1 part(s)") {
+		t.Errorf("page missing the contents-count; body: %s", body)
+	}
+}
+
+// TestLocationDetailShowsContents pins scan-to-find at the UI: the detail
+// fragment shows the location + its embedded contents (parts.ListByLocation).
+func TestLocationDetailShowsContents(t *testing.T) {
+	srv := newTestServer(t)
+	bin := uiCreateLocation(t, srv, "Bin C", false)
+	for _, mpn := range []string{"C-1", "C-2"} {
+		p := uiCreatePart(t, srv, mpn)
+		p.DefaultLocationID = bin.ID
+		if err := srv.store.Update(p, p.Version); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/locations/"+bin.ID, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("detail = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Bin C") {
+		t.Errorf("detail missing the label; body: %s", body)
+	}
+	if !strings.Contains(body, "2 part(s)") {
+		t.Errorf("detail missing the contents count; body: %s", body)
+	}
+	if !strings.Contains(body, "C-1") || !strings.Contains(body, "C-2") {
+		t.Errorf("detail missing the contents parts; body: %s", body)
+	}
+}
+
+// TestLocationCreate pins POST /ui/locations (create-single) → 303 redirect +
+// the location persisted.
+func TestLocationCreate(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations", url.Values{"label": {"New Bin"}}.Encode()))
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("create = %d, want 303 redirect; body=%s", rr.Code, rr.Body.String())
+	}
+	found := false
+	for _, l := range srv.locations.List() {
+		if l.Label == "New Bin" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("create did not persist the location")
+	}
+}
+
+// TestLocationEditCycleBanner pins the cycle guard surfacing as a detail banner
+// (not a 500): reparenting A under B, where B is already under A, → ErrCycle →
+// re-render with a "cycle" banner.
+func TestLocationEditCycleBanner(t *testing.T) {
+	srv := newTestServer(t)
+	a := uiCreateLocation(t, srv, "A", false)
+	b := uiCreateLocation(t, srv, "B", false)
+	// B under A (valid) — sets up the chain so A-under-B is a cycle.
+	bCur, _ := srv.locations.Get(b.ID)
+	bCur.ParentID = a.ID
+	if err := srv.locations.Update(bCur, bCur.Version); err != nil {
+		t.Fatal(err)
+	}
+	// A under B → cycle (B is A's child).
+	aCur, _ := srv.locations.Get(a.ID)
+	body := url.Values{
+		"version":   {strconv.Itoa(aCur.Version)},
+		"label":     {aCur.Label},
+		"parent_id": {b.ID},
+	}.Encode()
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/"+a.ID, body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("cycle edit = %d (want 200 banner, not 500); body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "cycle") {
+		t.Errorf("cycle banner missing 'cycle'; body: %s", rr.Body.String())
+	}
+}

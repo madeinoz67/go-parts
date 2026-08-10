@@ -81,6 +81,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /ui/parts/bulk-move", s.handleBulkMove)     // bulk move-to-location → refreshed tbody (§7.2, Slice 3b)
 	s.mux.HandleFunc("POST /ui/parts/{id}", s.handleEdit)              // inline edit → updated detail (409 on stale version)
 	s.mux.HandleFunc("POST /ui/parts/{id}/stock", s.handleStock)       // inline stock-adjust → updated detail (404 on miss)
+	// Slice 5b — the Storage tab (locations management UI, in-process like the parts UI).
+	s.mux.HandleFunc("GET /ui/locations", s.handleLocationsPage)       // the Storage page (list + detail + create form)
+	s.mux.HandleFunc("GET /ui/locations/{id}", s.handleLocationDetail) // location detail fragment (htmx into #loc-detail)
+	s.mux.HandleFunc("POST /ui/locations", s.handleLocationCreate)     // create-single → redirect to the page
+	s.mux.HandleFunc("POST /ui/locations/{id}", s.handleLocationEdit)  // edit (Update) → redirect or banner
 }
 
 // handleShell renders the full shell page.
