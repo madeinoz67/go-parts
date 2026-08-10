@@ -529,6 +529,31 @@ func TestViaUnknown404(t *testing.T) {
 	}
 }
 
+// TestViaDanglingReference404 pins the Slice-4 review should-fix: a via code
+// whose entity was deleted (a via.Release that failed mid-delete, leaving the
+// index pointing at a gone record) resolves via.Lookup-ok → locations.Get-miss
+// → locations.ErrNotFound. That's "the code resolved to nothing" → 404, not a
+// 500. Constructed by deleting a location then re-reserving its code at the
+// now-gone id (a real dangling entry the happy path can't produce).
+func TestViaDanglingReference404(t *testing.T) {
+	srv, ls := newTestServerWithLocations(t)
+	loc := &locations.Location{Label: "Ghost"}
+	if err := ls.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	code, id := loc.ViaCode, loc.ID
+	if err := ls.Delete(id); err != nil {
+		t.Fatal(err) // happy path releases the via code
+	}
+	// Re-create a DANGLING index entry: code → the deleted location's id.
+	if err := srv.via.Reserve(code, via.TypeLocation, id); err != nil {
+		t.Fatalf("re-reserve dangling: %v", err)
+	}
+	if rr := get(srv, "/via/"+code); rr.Code != http.StatusNotFound {
+		t.Errorf("via dangling ref = %d, want 404; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 // TestPartLabelSVG pins POST /parts/{id}/label renders an SVG, by id AND by
 // via-code.
 func TestPartLabelSVG(t *testing.T) {

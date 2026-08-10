@@ -39,11 +39,6 @@ func openLocations(dataDir string) (*locations.Store, func(), error) {
 	return locations.NewStore(storeDB.DB, viaStore), cleanup, nil
 }
 
-// openStores opens BOTH stores for a cross-entity CLI op (the delete-refuse-
-// has-parts composition in `locations remove`, and any future part-writing
-// command). Same one-shot + via-singleton posture as openLocations, plus it
-// injects link.NewPolicy so the single_part_only guard is live on part writes
-// from the CLI too — identical wiring to daemon.Run.
 // openStores opens BOTH stores + the shared via index for a cross-entity CLI
 // op (delete-refuse-has-parts, the via resolver, labels). Same one-shot +
 // via-singleton posture as openLocations, plus it injects link.NewPolicy so

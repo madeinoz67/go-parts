@@ -73,6 +73,12 @@ func (s *Server) baseURL(r *http.Request) string {
 	if s.publicBaseURL != "" {
 		return s.publicBaseURL
 	}
+	// NOTE: X-Forwarded-Proto is deliberately NOT honored — it is trivially
+	// spoofable on a non-loopback bind, so trusting it would let a caller force
+	// https:// into someone's QR URL. Behind a TLS-terminating proxy (the
+	// §5.18 non-loopback case) the operator sets public_base_url (the §5.17
+	// escape hatch); the request-derived fallback is best-effort (http://)
+	// until then.
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
@@ -413,7 +419,12 @@ func parseETagVersion(s string) (int, error) {
 func (s *Server) handleVia(w http.ResponseWriter, r *http.Request) {
 	res, err := link.Resolve(s.via, s.store, s.locations, r.PathValue("code"))
 	if err != nil {
-		if errors.Is(err, via.ErrNotFound) {
+		// A via-miss OR a dangling reference (via.Lookup succeeded but the
+		// entity record is gone — e.g. a via.Release that failed mid-delete
+		// left the index pointing at nothing) are both "the code resolved to
+		// nothing the client can use" → 404, matching the label handlers.
+		// Anything else is a real storage fault → 500.
+		if errors.Is(err, via.ErrNotFound) || errors.Is(err, parts.ErrNotFound) || errors.Is(err, locations.ErrNotFound) {
 			http.NotFound(w, r)
 			return
 		}

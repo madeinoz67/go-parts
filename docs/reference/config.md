@@ -10,13 +10,15 @@ defaults to `~/.go-parts` (mirrors go-rag / MuninnDB).
 |---|---|---|
 | `data_dir` | `~/.go-parts` | location of the Pebble store, `daemon.json`, and `config.json` itself |
 | `bind` | `127.0.0.1:7890` | HTTP listen address; loopback-only by default (§5.18) |
+| `public_base_url` | (empty) | base URL for Via-resolver QR labels (§5.17, Slice 4); empty = derive from the request's scheme://host |
 
 Example:
 
 ```json
 {
   "data_dir": "/home/maker/.go-parts",
-  "bind": "127.0.0.1:7890"
+  "bind": "127.0.0.1:7890",
+  "public_base_url": "https://parts.lan"
 }
 ```
 
@@ -41,9 +43,10 @@ Example:
 ## Secrets posture (§5.18)
 
 **No secret is ever written to `config.json`.** The config package holds only
-non-secret settings — the data directory and the bind address. Authentication
-of every kind lives in **environment variables** and is never read, written,
-or marshalled by the config layer:
+non-secret settings — the data directory, the bind address, and the public
+base URL for Via QR labels. Authentication of every kind lives in
+**environment variables** and is never read, written, or marshalled by the
+config layer:
 
 - `GOPARTS_*` — vendor API tokens, future go-parts-native secrets.
 - `GORAG_TOKEN` — go-rag gateway token (when the §5.5 search gateway is on).
