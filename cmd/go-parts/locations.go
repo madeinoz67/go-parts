@@ -8,7 +8,10 @@ import (
 	"text/tabwriter"
 
 	"github.com/madeinoz67/go-parts/internal/config"
+	"github.com/madeinoz67/go-parts/internal/index"
+	"github.com/madeinoz67/go-parts/internal/link"
 	"github.com/madeinoz67/go-parts/internal/locations"
+	"github.com/madeinoz67/go-parts/internal/parts"
 	"github.com/madeinoz67/go-parts/internal/storage"
 	"github.com/madeinoz67/go-parts/internal/via"
 	"github.com/spf13/cobra"
@@ -33,6 +36,25 @@ func openLocations(dataDir string) (*locations.Store, func(), error) {
 	cleanup := func() { storeDB.Close() }
 	viaStore := via.NewStore(storeDB.DB)
 	return locations.NewStore(storeDB.DB, viaStore), cleanup, nil
+}
+
+// openStores opens BOTH stores for a cross-entity CLI op (the delete-refuse-
+// has-parts composition in `locations remove`, and any future part-writing
+// command). Same one-shot + via-singleton posture as openLocations, plus it
+// injects link.NewPolicy so the single_part_only guard is live on part writes
+// from the CLI too — identical wiring to daemon.Run.
+func openStores(dataDir string) (*parts.Store, *locations.Store, func(), error) {
+	dataDir = config.Default(dataDir).DataDir
+	storeDB, err := storage.Open(dataDir)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("open store: %w", err)
+	}
+	cleanup := func() { storeDB.Close() }
+	viaStore := via.NewStore(storeDB.DB)
+	ps := parts.NewStore(storeDB.DB, index.NewFTS(storeDB.DB), viaStore)
+	ls := locations.NewStore(storeDB.DB, viaStore)
+	ps.SetLocationPolicy(link.NewPolicy(ps, ls))
+	return ps, ls, cleanup, nil
 }
 
 func newLocationsCmd(dataDir *string) *cobra.Command {
@@ -228,7 +250,10 @@ func newLocationsRemoveCmd(dataDir *string) *cobra.Command {
 		Short: "Remove a location (refuses if it has children)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, cleanup, err := openLocations(*dataDir)
+			// remove composes both stores: the has-parts refusal needs
+			// parts.CountByLocation, so open both (locations.Store can't see the
+			// parts keyspace, §5.1).
+			ps, s, cleanup, err := openStores(*dataDir)
 			if err != nil {
 				return err
 			}
@@ -243,12 +268,22 @@ func newLocationsRemoveCmd(dataDir *string) *cobra.Command {
 				id = l.ID
 			}
 			if dryRun {
-				if n := len(s.Children(id)); n > 0 {
-					fmt.Printf("would remove id=%s — REFUSE (%d children; reparent first)\n", id, n)
-				} else {
+				switch {
+				case len(s.Children(id)) > 0:
+					fmt.Printf("would remove id=%s — REFUSE (%d children; reparent first)\n", id, len(s.Children(id)))
+				case ps.CountByLocation(id) > 0:
+					fmt.Printf("would remove id=%s — REFUSE (%d parts assigned; reassign first)\n", id, ps.CountByLocation(id))
+				default:
 					fmt.Printf("would remove id=%s\n", id)
 				}
 				return nil
+			}
+			// delete-refuse-has-parts (Slice 3a): refuse before Delete if parts
+			// are still assigned here. Same accepted-TOCTOU posture as the spec's
+			// delete-refuse-has-parts note (homelab scale; a part can be assigned
+			// between the count and the delete).
+			if n := ps.CountByLocation(id); n > 0 {
+				return fmt.Errorf("remove %s: %w (%d parts assigned; reassign first)", id, locations.ErrHasParts, n)
 			}
 			if err := s.Delete(id); err != nil {
 				return err

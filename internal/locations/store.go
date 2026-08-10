@@ -25,6 +25,15 @@ var ErrHasChildren = errors.New("locations: has children")
 // (the new parent is the location itself or one of its descendants).
 var ErrCycle = errors.New("locations: parent change would form a cycle")
 
+// ErrHasParts is returned by the delete-path composition (the CLI's `locations
+// remove`; the daemon delete handler when Slice 5/6 wires the locations
+// transport) when a location still has parts assigned to it. locations.Store
+// cannot see the parts keyspace (§5.1 — the two stores are decoupled), so the
+// has-parts check is composed at the caller via parts.CountByLocation and this
+// sentinel is the cross-package signal. Never cascade — the operator reassigns
+// or clears the parts' DefaultLocationID first.
+var ErrHasParts = errors.New("locations: has parts")
+
 // stripeShards mirrors parts.Store: 64 is coarse enough to spread contention
 // and fine enough that distinct ids rarely collide (collisions over-serialize,
 // never under-serialize).

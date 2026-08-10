@@ -31,6 +31,8 @@ import (
 
 	"github.com/madeinoz67/go-parts/internal/config"
 	"github.com/madeinoz67/go-parts/internal/index"
+	"github.com/madeinoz67/go-parts/internal/link"
+	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
 	"github.com/madeinoz67/go-parts/internal/rest"
 	"github.com/madeinoz67/go-parts/internal/storage"
@@ -73,8 +75,16 @@ func Run(cfg config.Config) error {
 	defer storeDB.Close()
 
 	fts := index.NewFTS(storeDB.DB)
-	viaStore := via.NewStore(storeDB.DB) // shared spine; Locations (Slice 1) reuses this instance
+	viaStore := via.NewStore(storeDB.DB) // shared spine; the single per-process *via.Store
 	store := parts.NewStore(storeDB.DB, fts, viaStore)
+	// Locations Slice 3a: construct the locations store over the same DB + via
+	// spine and inject the single_part_only guard into the parts store. The
+	// guard is now live on every parts PATCH/Create the daemon serves; the
+	// locations REST/UI surfaces (list/picker) land in Slice 3b. locStore is
+	// held for the policy composition now and consumed by the locations
+	// transport when that arrives.
+	locStore := locations.NewStore(storeDB.DB, viaStore)
+	store.SetLocationPolicy(link.NewPolicy(store, locStore))
 	// Compose: UI at /ui/, REST at root, GET / → /ui/ redirect.
 	restSrv := rest.NewServer(store, fts)
 	uiSrv := ui.NewServer(store, fts)

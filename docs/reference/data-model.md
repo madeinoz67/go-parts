@@ -31,6 +31,8 @@ retrieval/storage contract.
 | `CustomFields` | `map[string]string` | |
 | `DatasheetStore` | string | empty until the §5.6 datasheet slice |
 | `DatasheetRef` | string | local path, or go-rag vault doc-id when that gateway is on |
+| `DefaultLocationID` | string | the part's home location (§6.1); `""` = unassigned. When non-empty it references a Location and the `single_part_only` guard rejects assigning to a `SinglePartOnly` location that already holds a different part (`ErrLocationSinglePartConflict`); a missing location returns `ErrLocationNotFound`. Additive (Locations Slice 3a) — no `schema_version` bump. |
+| `DefaultLocationMandatory` | bool | stock for this part may only be added at `DefaultLocationID` (§6.1); enforced on the stock path, carried + round-tripped here. `false` by default; additive. |
 | `CreatedBy` | string | `"local"` in v1 (no auth); caller identity post-auth |
 | `UpdatedBy` | string | mirrors `CreatedBy` |
 | `CreatedAt` | `time.Time` | UTC, set by `Create` |

@@ -194,9 +194,17 @@ go-parts locations list [--json]
 
 ### `go-parts locations remove`
 
-Removes a location by id or Via code (`L-...` resolves to the id). **Refuses if
-the location has children** (`ErrHasChildren`) — reparent or delete the
-children first; never cascade.
+Removes a location by id or Via code (`L-...` resolves to the id). Two refusals
+guard it:
+
+- **Refuses if the location has children** (`ErrHasChildren`) — reparent or
+  delete the children first; never cascade.
+- **Refuses if parts are still assigned** (`ErrHasParts`, Locations Slice 3a) —
+  any part whose `DefaultLocationID` points here blocks the delete. Reassign or
+  clear those parts first. This check composes at the CLI caller
+  (`parts.CountByLocation`) because the locations store cannot see the parts
+  keyspace (§5.1); the same refusal is inherited by the daemon's delete handler
+  when its transport lands.
 
 ```
 go-parts locations remove <id|viacode> [--dry-run]
@@ -204,7 +212,7 @@ go-parts locations remove <id|viacode> [--dry-run]
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--dry-run` | `false` | print what would happen (incl. child-count refusal) without executing |
+| `--dry-run` | `false` | print what would happen without executing — reports either REFUSE (with the children-count **or** assigned-parts-count and the remediation) or a clean `would remove` |
 
 ### `go-parts locations tree`
 
