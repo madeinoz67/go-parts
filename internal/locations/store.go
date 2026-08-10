@@ -139,6 +139,11 @@ func (s *Store) Update(l *Location, expectedVersion int) error {
 	if cur.Version != expectedVersion {
 		return fmt.Errorf("locations: version conflict for %s: stored %d != expected %d", l.ID, cur.Version, expectedVersion)
 	}
+	if l.ParentID != cur.ParentID {
+		if s.wouldCycle(l, l.ParentID) {
+			return ErrCycle
+		}
+	}
 	// Via-code is immutable (§5.17) — preserve the stored value.
 	l.ViaCode = cur.ViaCode
 	l.Version = cur.Version + 1
@@ -155,6 +160,9 @@ func (s *Store) Delete(id string) error {
 	cur, err := s.Get(id)
 	if err != nil {
 		return err
+	}
+	if len(s.Children(id)) > 0 {
+		return ErrHasChildren
 	}
 	var ws [8]byte
 	if err := s.db.Delete(keys.LocationKey(ws, id), pebble.Sync); err != nil {
@@ -202,6 +210,67 @@ func (s *Store) Count() int {
 		return 0
 	}
 	return n
+}
+
+// Children returns locations whose ParentID == id (a within-keyspace scan +
+// decode filter via List). Best-effort: skips undecodable records (inherited
+// from List). No reverse index — v1 scale doesn't justify one (YAGNI).
+func (s *Store) Children(id string) []*Location {
+	all := s.List()
+	var out []*Location
+	for _, l := range all {
+		if l.ParentID == id {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// ByVia resolves a Via code to its Location (via.Lookup → Get). A via-miss is
+// wrapped as ErrNotFound so callers test errors.Is(err, ErrNotFound) for both
+// "no such via code" and "via resolved but record gone".
+func (s *Store) ByVia(code string) (*Location, error) {
+	tt, id, err := s.via.Lookup(code)
+	if err != nil {
+		if errors.Is(err, via.ErrNotFound) {
+			return nil, fmt.Errorf("locations: via %s: %w", code, ErrNotFound)
+		}
+		return nil, fmt.Errorf("locations: via %s: %w", code, err)
+	}
+	_ = tt // TypeLocation by construction; a mismatch is a corrupt index, not actionable here
+	return s.Get(id)
+}
+
+// wouldCycle reports whether setting l.ParentID = newParentID would form a
+// cycle: true if newParentID == l.ID, or newParentID is a descendant of l (the
+// new parent's ancestor chain reaches l.ID). The walk is bounded by the
+// acyclic-forest invariant the guard maintains; a missing ancestor terminates
+// the walk (not a cycle). Caller MUST hold lockFor(l.ID); Get does not take
+// locks, so there is no nested locking.
+func (s *Store) wouldCycle(l *Location, newParentID string) bool {
+	if newParentID == "" {
+		return false
+	}
+	if newParentID == l.ID {
+		return true
+	}
+	// Walk the new parent's ancestor chain; if it reaches l.ID, the new parent
+	// is a descendant of l → cycle.
+	cur := newParentID
+	for i := 0; i < 1000; i++ { // hard cap defends a corrupted cyclic store
+		if cur == "" {
+			return false
+		}
+		if cur == l.ID {
+			return true
+		}
+		p, err := s.Get(cur)
+		if err != nil {
+			return false // missing parent terminates the walk; not a cycle
+		}
+		cur = p.ParentID
+	}
+	return true // chain too deep → treat as cycle (defensive; store invariant broken)
 }
 
 // write serializes l and writes it under the location key. No FTS.
