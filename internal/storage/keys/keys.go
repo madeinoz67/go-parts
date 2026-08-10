@@ -6,6 +6,7 @@ package keys
 const (
 	partsPrefix          byte = 0x10
 	metaPrefix           byte = 0xF0
+	viaPrefix            byte = 0x12 // via-code index (code string → {type,id}); §5.17
 	ftsPostingPrefix     byte = 0x05 // verbatim from go-rag
 	ftsIndexedPrefix     byte = 0x07 // verbatim from go-rag
 	ftsGlobalStatsPrefix byte = 0x06 // verbatim from go-rag
@@ -26,6 +27,22 @@ func PartsPrefixBound(ws [8]byte) (lower, upper []byte) {
 	lower = scopedBytes(partsPrefix, ws)
 	// NOTE: partsPrefix+1 relies on partsPrefix (0x10) being < 0xFF; a future prefix of 0xFF would wrap uint8 to 0x00.
 	upper = scopedBytes(partsPrefix+1, ws)
+	return lower, upper
+}
+
+func viaKey(ws [8]byte, code string) []byte {
+	return scopedString(viaPrefix, ws, code)
+}
+
+// ViaKey is the exported alias for viaKey, for internal/via.
+func ViaKey(ws [8]byte, code string) []byte { return viaKey(ws, code) }
+
+// ViaPrefixBound returns the [lower, upper) range covering every via-code
+// index entry, for prefix scans/tests. viaPrefix+1 relies on viaPrefix (0x12)
+// being < 0xFF (same caveat as PartsPrefixBound).
+func ViaPrefixBound(ws [8]byte) (lower, upper []byte) {
+	lower = scopedBytes(viaPrefix, ws)
+	upper = scopedBytes(viaPrefix+1, ws)
 	return lower, upper
 }
 

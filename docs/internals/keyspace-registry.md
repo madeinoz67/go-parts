@@ -23,6 +23,7 @@ an unregistered or colliding prefix as a **blocking** finding.
 | Keyspace | Purpose | PRD | Byte | Status |
 |---|---|---|---|---|
 | `parts` | Part records (mpn, specs, stock, `via_code`, `version`, …) | §6.1 | `0x10` | **allocated** |
+| `via` | Via-code index (`via_code` → `{type,id}`); uniqueness + resolver | §5.17 | `0x12` | **allocated** |
 | `categories` | category / subcategory (plain-string taxonomy facet, not an enum) | §5.1, §6.2 | — | planned |
 | `locations` | Location records (nested storage, `via_code`) | §6.1, §5.17 | — | planned |
 | `suppliers` | Supplier records + part-number mapping conventions | §6.1 | — | planned |
@@ -54,9 +55,9 @@ keyspace is still blocking. The three `search_index` prefixes are imported verba
 
 ## Free / reserved
 
-Allocated: `0x05`, `0x06`, `0x07` (FTS), `0x10` (parts), `0xF0` (meta).
+Allocated: `0x05`, `0x06`, `0x07` (FTS), `0x10` (parts), `0x12` (via), `0xF0` (meta).
 
-Free ranges: `0x00-0x04`, `0x08-0x0F`, `0x11-0xEF`, `0xF1-0xFF`. A new prefix picks a free
+Free ranges: `0x00-0x04`, `0x08-0x0F`, `0x11`, `0x13-0xEF`, `0xF1-0xFF`. A new prefix picks a free
 byte, not one in use. (`0xF1-0xFF` is free — the `meta` keyspace is `0xF0` only, sub-keyed
 by payload after the single prefix, so the top nybble above `0xF0` is not reserved.)
 

@@ -6,7 +6,7 @@ import "testing"
 // here. A collision is a blocking review finding.
 func TestPrefixesDisjointFromTable(t *testing.T) {
 	prefixes := []byte{
-		partsPrefix, metaPrefix,
+		partsPrefix, metaPrefix, viaPrefix,
 		ftsPostingPrefix, ftsIndexedPrefix, ftsGlobalStatsPrefix,
 	}
 	seen := map[byte]bool{}
