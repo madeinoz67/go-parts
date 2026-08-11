@@ -41,10 +41,10 @@ var ErrVersionConflict = errors.New("locations: version conflict")
 // or clears the parts' DefaultLocationID first.
 var ErrHasParts = errors.New("locations: has parts")
 
-// stripeShards mirrors parts.Store: 64 is coarse enough to spread contention
-// and fine enough that distinct ids rarely collide (collisions over-serialize,
-// never under-serialize).
-const stripeShards = 64
+// (RedTeam: stripeShards + the per-id locks pool were removed — treeMu
+// serializes ALL structural writes, so the per-id lockFor never contends. The
+// 5a lock-ordering doc claimed "treeMu → lockFor → via.mu"; with lockFor gone,
+// the order simplifies to "treeMu → via.mu" — a two-lock total order.)
 
 // Store is the Location entity's CRUD authority (PRD §6.1, §5.14). No FTS —
 // locations are navigated/scanned, not full-text-searched. Optimistic
@@ -69,8 +69,7 @@ const stripeShards = 64
 type Store struct {
 	db     *pebble.DB
 	via    *via.Store
-	locks  [stripeShards]sync.Mutex
-	treeMu sync.Mutex // Slice 5a: serializes structural tree ops across nodes (reparent cycle-guard, delete has-children, create parent-existence)
+	treeMu sync.Mutex // the sole write lock: serializes ALL structural ops (Create-with-parent, Update, Delete) — Slice 5a + RedTeam simplification (the per-id striped pool was dead weight)
 }
 
 // NewStore returns a Location store over db whose via codes are reserved in the
@@ -79,14 +78,6 @@ type Store struct {
 // the daemon (Slice 3/5) threads the one it already built.
 func NewStore(db *pebble.DB, viaStore *via.Store) *Store {
 	return &Store{db: db, via: viaStore}
-}
-
-func (s *Store) lockFor(id string) *sync.Mutex {
-	var sum int
-	for i := 0; i < len(id); i++ {
-		sum += int(id[i])
-	}
-	return &s.locks[sum%stripeShards]
 }
 
 // Create writes a new location record, assigns id/via_code if absent, sets the
@@ -173,9 +164,6 @@ func (s *Store) Update(l *Location, expectedVersion int) error {
 	// cross-node reparent cycle.
 	s.treeMu.Lock()
 	defer s.treeMu.Unlock()
-	mu := s.lockFor(l.ID)
-	mu.Lock()
-	defer mu.Unlock()
 	cur, err := s.Get(l.ID)
 	if err != nil {
 		return err
@@ -216,9 +204,6 @@ func (s *Store) Delete(id string) error {
 	// reparent. treeMu before lockFor — same order as Update (no inversion).
 	s.treeMu.Lock()
 	defer s.treeMu.Unlock()
-	mu := s.lockFor(id)
-	mu.Lock()
-	defer mu.Unlock()
 	cur, err := s.Get(id)
 	if err != nil {
 		return err
@@ -309,9 +294,10 @@ func (s *Store) ByVia(code string) (*Location, error) {
 // acyclic-forest invariant the guard maintains; a missing ancestor terminates
 // the walk (not a cycle).
 //
-// Caller MUST hold treeMu AND lockFor(l.ID) (Update acquires treeMu outermost,
-// then lockFor). treeMu (Slice 5a) is what makes the walk sound under
-// concurrency: it serializes ALL structural tree ops, so no concurrent reparent
+// Caller MUST hold treeMu (Update acquires it outermost). The per-id lockFor
+// was removed (RedTeam: dead weight — treeMu alone serializes all structural
+// writes). treeMu (Slice 5a) is what makes the walk sound under concurrency:
+// it serializes ALL structural tree ops, so no concurrent reparent
 // can change the ancestor chain mid-walk. (The slice-1 adversary flagged the
 // cross-node reparent cycle this closes — v1-unreachable then, now closed
 // before the daemon becomes a multi-writer in 5b.)
