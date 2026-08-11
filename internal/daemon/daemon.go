@@ -223,6 +223,12 @@ func writeStateFile(dataDir string, st State) error {
 // signal the pid) is treated as alive: the process exists, we just can't
 // signal it (a multi-user scenario where a different uid owns go-parts). On
 // macOS/Linux this is the standard cheap liveness probe.
+//
+// PID-recycle hazard (RedTeam LOW): if the daemon dies uncleanly and the OS
+// later recycles the PID to an UNRELATED process, Status reports Running=true
+// and Stop would SIGTERM the wrong process. A start-time check (comparing the
+// recorded process start time against the live process's) would close this;
+// for v1 single-operator homelab scale the risk is negligible.
 func processAlive(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	if err == nil {

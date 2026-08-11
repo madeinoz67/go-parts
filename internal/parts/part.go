@@ -18,8 +18,15 @@ import (
 // Part is a single electronics part record (PRD §6.1 subset). Field set matches
 // the v1 retrieval/storage contract: the FTS consumes a derived field map (see
 // indexText), and the store serializes the whole struct as JSON under the parts
-// keyspace. No json tags — REST (Task 10) and the e2e test (Task 12) use Go
-// field names; adding tags later is additive and breaks nothing.
+// keyspace. No json tags — REST and the e2e test use Go field names (PascalCase)
+// as the JSON keys.
+//
+// Field names are an immutable JSON ABI once shipped: a rename (e.g.
+// DefaultLocationID → HomeLocationID) silently drops all pre-rename persisted
+// data because the old JSON key no longer matches any struct field. A rename
+// requires a registered migrate step that rewrites persisted records; additions
+// are safe without a schema bump (the additive-fields v2 migration covers
+// refuse-newer for older binaries).
 type Part struct {
 	ID             string
 	MPN            string

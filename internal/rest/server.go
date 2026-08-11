@@ -73,17 +73,36 @@ func (s *Server) baseURL(r *http.Request) string {
 	if s.publicBaseURL != "" {
 		return s.publicBaseURL
 	}
-	// NOTE: X-Forwarded-Proto is deliberately NOT honored — it is trivially
-	// spoofable on a non-loopback bind, so trusting it would let a caller force
-	// https:// into someone's QR URL. Behind a TLS-terminating proxy (the
-	// §5.18 non-loopback case) the operator sets public_base_url (the §5.17
-	// escape hatch); the request-derived fallback is best-effort (http://)
-	// until then.
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
+	// Derive from the request ONLY for loopback (the v1 default). For a
+	// non-loopback Host without a configured public_base_url, return "" → the
+	// QR encodes a relative /via/{code} (safe but less useful). This prevents
+	// Host-header poisoning of a persistent printed label (RedTeam MEDIUM:
+	// r.Host is attacker-controllable; a QR is a durable artifact). The
+	// operator sets public_base_url for a useful absolute URL on non-loopback.
+	//
+	// X-Forwarded-Proto is deliberately NOT honored (spoofable on non-loopback).
+	if isLoopbackHost(r.Host) {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		return scheme + "://" + r.Host
 	}
-	return scheme + "://" + r.Host
+	return "" // non-loopback without public_base_url → safe fallback
+}
+
+// isLoopbackHost reports whether host (with optional :port) is a loopback
+// address. Used by baseURL to guard against Host-header poisoning of labels.
+func isLoopbackHost(host string) bool {
+	h := host
+	if i := strings.LastIndex(h, ":"); i >= 0 {
+		h = h[:i] // strip the port
+	}
+	switch h {
+	case "127.0.0.1", "localhost", "[::1]", "::1":
+		return true
+	}
+	return false
 }
 
 // ServeHTTP dispatches through the registered ServeMux. Every route is wrapped
