@@ -6,5 +6,5 @@
 {{range .Parts}}{{template "row.html" (dict "P" .)}}{{end}}
 {{end}}
 </tbody>
-{{if .Tags}}<aside class="sidebar" id="tag-nav" hx-swap-oob="true">{{template "tag-nav.html" (dict "Tags" .Tags "Active" .Active)}}</aside>{{end}}
+<aside class="sidebar" id="tag-nav" hx-swap-oob="true">{{template "tag-nav.html" (dict "Tags" .Tags "Active" .Active)}}</aside>
 {{end}}

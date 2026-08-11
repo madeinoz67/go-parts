@@ -64,16 +64,26 @@ type Store struct {
 	mu sync.Mutex // serializes Reserve's check-then-write (see TestReserve_ConcurrentSameCode)
 }
 
-// NewStore returns a via index over db. The mutex is per-instance, so there
-// must be exactly ONE *Store per *pebble.DB — constructing two over the same
-// DB re-opens the same-code collision hole (each instance's Get-then-Set RMW
-// is invisible to the other; with two instances, two concurrent Reserves of
-// the same code both observe not-present and both write). The daemon
-// constructs one *Store at bootstrap and threads it to every entity store
-// (parts, later locations); any new caller (including test helpers) MUST
-// reuse that instance, not call NewStore again for the same DB.
+// viaInstances enforces the ONE-*Store-per-*pebble.DB invariant at RUNTIME
+// (RedTeam finding: the singleton was convention-only — doc comments + daemon
+// discipline). A second NewStore(db) over a DB that already has a Store returns
+// the EXISTING instance, so two can never coexist over one DB (the per-instance
+// mutex gives zero cross-instance protection; without this, two instances
+// re-open the same-code collision hole). Keyed by *pebble.DB pointer — distinct
+// DBs get distinct Stores (correct: tests open a fresh temp DB each).
+var viaInstances sync.Map
+
+// NewStore returns a via index over db. Self-enforcing singleton: a second call
+// over the same *pebble.DB returns the existing instance (LoadOrStore handles
+// the concurrent-first-call race). Callers that construct entity stores
+// (parts.NewStore, locations.NewStore) pass the instance they receive here; the
+// daemon constructs one at bootstrap, the CLI one per one-shot process.
 func NewStore(db *pebble.DB) *Store {
-	return &Store{db: db}
+	if existing, ok := viaInstances.Load(db); ok {
+		return existing.(*Store)
+	}
+	actual, _ := viaInstances.LoadOrStore(db, &Store{db: db})
+	return actual.(*Store)
 }
 
 // Reserve writes the index entry for code→{type,id}. It is the uniqueness

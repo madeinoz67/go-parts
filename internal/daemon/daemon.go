@@ -28,6 +28,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/madeinoz67/go-parts/internal/config"
 	"github.com/madeinoz67/go-parts/internal/index"
@@ -95,7 +96,7 @@ func Run(cfg config.Config) error {
 		http.Redirect(w, r, "/ui/", http.StatusSeeOther)
 	})
 	mux.Handle("/", restSrv)
-	srv := &http.Server{Addr: cfg.Bind, Handler: mux}
+	srv := &http.Server{Addr: cfg.Bind, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
 	// Bind before publishing the state file: a port-in-use error must surface
 	// BEFORE we tell the world we're running. ln.Addr().String() captures the
