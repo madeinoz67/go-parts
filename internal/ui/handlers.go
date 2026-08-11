@@ -585,8 +585,16 @@ func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	var ok, skip int
 	for _, id := range r.PostForm["id"] {
-		_ = s.store.Delete(id) // unknown id → ErrNotFound, intentionally ignored
+		if err := s.store.Delete(id); err != nil {
+			skip++ // unknown id / concurrent edit
+		} else {
+			ok++
+		}
+	}
+	if skip > 0 {
+		w.Header().Set("HX-Trigger", fmt.Sprintf(`{"showToast":"Deleted %d, skipped %d (not found or concurrent edit)"}`, ok, skip))
 	}
 	q := r.PostFormValue("q")
 	tag := r.PostFormValue("tag")
@@ -647,24 +655,28 @@ func (s *Server) handleBulkTag(w http.ResponseWriter, r *http.Request) {
 	}
 	tagFilter := r.PostFormValue("tag")                                      // hidden filter context
 	newTag := strings.ToLower(strings.TrimSpace(r.PostFormValue("new_tag"))) // text input
+	var ok, skip int
 	for _, id := range r.PostForm["id"] {
 		if newTag == "" {
 			break
 		}
 		p, err := s.store.Get(id)
 		if err != nil {
+			skip++
 			continue
 		}
 		if !slices.Contains(p.Tags, newTag) {
 			p.Tags = append(p.Tags, newTag)
 		}
-		// Degrade loudly (constitution §2): a version-conflict here means a
-		// concurrent edit landed between our Get and Update, so the tag was
-		// silently not applied. Surface it as a warning rather than dropping
-		// the error on the floor — the operator can re-tag after a refresh.
 		if err := s.store.Update(p, p.Version); err != nil {
 			slog.Warn("bulk-tag: part skipped (concurrent edit)", "id", id, "tag", newTag, "error", err)
+			skip++
+		} else {
+			ok++
 		}
+	}
+	if skip > 0 {
+		w.Header().Set("HX-Trigger", fmt.Sprintf(`{"showToast":"Tagged %d, skipped %d (not found or concurrent edit)"}`, ok, skip))
 	}
 	q := r.PostFormValue("q")
 	lowParam := r.PostFormValue("low")
@@ -708,21 +720,26 @@ func (s *Server) handleBulkMove(w http.ResponseWriter, r *http.Request) {
 	}
 	tagFilter := r.PostFormValue("tag")
 	target := r.PostFormValue("move_location")
+	var ok, skip int
 	for _, id := range r.PostForm["id"] {
 		if target == "" {
 			break
 		}
 		p, err := s.store.Get(id)
 		if err != nil {
-			continue // unknown id → skip (idempotent per-row)
+			skip++
+			continue
 		}
 		p.DefaultLocationID = target
-		// A guard conflict (SinglePartOnly holds another, or the location
-		// vanished) or a version conflict → skip this part + warn. The operator
-		// sees the part didn't move on the refreshed view.
 		if err := s.store.Update(p, p.Version); err != nil {
 			slog.Warn("bulk-move: part skipped", "id", id, "location", target, "error", err)
+			skip++
+		} else {
+			ok++
 		}
+	}
+	if skip > 0 {
+		w.Header().Set("HX-Trigger", fmt.Sprintf(`{"showToast":"Moved %d, skipped %d (guard conflict or concurrent edit)"}`, ok, skip))
 	}
 	q := r.PostFormValue("q")
 	lowParam := r.PostFormValue("low")

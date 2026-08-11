@@ -218,6 +218,17 @@ document.body.addEventListener('htmx:configRequest', e => {
   if (!p['tag'])  p['tag']  = viewTag;
   if (!p['low'])  p['low']  = viewLow;
 });
+
+// RedTeam: bulk-action skip feedback (toast). The handlers set HX-Trigger:
+// showToast when parts are skipped; this creates a temporary top-right banner so
+// the operator sees the skip count + reason instead of a silent partial failure.
+document.body.addEventListener('showToast', e => {
+  const t = document.createElement('div');
+  t.textContent = e.detail;
+  t.style.cssText = 'position:fixed;top:16px;right:16px;max-width:380px;padding:12px 16px;background:#3b82f6;color:#fff;border-radius:6px;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.3);font-size:14px';
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .4s'; setTimeout(() => t.remove(), 400); }, 5000);
+});
 </script>
 </body>
 </html>
