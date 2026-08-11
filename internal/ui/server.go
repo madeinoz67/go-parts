@@ -66,26 +66,37 @@ func (s *Server) locationOptions() []*locations.Location {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
 
+// auth is the UI surface's §5.8 single interceptor point, mirroring
+// rest.Server.auth. v1 is a no-op: every UI request passes straight through.
+// Real auth (makerspace tokens) lands here — OR at the daemon's top-level mux
+// wrapping both uiSrv and restSrv — in one place, so when REST's auth is wired
+// the UI surface isn't left open. (RedTeam C19: the original "single
+// interceptor point" claim was REST-only; this closes the UI half. The static
+// asset handler is intentionally unwrapped — read-only CSS/JS/fonts.)
+func (s *Server) auth(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) { h(w, r) }
+}
+
 func (s *Server) routes() {
-	s.mux.HandleFunc("GET /ui/", s.handleShell)
-	// Serve embedded static files (css/js/fonts) under /ui/static/.
+	s.mux.HandleFunc("GET /ui/", s.auth(s.handleShell))
+	// Serve embedded static files (css/js/fonts) under /ui/static/ (no auth — read-only assets).
 	staticSub, _ := fs.Sub(embedded, "static")
 	s.mux.Handle("GET /ui/static/", http.StripPrefix("/ui/static/", http.FileServer(http.FS(staticSub))))
 	// Fragment handlers.
-	s.mux.HandleFunc("GET /ui/parts/search", s.handleSearch)           // live-filter + sort + initial-load
-	s.mux.HandleFunc("GET /ui/parts/new", s.handleCreateForm)          // create form (literal wins over {id})
-	s.mux.HandleFunc("GET /ui/parts/{id}", s.handleDetail)             // row-select → detail-panel fragment
-	s.mux.HandleFunc("POST /ui/parts", s.handleCreate)                 // create → new-row fragment
-	s.mux.HandleFunc("POST /ui/parts/bulk-delete", s.handleBulkDelete) // bulk delete → refreshed tbody + OOB tag-nav (§7.2, hx-include name=id)
-	s.mux.HandleFunc("POST /ui/parts/bulk-tag", s.handleBulkTag)       // bulk tag → refreshed tbody + OOB tag-nav (§7.2)
-	s.mux.HandleFunc("POST /ui/parts/bulk-move", s.handleBulkMove)     // bulk move-to-location → refreshed tbody (§7.2, Slice 3b)
-	s.mux.HandleFunc("POST /ui/parts/{id}", s.handleEdit)              // inline edit → updated detail (409 on stale version)
-	s.mux.HandleFunc("POST /ui/parts/{id}/stock", s.handleStock)       // inline stock-adjust → updated detail (404 on miss)
+	s.mux.HandleFunc("GET /ui/parts/search", s.auth(s.handleSearch))           // live-filter + sort + initial-load
+	s.mux.HandleFunc("GET /ui/parts/new", s.auth(s.handleCreateForm))          // create form (literal wins over {id})
+	s.mux.HandleFunc("GET /ui/parts/{id}", s.auth(s.handleDetail))             // row-select → detail-panel fragment
+	s.mux.HandleFunc("POST /ui/parts", s.auth(s.handleCreate))                 // create → new-row fragment
+	s.mux.HandleFunc("POST /ui/parts/bulk-delete", s.auth(s.handleBulkDelete)) // bulk delete → refreshed tbody + OOB tag-nav (§7.2, hx-include name=id)
+	s.mux.HandleFunc("POST /ui/parts/bulk-tag", s.auth(s.handleBulkTag))       // bulk tag → refreshed tbody + OOB tag-nav (§7.2)
+	s.mux.HandleFunc("POST /ui/parts/bulk-move", s.auth(s.handleBulkMove))     // bulk move-to-location → refreshed tbody (§7.2, Slice 3b)
+	s.mux.HandleFunc("POST /ui/parts/{id}", s.auth(s.handleEdit))              // inline edit → updated detail (409 on stale version)
+	s.mux.HandleFunc("POST /ui/parts/{id}/stock", s.auth(s.handleStock))       // inline stock-adjust → updated detail (404 on miss)
 	// Slice 5b — the Storage tab (locations management UI, in-process like the parts UI).
-	s.mux.HandleFunc("GET /ui/locations", s.handleLocationsPage)       // the Storage page (list + detail + create form)
-	s.mux.HandleFunc("GET /ui/locations/{id}", s.handleLocationDetail) // location detail fragment (htmx into #loc-detail)
-	s.mux.HandleFunc("POST /ui/locations", s.handleLocationCreate)     // create-single → redirect to the page
-	s.mux.HandleFunc("POST /ui/locations/{id}", s.handleLocationEdit)  // edit (Update) → redirect or banner
+	s.mux.HandleFunc("GET /ui/locations", s.auth(s.handleLocationsPage))       // the Storage page (list + detail + create form)
+	s.mux.HandleFunc("GET /ui/locations/{id}", s.auth(s.handleLocationDetail)) // location detail fragment (htmx into #loc-detail)
+	s.mux.HandleFunc("POST /ui/locations", s.auth(s.handleLocationCreate))     // create-single → redirect to the page
+	s.mux.HandleFunc("POST /ui/locations/{id}", s.auth(s.handleLocationEdit))  // edit (Update) → redirect or banner
 }
 
 // handleShell renders the full shell page.

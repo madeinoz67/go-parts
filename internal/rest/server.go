@@ -145,9 +145,12 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Caller MUST NOT set ID/Version/audit fields on create — server-assigned.
-	// Zeroing them defensively keeps a caller-supplied ID from silently taking
-	// precedence over the ULID Store.Create would assign.
+	// Zeroing them defensively keeps a caller-supplied value from taking
+	// precedence over the ULID Store.Create assigns — INCLUDING CreatedBy (a
+	// REST client POSTing {"CreatedBy":"attacker"} must not spoof the audit
+	// trail; the store's "local" default / a future auth layer is authoritative).
 	p.ID = ""
+	p.CreatedBy = ""
 	p.Version = 0
 	p.CreatedAt = time.Time{}
 	p.UpdatedAt = time.Time{}

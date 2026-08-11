@@ -21,7 +21,7 @@
 
 <hr>
 
-<form class="inline edit" action="/ui/locations/{{.L.ID}}" method="post">
+<form class="inline edit" hx-post="/ui/locations/{{.L.ID}}" hx-target="#loc-detail">
   <input type="hidden" name="version" value="{{.L.Version}}">
   <div class="spec-rows">
     <div class="spec-row"><span>Label</span><input type="text" name="label" value="{{.L.Label}}" style="flex:1"></div>

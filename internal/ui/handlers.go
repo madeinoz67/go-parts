@@ -856,7 +856,7 @@ func (s *Server) handleLocationEdit(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, locations.ErrVersionConflict) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusConflict)
-			_ = s.tmpl.ExecuteTemplate(w, "conflict.html", map[string]any{"Reload": "/ui/locations/" + id})
+			_ = s.tmpl.ExecuteTemplate(w, "conflict.html", map[string]any{"Reload": "/ui/locations/" + id, "Target": "#loc-detail"})
 			return
 		}
 		// cycle / parent-miss → banner (the operator fixes the input, not a
@@ -870,7 +870,18 @@ func (s *Server) handleLocationEdit(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	http.Redirect(w, r, "/ui/locations", http.StatusSeeOther)
+	// Success → re-render the updated detail (htmx swaps it into #loc-detail,
+	// matching the parts edit UX; the edit form is hx-post, not a plain POST,
+	// so a version-conflict's conflict.html fragment renders correctly with the
+	// reload link live — not as a bare dead-end page).
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if tErr := s.tmpl.ExecuteTemplate(w, "location-detail.html", map[string]any{
+		"L":         cur,
+		"Contents":  s.store.ListByLocation(id),
+		"Locations": s.locationOptions(),
+	}); tErr != nil {
+		http.Error(w, tErr.Error(), http.StatusInternalServerError)
+	}
 }
 
 // applySort re-orders pts in place by the requested key/direction. No-op when

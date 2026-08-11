@@ -62,10 +62,25 @@ func (r *Runner) Register(m Migration) { r.migrations = append(r.migrations, m) 
 
 // RegisterMigrations is the single source of truth, called by every open
 // path so library and daemon cannot drift on which migrations exist.
-// v1 ships ZERO real migrations (schema is v1 from first run).
 func RegisterMigrations(r *Runner) {
-	// Add numbered migrations here as they are written, e.g.:
-	// r.Register(Migration{1, "description", v1_some_step.Up})
+	// v2 (Locations, Slice 3a): the Part record gained two ADDITIVE JSON fields
+	// (DefaultLocationID, DefaultLocationMandatory). Additive fields are
+	// forward-compatible (a new binary decodes old JSON to ""/false) — but they
+	// are NOT backward-compatible: a pre-Locations binary (LatestVersion 1)
+	// opens a post-Locations store at cur==latest==1 with no refusal, reads
+	// parts via its old struct (encoding/json drops the unknown fields), and on
+	// the next Update re-marshals WITHOUT the location fields — silently
+	// destroying every assignment (a §5.13 "never silent downgrade-write"
+	// violation). This no-op migration bumps the marker to 2 so a pre-Locations
+	// binary hits cur=2 > maxRegistered=1 → refuse-newer → hard startup failure
+	// (forcing re-upgrade, not silent data destruction). The Up is a no-op
+	// because the fields are additive — there is no JSON to transform; only the
+	// version marker moves. (RedTeam finding C10.)
+	r.Register(Migration{
+		Version:     2,
+		Description: "Locations: Part gains additive DefaultLocationID/DefaultLocationMandatory (no-op; re-arms refuse-newer for older binaries)",
+		Up:          func(db *pebble.DB) error { return nil },
+	})
 }
 
 // MaxRegisteredVersion returns the highest Version RegisterMigrations would

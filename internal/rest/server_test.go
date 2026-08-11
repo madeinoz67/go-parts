@@ -642,3 +642,23 @@ func TestViaBrowserRedirect(t *testing.T) {
 		t.Errorf("via unknown (json) = %d, want 404", rr.Code)
 	}
 }
+
+// TestCreate_ZeroesCreatedBy (RedTeam C19/evolution-v2): handleCreate MUST zero
+// CreatedBy from the request body so a caller cannot spoof the audit trail —
+// the store's "local" default (or a future auth layer) is authoritative, like
+// ID/Version/timestamps. Before the fix, POST {"CreatedBy":"attacker"} persisted
+// verbatim.
+func TestCreate_ZeroesCreatedBy(t *testing.T) {
+	srv := newTestServer(t)
+	rr := post(srv, "/parts", `{"MPN":"SPOOF","PartType":"local","CreatedBy":"attacker"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", rr.Code, rr.Body.String())
+	}
+	var p parts.Part
+	if err := json.Unmarshal(rr.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.CreatedBy != "local" {
+		t.Errorf("CreatedBy = %q, want \"local\" (server-assigned; a caller must not spoof the audit trail)", p.CreatedBy)
+	}
+}

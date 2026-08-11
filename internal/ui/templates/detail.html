@@ -43,7 +43,7 @@
         {{range .Locations}}<option value="{{.ID}}"{{if eq $.P.DefaultLocationID .ID}} selected{{end}}>{{.Label}} · {{.ViaCode}}</option>{{end}}
       </select>
     </div>
-    <div class="spec-row"><span>Mandatory</span><label style="flex:1;display:flex;align-items:center;gap:6px"><input type="checkbox" name="default_location_mandatory" value="true"{{if .P.DefaultLocationMandatory}} checked{{end}}> stock only at this location</label></div>
+    <div class="spec-row"><span>Mandatory</span><label style="flex:1;display:flex;align-items:center;gap:6px"><input type="checkbox" name="default_location_mandatory" value="true"{{if .P.DefaultLocationMandatory}} checked{{end}}> stock only here (flag — enforcement pending)</label></div>
   </div>
   <div style="margin-top:8px">
     <div class="eyebrow" style="margin-bottom:4px">Specs (key=value per line)</div>

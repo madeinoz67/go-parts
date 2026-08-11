@@ -46,8 +46,10 @@ type Part struct {
 	// (Locations Slice 3a) — old JSON decodes to "" with no schema bump (§5.13).
 	DefaultLocationID string
 	// DefaultLocationMandatory marks stock for this part as addable only at its
-	// default location (§6.1 default_location_mandatory). Enforced on the stock
-	// path, not here; the field is carried + round-tripped by the store.
+	// default location (§6.1 default_location_mandatory). v1 CARRIES the flag
+	// only — AdjustStock does NOT yet enforce it (enforcement is a pending
+	// stock-path change). The UI labels the checkbox accordingly so the control
+	// doesn't over-promise enforcement that isn't there.
 	DefaultLocationMandatory bool
 	CreatedBy                string
 	UpdatedBy                string
