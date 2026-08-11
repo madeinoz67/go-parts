@@ -662,3 +662,30 @@ func TestCreate_ZeroesCreatedBy(t *testing.T) {
 		t.Errorf("CreatedBy = %q, want \"local\" (server-assigned; a caller must not spoof the audit trail)", p.CreatedBy)
 	}
 }
+
+// TestPatch_RFC7396ClearsNull (RedTeam HIGH) pins the RFC 7396 JSON Merge Patch
+// semantics that replace the zero-means-skip rule: a JSON null CLEARS a field
+// (was: silently dropped). Description/ReorderPoint/DefaultLocationID all clear.
+func TestPatch_RFC7396ClearsNull(t *testing.T) {
+	srv, ls := newTestServerWithLocations(t)
+	loc := &locations.Location{Label: "CLR-loc"}
+	if err := ls.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	p := restCreate(t, srv, `{"MPN":"CLR","PartType":"local","Description":"to-clear","ReorderPoint":10,"DefaultLocationID":"`+loc.ID+`"}`)
+	etag := strconv.Quote(strconv.Itoa(p.Version))
+	rr := patch(srv, "/parts/"+p.ID, `{"Description":null,"ReorderPoint":null,"DefaultLocationID":null}`, etag)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("patch = %d: %s", rr.Code, rr.Body.String())
+	}
+	got, _ := srv.store.Get(p.ID)
+	if got.Description != "" {
+		t.Errorf("Description = %q, want \"\" (cleared)", got.Description)
+	}
+	if got.ReorderPoint != 0 {
+		t.Errorf("ReorderPoint = %d, want 0 (cleared)", got.ReorderPoint)
+	}
+	if got.DefaultLocationID != "" {
+		t.Errorf("DefaultLocationID = %q, want \"\" (cleared)", got.DefaultLocationID)
+	}
+}

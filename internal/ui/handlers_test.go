@@ -1242,3 +1242,41 @@ func TestLocationEditParentMissBanner(t *testing.T) {
 		t.Error("child was orphaned under the deleted parent")
 	}
 }
+
+// TestAuthUI_CSRFOriginCheck (RedTeam critical) pins the CSRF defense: the UI
+// mutates via form-urlencoded POSTs (CORS-"simple" → a cross-origin <form>
+// fires blind). The auth seam blocks a cross-origin POST (Origin mismatch →
+// 403) while allowing same-origin (the real UI) + no-Origin (curl, non-browser,
+// not a CSRF vector).
+func TestAuthUI_CSRFOriginCheck(t *testing.T) {
+	srv := newTestServer(t)
+	// Cross-origin POST → 403 (CSRF blocked).
+	rr := uiPostWithOrigin(srv, "/ui/locations", "https://evil.com", "label=X")
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("cross-origin POST = %d, want 403 (CSRF blocked)", rr.Code)
+	}
+	// Same-origin POST → passes the CSRF check (proceeds to the handler).
+	rr2 := uiPostWithOrigin(srv, "/ui/locations", "http://127.0.0.1:7899", "label=Y")
+	if rr2.Code == http.StatusForbidden {
+		t.Errorf("same-origin POST = 403, want it to pass the CSRF check")
+	}
+	// No Origin (curl / non-browser) → passes (not a CSRF vector).
+	rr3 := uiPostWithOrigin(srv, "/ui/locations", "", "label=Z")
+	if rr3.Code == http.StatusForbidden {
+		t.Errorf("no-Origin POST = 403, want it to pass (non-browser is not a CSRF vector)")
+	}
+}
+
+// uiPostWithOrigin is a form-urlencoded POST with a forced Host + optional
+// Origin, for the CSRF same-origin check.
+func uiPostWithOrigin(srv *Server, path, origin, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Host = "127.0.0.1:7899"
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	return rr
+}

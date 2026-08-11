@@ -63,16 +63,15 @@ changes go to `POST /parts/{id}/stock`.
 Authoritative fields never taken from the patch body: `ID`, `Version`,
 `QtyOnHand`, `CreatedAt`/`CreatedBy`, `UpdatedAt`/`UpdatedBy`.
 
-**`DefaultLocationID` (Slice 3b) is writable but cannot be CLEARED over REST.**
-A patch carrying a non-empty `DefaultLocationID` assigns the part's home
-location (the `single_part_only` guard runs in `Store.Update`: `409 Conflict`
-if the target is a `SinglePartOnly` location already holding a different part;
-`400 Bad Request` if the id references no location). Because `applyPatch` uses
-zero-means-skip, a patch omitting the field leaves it unchanged and a patch
-carrying `"DefaultLocationID": ""` is skipped (not a clear). Clearing over REST
-needs a dedicated path (a field-clear convention or a `DELETE …/location`),
-deferred — the web UI clears via the `<select>`'s explicit `(unassigned)`
-option, which the handler reads directly (not through `applyPatch`).
+**Patch semantics are RFC 7396 JSON Merge Patch** (RedTeam fix): a key PRESENT
+in the body overwrites (non-null) or clears (JSON `null` → the field's zero
+value); an ABSENT key is left unchanged. So `"Description":null` clears,
+`"ReorderPoint":null` resets to 0, `"Tags":null` empties, `"DefaultLocationID":null`
+unassigns. (The old zero-means-skip rule could not clear fields; PATCH silently
+dropped the operation — a §2 violation.) `DefaultLocationID` assignment runs the
+`single_part_only` guard in `Store.Update`: `409 Conflict` if the target is a
+`SinglePartOnly` location already holding a different part; `400 Bad Request` if
+the id references no location.
 
 **Two distinct `409 Conflict` cases on PATCH** (both surface as 409; the
 response body distinguishes them): (1) the `expectedVersion` no longer matches

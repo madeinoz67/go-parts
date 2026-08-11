@@ -225,17 +225,20 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "get: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Decode the patch body onto a fresh Part, then copy ONLY the writable
-	// fields onto loaded. Authoritative fields (ID, Version, QtyOnHand,
-	// CreatedAt/CreatedBy, UpdatedAt/UpdatedBy) are never taken from the
-	// patch body — round-tripped from `loaded` or set by Store.Update.
-	// io.EOF (empty body) is treated as a no-op patch.
-	var patch parts.Part
-	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil && !errors.Is(err, io.EOF) {
+	// RFC 7396 JSON Merge Patch (RedTeam HIGH fix): decode the body into a raw
+	// map so ABSENT keys (skip) are distinguishable from JSON null (clear) and a
+	// present value (overwrite). The old zero-means-skip rule couldn't clear
+	// fields — PATCH returned 200 while silently dropping the operation. io.EOF
+	// (empty body) → nil map → no-op patch.
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
 		http.Error(w, "invalid patch body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	applyPatch(loaded, &patch)
+	if err := applyPatch(loaded, raw); err != nil {
+		http.Error(w, "invalid patch field: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := s.store.Update(loaded, expectedVersion); err != nil {
 		// Update calls Get under the striped lock, so a part deleted between
 		// our outer Get and Update surfaces here as parts.ErrNotFound → 404
@@ -263,57 +266,103 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	writePart(w, http.StatusOK, loaded)
 }
 
-// applyPatch copies writable fields from src onto dst using a zero-means-skip
-// rule per field. Slices and maps are taken by reference when present in src.
-// Authoritative fields (QtyOnHand, audit, Version, ID) are deliberately NOT
-// copied — Update enforces QtyOnHand + audit round-trip server-side; the
-// caller cannot influence them via PATCH.
-func applyPatch(dst, src *parts.Part) {
-	if src.MPN != "" {
-		dst.MPN = src.MPN
+// applyPatch applies RFC 7396 JSON Merge Patch semantics to dst (RedTeam HIGH
+// fix — replaces the zero-means-skip rule that couldn't clear fields): a key
+// PRESENT in raw overwrites (non-null) or clears (null); an ABSENT key is left
+// unchanged. Authoritative fields (ID, Version, QtyOnHand, audit) are never
+// patched — Update round-trips/enforces them server-side.
+func applyPatch(dst *parts.Part, raw map[string]json.RawMessage) error {
+	type pf struct {
+		key string
+		fn  func() error
 	}
-	if src.Manufacturer != "" {
-		dst.Manufacturer = src.Manufacturer
+	fs := []pf{
+		{"MPN", func() error { return patchStr(raw, "MPN", &dst.MPN) }},
+		{"Manufacturer", func() error { return patchStr(raw, "Manufacturer", &dst.Manufacturer) }},
+		{"Category", func() error { return patchStr(raw, "Category", &dst.Category) }},
+		{"Subcategory", func() error { return patchStr(raw, "Subcategory", &dst.Subcategory) }},
+		{"PartType", func() error { return patchStr(raw, "PartType", &dst.PartType) }},
+		{"Description", func() error { return patchStr(raw, "Description", &dst.Description) }},
+		{"Footprint", func() error { return patchStr(raw, "Footprint", &dst.Footprint) }},
+		{"UnitOfMeasure", func() error { return patchStr(raw, "UnitOfMeasure", &dst.UnitOfMeasure) }},
+		{"DatasheetRef", func() error { return patchStr(raw, "DatasheetRef", &dst.DatasheetRef) }},
+		{"DefaultLocationID", func() error { return patchStr(raw, "DefaultLocationID", &dst.DefaultLocationID) }},
+		{"PackageQty", func() error { return patchInt(raw, "PackageQty", &dst.PackageQty) }},
+		{"ReorderPoint", func() error { return patchInt(raw, "ReorderPoint", &dst.ReorderPoint) }},
+		{"DefaultLocationMandatory", func() error { return patchBool(raw, "DefaultLocationMandatory", &dst.DefaultLocationMandatory) }},
+		{"Tags", func() error { return patchTags(raw, "Tags", &dst.Tags) }},
+		{"Specs", func() error { return patchMap(raw, "Specs", &dst.Specs) }},
+		{"CustomFields", func() error { return patchMap(raw, "CustomFields", &dst.CustomFields) }},
 	}
-	if src.Category != "" {
-		dst.Category = src.Category
+	for _, f := range fs {
+		if err := f.fn(); err != nil {
+			return fmt.Errorf("patch field %q: %w", f.key, err)
+		}
 	}
-	if src.Subcategory != "" {
-		dst.Subcategory = src.Subcategory
+	return nil
+}
+
+// patchStr / patchInt / patchBool / patchTags / patchMap are the RFC 7396
+// per-type helpers: absent key → skip (preserve); JSON null → clear (zero
+// value); present value → unmarshal + overwrite.
+func patchStr(raw map[string]json.RawMessage, key string, dst *string) error {
+	v, ok := raw[key]
+	if !ok {
+		return nil
 	}
-	if src.PartType != "" {
-		dst.PartType = src.PartType
+	if string(v) == "null" {
+		*dst = ""
+		return nil
 	}
-	if src.Description != "" {
-		dst.Description = src.Description
+	return json.Unmarshal(v, dst)
+}
+
+func patchInt(raw map[string]json.RawMessage, key string, dst *int) error {
+	v, ok := raw[key]
+	if !ok {
+		return nil
 	}
-	if src.Footprint != "" {
-		dst.Footprint = src.Footprint
+	if string(v) == "null" {
+		*dst = 0
+		return nil
 	}
-	if src.UnitOfMeasure != "" {
-		dst.UnitOfMeasure = src.UnitOfMeasure
+	return json.Unmarshal(v, dst)
+}
+
+func patchBool(raw map[string]json.RawMessage, key string, dst *bool) error {
+	v, ok := raw[key]
+	if !ok {
+		return nil
 	}
-	if src.PackageQty != 0 {
-		dst.PackageQty = src.PackageQty
+	if string(v) == "null" {
+		*dst = false
+		return nil
 	}
-	if src.ReorderPoint != 0 {
-		dst.ReorderPoint = src.ReorderPoint
+	return json.Unmarshal(v, dst)
+}
+
+func patchTags(raw map[string]json.RawMessage, key string, dst *[]string) error {
+	v, ok := raw[key]
+	if !ok {
+		return nil
 	}
-	if len(src.Tags) > 0 {
-		dst.Tags = src.Tags
+	if string(v) == "null" {
+		*dst = nil
+		return nil
 	}
-	if src.Specs != nil {
-		dst.Specs = src.Specs
+	return json.Unmarshal(v, dst)
+}
+
+func patchMap(raw map[string]json.RawMessage, key string, dst *map[string]string) error {
+	v, ok := raw[key]
+	if !ok {
+		return nil
 	}
-	if src.CustomFields != nil {
-		dst.CustomFields = src.CustomFields
+	if string(v) == "null" {
+		*dst = nil
+		return nil
 	}
-	if src.DatasheetRef != "" {
-		dst.DatasheetRef = src.DatasheetRef
-	}
-	if src.DefaultLocationID != "" {
-		dst.DefaultLocationID = src.DefaultLocationID // Slice 3b — guard fires in Update (zero-skip: omit to leave unchanged; REST cannot CLEAR — see plan §1.4)
-	}
+	return json.Unmarshal(v, dst)
 }
 
 // handleDelete removes a part. 204 on success; 404 if the part is missing (the
