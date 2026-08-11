@@ -43,7 +43,8 @@ func main() {
 	root.AddCommand(newStopCmd(&dataDir))
 	root.AddCommand(newStatusCmd(&dataDir))
 	root.AddCommand(newLocationsCmd(&dataDir))
-	root.AddCommand(newViaCmd(&dataDir)) // Slice 4: generic Via resolver (§5.17)
+	root.AddCommand(newViaCmd(&dataDir))     // Slice 4: generic Via resolver (§5.17)
+	root.AddCommand(newReindexCmd(&dataDir)) // RedTeam: FTS reindex recovery
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -105,4 +106,26 @@ func newStatusCmd(dataDir *string) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", true, "emit JSON (reserved: future human format default)")
 	return cmd
+}
+
+// newReindexCmd builds `go-parts reindex` — rebuilds the BM25 search index from
+// the parts store. Fixes parts persisted but unsearchable (a SIGKILL/OOM between
+// writePartsKey + fts.Index — the two-write partial-failure gap the RedTeam
+// flagged). Parts already correctly indexed are no-ops (the FTS idempotency
+// guard). Holds the Pebble flock — stop the daemon first.
+func newReindexCmd(dataDir *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "reindex",
+		Short: "Rebuild the BM25 search index from the parts store",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ps, _, _, cleanup, err := openStores(*dataDir)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			n := ps.ReindexAll()
+			fmt.Printf("reindexed %d parts\n", n)
+			return nil
+		},
+	}
 }

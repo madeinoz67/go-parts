@@ -576,6 +576,23 @@ func (s *Store) AdjustStock(id string, delta int, reason string) error {
 	return s.writePartsKey(p)
 }
 
+// ReindexAll re-indexes every part into the FTS, fixing entries missed by a
+// partial failure (writePartsKey succeeded but fts.Index didn't — a SIGKILL/OOM
+// between the two Pebble writes). Parts already correctly indexed are no-ops
+// (the FTS idempotency guard: Index skips ids in the indexed-set). Returns the
+// count of parts scanned. Does NOT fix stale entries (a part whose content
+// changed but whose old FTS entry wasn't deleted) — that needs a full FTS
+// keyspace reset, a future enhancement. (RedTeam: no reindex path existed.)
+func (s *Store) ReindexAll() int {
+	var ws [8]byte
+	n := 0
+	for _, p := range s.List() {
+		s.fts.Index(ws, p.ID, p.indexText())
+		n++
+	}
+	return n
+}
+
 // write serializes p and writes it under the parts key, then indexes its field
 // map into the FTS. Called by Create and Update.
 func (s *Store) write(p *Part) error {

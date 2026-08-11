@@ -339,3 +339,34 @@ func TestRelease_MakesCodeReservableAgain(t *testing.T) {
 		t.Fatalf("lookup = (%q,%q), want (part,part-2)", tt, id)
 	}
 }
+
+// TestReindexAll pins the reindex recovery path (RedTeam: no reindex existed).
+// Simulates the two-write partial-failure gap (writePartsKey succeeded, fts.Index
+// didn't): drop the FTS entry, verify the part is unsearchable, ReindexAll,
+// verify it's searchable again.
+func TestReindexAll(t *testing.T) {
+	s := newStore(t)
+	p := &Part{MPN: "REIDX", Description: "reindex-test", PartType: "local"}
+	if err := s.Create(p); err != nil {
+		t.Fatal(err)
+	}
+	var ws [8]byte
+	// Precondition: searchable.
+	if hits := s.fts.Search(ws, "REIDX", 10); len(hits) != 1 {
+		t.Fatalf("pre-drop: %d hits, want 1", len(hits))
+	}
+	// Simulate the partial failure: drop the FTS entry (the part is still
+	// persisted in the parts keyspace, just not indexed).
+	s.fts.Delete(ws, p.ID, p.indexContent())
+	if hits := s.fts.Search(ws, "REIDX", 10); len(hits) != 0 {
+		t.Fatalf("post-drop: %d hits, want 0 (FTS entry removed)", len(hits))
+	}
+	// Reindex fixes the missing entry.
+	n := s.ReindexAll()
+	if n != 1 {
+		t.Errorf("ReindexAll = %d parts, want 1", n)
+	}
+	if hits := s.fts.Search(ws, "REIDX", 10); len(hits) != 1 {
+		t.Errorf("post-reindex: %d hits, want 1 (re-indexed)", len(hits))
+	}
+}
