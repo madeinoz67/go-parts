@@ -712,7 +712,7 @@ func TestLocationGet(t *testing.T) {
 	if err := ls.Create(loc); err != nil {
 		t.Fatal(err)
 	}
-	rr := get(srv, "/locations/" + loc.ID)
+	rr := get(srv, "/locations/"+loc.ID)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("get = %d", rr.Code)
 	}
