@@ -38,19 +38,20 @@
         <button class="btn btn-primary" type="submit">add</button>
       </form>
 
-      {{if .Locations}}
-      <ul style="list-style:none;padding:0;margin:0">
-        {{range .Locations}}<li style="padding:6px 8px;border-bottom:1px solid rgba(127,127,127,.18)">
-          <a hx-get="/ui/locations/{{.ID}}" hx-target="#loc-detail" style="cursor:pointer;display:flex;gap:10px;align-items:baseline">
-            <span>{{.Label}}</span>
-            <span class="phos">{{.ViaCode}}</span>
-            <span class="muted">{{index $.Counts .ID}} part(s)</span>
-          </a>
-        </li>{{end}}
-      </ul>
-      {{else}}
-      <p class="hint">no locations yet — add one above.</p>
-      {{end}}
+      <table class="parts">
+        <thead>
+          <tr>
+            <th role="columnheader"><a hx-get="/ui/locations/search?sort=label&dir=asc" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML">Label <span class="sort-ind">↕</span></a></th>
+            <th role="columnheader"><a hx-get="/ui/locations/search?sort=via&dir=asc" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML">Via <span class="sort-ind">↕</span></a></th>
+            <th>Parent</th>
+            <th role="columnheader"><a hx-get="/ui/locations/search?sort=contents&dir=desc" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML">Contents <span class="sort-ind">↕</span></a></th>
+            <th>Single</th>
+          </tr>
+        </thead>
+        <tbody id="loc-tbody">
+          <tr hx-get="/ui/locations/search" hx-trigger="load" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML"></tr>
+        </tbody>
+      </table>
     </main>
 
     <section class="detail" id="loc-detail">

@@ -774,6 +774,58 @@ func (s *Server) locationCounts() map[string]int {
 	return counts
 }
 
+// locationParentLabels builds a map[locID]→parent-label for the Parent column
+// (or "" for top-level). Used by the locations table.
+func (s *Server) locationParentLabels(locs []*locations.Location) map[string]string {
+	idToLabel := make(map[string]string, len(locs))
+	for _, l := range locs {
+		idToLabel[l.ID] = l.Label
+	}
+	out := make(map[string]string, len(locs))
+	for _, l := range locs {
+		if l.ParentID == "" {
+			out[l.ID] = ""
+		} else if label, ok := idToLabel[l.ParentID]; ok {
+			out[l.ID] = label
+		} else {
+			out[l.ID] = "(missing)"
+		}
+	}
+	return out
+}
+
+// applyLocationSort re-orders locs in place by the requested key/direction.
+func applyLocationSort(locs []*locations.Location, counts map[string]int, key, dir string) {
+	switch key {
+	case "label":
+		sort.Slice(locs, func(i, j int) bool { return less(locs[i].Label, locs[j].Label, dir) })
+	case "via":
+		sort.Slice(locs, func(i, j int) bool { return less(locs[i].ViaCode, locs[j].ViaCode, dir) })
+	case "contents":
+		sort.Slice(locs, func(i, j int) bool { return lessInt(counts[locs[i].ID], counts[locs[j].ID], dir) })
+	}
+}
+
+// handleLocationsSearch renders the locations-rows.html fragment (a sortable
+// <tbody> for the Storage table), mirroring the Parts shell's handleSearch +
+// rows.html pattern. Reads sort/dir query params.
+func (s *Server) handleLocationsSearch(w http.ResponseWriter, r *http.Request) {
+	sortKey := r.URL.Query().Get("sort") // "label" | "via" | "contents" | ""
+	sortDir := r.URL.Query().Get("dir")  // "asc" | "desc"
+	locs := s.locationOptions()
+	counts := s.locationCounts()
+	parentLabels := s.locationParentLabels(locs)
+	applyLocationSort(locs, counts, sortKey, sortDir)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "locations-rows.html", map[string]any{
+		"Locations":    locs,
+		"Counts":       counts,
+		"ParentLabels": parentLabels,
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 // handleLocationsPage renders the Storage tab: the location list (label · via ·
 // contents-count) + an empty detail panel + the create-single form. List rows
 // hx-get the detail fragment into #loc-detail on click (htmx).
