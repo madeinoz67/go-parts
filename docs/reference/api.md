@@ -24,6 +24,11 @@ later rather than a rewrite. There is no auth in v1.
 | `GET` | `/via/{code}` | `200` / `404` | generic Via resolver (§5.17, Slice 4): location → `{Type,Location,Contents}`; part → `{Type,Part}` |
 | `POST` | `/parts/{id}/label` | `200` (`image/svg+xml`) / `404` | render the part's scannable label SVG; `{id}` accepts a part id **or** a `P-` via-code |
 | `POST` | `/locations/{id}/label` | `200` (`image/svg+xml`) / `404` | render the location's label SVG; `{id}` accepts a location id **or** an `L-` via-code |
+| `GET` | `/locations` | `200` | list every location (JSON array) |
+| `GET` | `/locations/{id}` | `200` (+`ETag`) / `404` | one location by ID |
+| `POST` | `/locations` | `201` (+`ETag`) / `400` | create; caller MUST NOT set `ID`/`Version`/`CreatedBy` |
+| `PATCH` | `/locations/{id}` | `200` (+`ETag`) / `400` / `409` | RFC 7396 edit (`Label`/`ParentID`/`Notes`/`SinglePartOnly`); `If-Match` required. `409` on cycle or version conflict |
+| `DELETE` | `/locations/{id}` | `204` / `404` / `409` | remove; `409` if has children (`ErrHasChildren`) or assigned parts (`ErrHasParts`) |
 
 All bodies are `application/json`.
 

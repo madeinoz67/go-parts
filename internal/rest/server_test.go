@@ -689,3 +689,94 @@ func TestPatch_RFC7396ClearsNull(t *testing.T) {
 		t.Errorf("DefaultLocationID = %q, want \"\" (cleared)", got.DefaultLocationID)
 	}
 }
+
+// --- RedTeam: REST locations CRUD -----------------------------------------
+
+func TestLocationList(t *testing.T) {
+	srv, ls := newTestServerWithLocations(t)
+	if err := ls.Create(&locations.Location{Label: "A"}); err != nil {
+		t.Fatal(err)
+	}
+	rr := get(srv, "/locations")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), `"Label":"A"`) {
+		t.Errorf("list missing A; body: %s", rr.Body)
+	}
+}
+
+func TestLocationGet(t *testing.T) {
+	srv, ls := newTestServerWithLocations(t)
+	loc := &locations.Location{Label: "G"}
+	if err := ls.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	rr := get(srv, "/locations/" + loc.ID)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), loc.ID) {
+		t.Errorf("get missing id; body: %s", rr.Body)
+	}
+	if get(srv, "/locations/no-such").Code != http.StatusNotFound {
+		t.Error("get unknown = want 404")
+	}
+}
+
+func TestLocationCreateREST(t *testing.T) {
+	srv := newTestServer(t)
+	rr := post(srv, "/locations", `{"Label":"REST-bin","Notes":"test"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", rr.Code, rr.Body.String())
+	}
+	var l locations.Location
+	if err := json.Unmarshal(rr.Body.Bytes(), &l); err != nil {
+		t.Fatal(err)
+	}
+	if l.Label != "REST-bin" {
+		t.Errorf("Label = %q", l.Label)
+	}
+	if l.CreatedBy != "local" {
+		t.Errorf("CreatedBy = %q, want local (server-assigned)", l.CreatedBy)
+	}
+	if l.ViaCode == "" {
+		t.Error("no ViaCode assigned")
+	}
+}
+
+func TestLocationPatch(t *testing.T) {
+	srv, ls := newTestServerWithLocations(t)
+	loc := &locations.Location{Label: "P"}
+	if err := ls.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	etag := strconv.Quote(strconv.Itoa(loc.Version))
+	rr := patch(srv, "/locations/"+loc.ID, `{"Notes":"patched"}`, etag)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("patch = %d: %s", rr.Code, rr.Body.String())
+	}
+	got, _ := ls.Get(loc.ID)
+	if got.Notes != "patched" {
+		t.Errorf("Notes = %q, want patched", got.Notes)
+	}
+}
+
+func TestLocationDeleteREST(t *testing.T) {
+	srv, ls := newTestServerWithLocations(t)
+	loc := &locations.Location{Label: "D"}
+	if err := ls.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	// Assign a part → delete refuses (has-parts → 409).
+	p := restCreate(t, srv, `{"MPN":"DP","PartType":"local","DefaultLocationID":"`+loc.ID+`"}`)
+	if rr := deleteReq(srv, "/locations/"+loc.ID); rr.Code != http.StatusConflict {
+		t.Errorf("delete with parts = %d, want 409", rr.Code)
+	}
+	// Clear the part's location (RFC 7396 null) → delete succeeds.
+	patch(srv, "/parts/"+p.ID, `{"DefaultLocationID":null}`, strconv.Quote(strconv.Itoa(p.Version)))
+	rr2 := deleteReq(srv, "/locations/"+loc.ID)
+	if rr2.Code != http.StatusNoContent {
+		t.Fatalf("delete after clear = %d, want 204; body: %s", rr2.Code, rr2.Body.String())
+	}
+}

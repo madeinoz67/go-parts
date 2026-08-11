@@ -108,6 +108,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /via/{code}", s.auth(s.handleVia))
 	s.mux.HandleFunc("POST /parts/{id}/label", s.auth(s.handlePartLabel))
 	s.mux.HandleFunc("POST /locations/{id}/label", s.auth(s.handleLocationLabel))
+	// RedTeam — REST locations CRUD (the §5.2 peer-surface promise).
+	s.mux.HandleFunc("GET /locations", s.auth(s.handleLocationList))
+	s.mux.HandleFunc("GET /locations/{id}", s.auth(s.handleLocationGet))
+	s.mux.HandleFunc("POST /locations", s.auth(s.handleLocationCreateREST))
+	s.mux.HandleFunc("PATCH /locations/{id}", s.auth(s.handleLocationPatch))
+	s.mux.HandleFunc("DELETE /locations/{id}", s.auth(s.handleLocationDeleteREST))
 }
 
 // auth is the §5.8 single interceptor point. v1 is a no-op: every request
@@ -582,4 +588,138 @@ func (s *Server) writeLabel(w http.ResponseWriter, code, title string, r *http.R
 	}
 	w.Header().Set("Content-Type", "image/svg+xml")
 	_, _ = w.Write(svg)
+}
+
+// --- RedTeam: REST locations CRUD (the §5.2 peer-surface promise) ----------
+
+// handleLocationList is GET /locations — every location in JSON array order.
+func (s *Server) handleLocationList(w http.ResponseWriter, r *http.Request) {
+	out := s.locations.List()
+	if out == nil {
+		out = []*locations.Location{} // emit [] not null (jq-friendly)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// handleLocationGet is GET /locations/{id} — one location by id. 404 on miss.
+func (s *Server) handleLocationGet(w http.ResponseWriter, r *http.Request) {
+	l, err := s.locations.Get(r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, locations.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeLocation(w, http.StatusOK, l)
+}
+
+// handleLocationCreateREST is POST /locations — create a single location.
+// Server-assigned: ID, Version, CreatedBy ("local"), timestamps are zeroed
+// from the body (same defensive posture as parts handleCreate).
+func (s *Server) handleLocationCreateREST(w http.ResponseWriter, r *http.Request) {
+	var l locations.Location
+	if err := json.NewDecoder(r.Body).Decode(&l); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	l.ID = ""
+	l.CreatedBy = ""
+	l.Version = 0
+	l.CreatedAt = time.Time{}
+	l.UpdatedAt = time.Time{}
+	if err := s.locations.Create(&l); err != nil {
+		http.Error(w, "create: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeLocation(w, http.StatusCreated, &l)
+}
+
+// handleLocationPatch is PATCH /locations/{id} — RFC 7396 JSON Merge Patch
+// (Label, ParentID, Notes, SinglePartOnly; ViaCode immutable). If-Match
+// required. Cycle → 409, version-conflict → 409, parent-miss → 400.
+func (s *Server) handleLocationPatch(w http.ResponseWriter, r *http.Request) {
+	etag := r.Header.Get("If-Match")
+	if etag == "" {
+		http.Error(w, "If-Match required", http.StatusPreconditionRequired)
+		return
+	}
+	expected, err := parseETagVersion(etag)
+	if err != nil {
+		http.Error(w, "invalid If-Match: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	id := r.PathValue("id")
+	loaded, err := s.locations.Get(id)
+	if err != nil {
+		if errors.Is(err, locations.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	for _, f := range []func() error{
+		func() error { return patchStr(raw, "Label", &loaded.Label) },
+		func() error { return patchStr(raw, "ParentID", &loaded.ParentID) },
+		func() error { return patchStr(raw, "Notes", &loaded.Notes) },
+		func() error { return patchBool(raw, "SinglePartOnly", &loaded.SinglePartOnly) },
+	} {
+		if err := f(); err != nil {
+			http.Error(w, "invalid field: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if err := s.locations.Update(loaded, expected); err != nil {
+		if errors.Is(err, locations.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		if errors.Is(err, locations.ErrVersionConflict) || errors.Is(err, locations.ErrCycle) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest) // parent-miss etc.
+		return
+	}
+	writeLocation(w, http.StatusOK, loaded)
+}
+
+// handleLocationDeleteREST is DELETE /locations/{id}. Two composed refusals:
+// has-parts (parts.CountByLocation > 0 → 409; the store can't see parts, §5.1)
+// and has-children (locations.Delete → ErrHasChildren → 409). 204 on success.
+func (s *Server) handleLocationDeleteREST(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if n := s.store.CountByLocation(id); n > 0 {
+		http.Error(w, fmt.Sprintf("location has %d part(s) assigned — reassign first", n), http.StatusConflict)
+		return
+	}
+	if err := s.locations.Delete(id); err != nil {
+		if errors.Is(err, locations.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		if errors.Is(err, locations.ErrHasChildren) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeLocation sets ETag + Content-Type + writes the location JSON.
+func writeLocation(w http.ResponseWriter, status int, l *locations.Location) {
+	w.Header().Set("ETag", fmt.Sprintf(`"%d"`, l.Version))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(l)
 }
