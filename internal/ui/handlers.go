@@ -646,9 +646,22 @@ func applyLocationSort(locs []*locations.Location, counts map[string]int, key, d
 // <tbody> for the Storage table), mirroring the Parts shell's handleSearch +
 // rows.html pattern. Reads sort/dir query params.
 func (s *Server) handleLocationsSearch(w http.ResponseWriter, r *http.Request) {
-	sortKey := r.URL.Query().Get("sort") // "label" | "via" | "contents" | ""
-	sortDir := r.URL.Query().Get("dir")  // "asc" | "desc"
+	q := strings.ToLower(r.URL.Query().Get("q")) // live-search filter (label/via/tag)
+	sortKey := r.URL.Query().Get("sort")         // "label" | "via" | "contents" | ""
+	sortDir := r.URL.Query().Get("dir")          // "asc" | "desc"
 	locs := s.locationOptions()
+	// Filter by query: substring match on Label, ViaCode, or any Tag.
+	if q != "" {
+		filtered := locs[:0]
+		for _, l := range locs {
+			if strings.Contains(strings.ToLower(l.Label), q) ||
+				strings.Contains(strings.ToLower(l.ViaCode), q) ||
+				slices.Contains(l.Tags, q) {
+				filtered = append(filtered, l)
+			}
+		}
+		locs = filtered
+	}
 	counts := s.locationCounts()
 	applyLocationSort(locs, counts, sortKey, sortDir)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

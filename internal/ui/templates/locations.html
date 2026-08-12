@@ -12,6 +12,13 @@
 <div class="shell">
   <header class="header">
     <span class="wordmark">&gt; go<span class="dash">-</span>parts<span class="cursor"></span></span>
+    <div class="search">
+      <span class="search-icon">&gt;</span>
+      <input id="loc-search" class="search-input" type="text" name="q" placeholder="search label, via, tag…"
+             hx-get="/ui/locations/search" hx-trigger="keyup changed delay:0ms"
+             hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML"
+             hx-include="this" autocomplete="off">
+    </div>
   </header>
 
   <nav class="topnav">
