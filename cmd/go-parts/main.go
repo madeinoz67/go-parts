@@ -45,6 +45,7 @@ func main() {
 	root.AddCommand(newLocationsCmd(&dataDir))
 	root.AddCommand(newViaCmd(&dataDir))     // Slice 4: generic Via resolver (§5.17)
 	root.AddCommand(newReindexCmd(&dataDir)) // RedTeam: FTS reindex recovery
+	root.AddCommand(newFixQtyCmd(&dataDir))  // Flat-locations: QtyOnHand re-derive
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -125,6 +126,41 @@ func newReindexCmd(dataDir *string) *cobra.Command {
 			defer cleanup()
 			n := ps.ReindexAll()
 			fmt.Printf("reindexed %d parts\n", n)
+			return nil
+		},
+	}
+}
+
+// newFixQtyCmd builds `go-parts fix-qty` — re-derives every part's QtyOnHand
+// from the component store (sum of Component.Quantity across all locations).
+// Parts with no components get QtyOnHand=0. This is the post-redesign fixup:
+// the old model stored QtyOnHand directly on the Part; the new model derives it
+// from components. Run once after migrating from the nested model. Holds the
+// Pebble flock — stop the daemon first.
+func newFixQtyCmd(dataDir *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "fix-qty",
+		Short: "Re-derive all parts' QtyOnHand from component quantities",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ps, _, cs, _, cleanup, err := openStores(*dataDir)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			fixed := 0
+			for _, p := range ps.List() {
+				total := 0
+				for _, c := range cs.FindByPart(p.ID) {
+					total += c.Quantity
+				}
+				if p.QtyOnHand != total {
+					if err := ps.SetQty(p.ID, total); err != nil {
+						return fmt.Errorf("fix %s: %w", p.ID, err)
+					}
+					fixed++
+				}
+			}
+			fmt.Printf("fixed %d parts (QtyOnHand re-derived from components)\n", fixed)
 			return nil
 		},
 	}
