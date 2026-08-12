@@ -81,6 +81,23 @@ func RegisterMigrations(r *Runner) {
 		Description: "Locations: Part gains additive DefaultLocationID/DefaultLocationMandatory (no-op; re-arms refuse-newer for older binaries)",
 		Up:          func(db *pebble.DB) error { return nil },
 	})
+	// v3 (Flat Locations redesign + components keyspace): the restructured
+	// Location/Part structs are additive JSON-compatible — old records decode
+	// cleanly with unknown fields dropped (locations loses ParentID /
+	// SinglePartOnly and gains Tags; parts loses DefaultLocationID /
+	// DefaultLocationMandatory). New components keyspace (0x13) is a fresh
+	// keyspace with no existing records to transform. Same refuse-newer
+	// rationale as v2: a pre-redesign binary (LatestVersion 2) opening this
+	// store would otherwise pass cur==latest==2 with no refusal and silently
+	// re-drop the additive fields on next writeback. This no-op bumps the
+	// marker to 3 so a pre-redesign binary hits cur=3 > maxRegistered=2 →
+	// refuse-newer → hard startup failure. The Up is a no-op because nothing
+	// needs transforming — only the version marker moves.
+	r.Register(Migration{
+		Version:     3,
+		Description: "Flat Locations redesign: Location loses ParentID/SinglePartOnly (gains Tags); Part loses DefaultLocationID/Mandatory; new components keyspace 0x13 (no-op; re-arms refuse-newer)",
+		Up:          func(db *pebble.DB) error { return nil },
+	})
 }
 
 // MaxRegisteredVersion returns the highest Version RegisterMigrations would

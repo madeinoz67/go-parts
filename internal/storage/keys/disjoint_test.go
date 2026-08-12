@@ -7,6 +7,7 @@ import "testing"
 func TestPrefixesDisjointFromTable(t *testing.T) {
 	prefixes := []byte{
 		partsPrefix, locationPrefix, metaPrefix, viaPrefix,
+		componentPrefix,
 		ftsPostingPrefix, ftsIndexedPrefix, ftsGlobalStatsPrefix,
 	}
 	seen := map[byte]bool{}

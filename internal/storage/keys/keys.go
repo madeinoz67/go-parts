@@ -8,6 +8,7 @@ const (
 	locationPrefix       byte = 0x11 // Location records (nested storage)
 	metaPrefix           byte = 0xF0
 	viaPrefix            byte = 0x12 // via-code index (code string → {type,id}); §5.17
+	componentPrefix      byte = 0x13 // Component records (Part-at-Location junction); §6.1
 	ftsPostingPrefix     byte = 0x05 // verbatim from go-rag
 	ftsIndexedPrefix     byte = 0x07 // verbatim from go-rag
 	ftsGlobalStatsPrefix byte = 0x06 // verbatim from go-rag
@@ -62,6 +63,41 @@ func LocationKey(ws [8]byte, id string) []byte { return locationKey(ws, id) }
 func LocationPrefixBound(ws [8]byte) (lower, upper []byte) {
 	lower = scopedBytes(locationPrefix, ws)
 	upper = scopedBytes(locationPrefix+1, ws)
+	return lower, upper
+}
+
+// componentKey builds the composite key for a Component (Part-at-Location
+// junction, §6.1): kind(1) | ws(8) | locID | partID. locID and partID are the
+// ULID strings (26 bytes each) issued by locations/parts respectively; the
+// pair (locID, partID) is the Component uniqueness boundary — one record per
+// part per location.
+//
+// Key ordering: with locID as the high-order payload, a prefix scan over
+// `kind|ws|locID` returns every Component at one location (the
+// "what's in this bin?" query); a per-part lookup across locations is a
+// scan-and-filter, not a single get (v1 YAGNI; an inverse index lands only if
+// the makerspace scale demands it). Callers needing the per-location bound
+// build it inline: LowerBound = append(scopedBytes(componentPrefix, ws), locID...).
+func componentKey(ws [8]byte, locID, partID string) []byte {
+	b := scopedBytes(componentPrefix, ws)
+	b = append(b, locID...)
+	b = append(b, partID...)
+	return b
+}
+
+// ComponentKey is the exported alias for componentKey, for internal/components.
+func ComponentKey(ws [8]byte, locID, partID string) []byte {
+	return componentKey(ws, locID, partID)
+}
+
+// ComponentPrefixBound returns the [lower, upper) range covering every
+// component record, for prefix scans (List/Count over the whole keyspace).
+// componentPrefix+1 (0x14) is currently free — the bound is [0x13, 0x14) and
+// never overlaps an in-use prefix. (Same < 0xFF caveat as PartsPrefixBound:
+// 0x13+1 = 0x14, no wrap.) For the per-location scan shape, see componentKey.
+func ComponentPrefixBound(ws [8]byte) (lower, upper []byte) {
+	lower = scopedBytes(componentPrefix, ws)
+	upper = scopedBytes(componentPrefix+1, ws)
 	return lower, upper
 }
 
