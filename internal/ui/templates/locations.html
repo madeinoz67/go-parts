@@ -29,11 +29,7 @@
 
       <form class="create" action="/ui/locations" method="post" style="margin-bottom:12px;flex-direction:row;flex-wrap:wrap;gap:6px">
         <input name="label" placeholder="label (e.g. Bin A3)" required style="flex:1;min-width:12em">
-        <select name="parent_id">
-          <option value="">(top-level)</option>
-          {{range .Locations}}<option value="{{.ID}}">{{.Label}}</option>{{end}}
-        </select>
-        <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" name="single_part_only" value="true"> single</label>
+        <input name="tags" placeholder="tags (comma-sep)" style="flex:1;min-width:10em">
         <input name="notes" placeholder="notes" style="flex:1;min-width:10em">
         <button class="btn btn-primary" type="submit">add</button>
       </form>
@@ -43,9 +39,7 @@
           <tr>
             <th role="columnheader"><a hx-get="/ui/locations/search?sort=label&dir=asc" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML">Label <span class="sort-ind">↕</span></a></th>
             <th role="columnheader"><a hx-get="/ui/locations/search?sort=via&dir=asc" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML">Via <span class="sort-ind">↕</span></a></th>
-            <th>Parent</th>
             <th role="columnheader"><a hx-get="/ui/locations/search?sort=contents&dir=desc" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML">Contents <span class="sort-ind">↕</span></a></th>
-            <th>Single</th>
           </tr>
         </thead>
         <tbody id="loc-tbody">

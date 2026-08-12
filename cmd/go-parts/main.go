@@ -118,7 +118,7 @@ func newReindexCmd(dataDir *string) *cobra.Command {
 		Use:   "reindex",
 		Short: "Rebuild the BM25 search index from the parts store",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ps, _, _, cleanup, err := openStores(*dataDir)
+			ps, _, _, _, cleanup, err := openStores(*dataDir)
 			if err != nil {
 				return err
 			}

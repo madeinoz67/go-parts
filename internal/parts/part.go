@@ -46,23 +46,11 @@ type Part struct {
 	CustomFields   map[string]string
 	DatasheetStore string // empty until §5.6 slice
 	DatasheetRef   string
-	// DefaultLocationID is the part's home location (§6.1 default_location_id).
-	// "" = unassigned. When non-empty it MUST reference a real Location; the
-	// single_part_only guard (Store.SetLocationPolicy) rejects assignment to a
-	// SinglePartOnly location that already holds a different part. Additive
-	// (Locations Slice 3a) — old JSON decodes to "" with no schema bump (§5.13).
-	DefaultLocationID string
-	// DefaultLocationMandatory marks stock for this part as addable only at its
-	// default location (§6.1 default_location_mandatory). v1 CARRIES the flag
-	// only — AdjustStock does NOT yet enforce it (enforcement is a pending
-	// stock-path change). The UI labels the checkbox accordingly so the control
-	// doesn't over-promise enforcement that isn't there.
-	DefaultLocationMandatory bool
-	CreatedBy                string
-	UpdatedBy                string
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
-	Version                  int
+	CreatedBy      string
+	UpdatedBy      string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	Version        int
 }
 
 // newID returns a ULID — the canonical part identifier used as the Pebble key

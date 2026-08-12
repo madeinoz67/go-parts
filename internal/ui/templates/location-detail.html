@@ -1,20 +1,20 @@
 {{define "location-detail.html"}}
 <div class="panel-icon">▣</div>
 <h2 class="panel-title">{{.L.Label}}</h2>
-<div class="part-sub">{{.L.ViaCode}}{{if .L.SinglePartOnly}} · single-part-only{{end}}{{if .L.Notes}} · {{.L.Notes}}{{end}}</div>
+<div class="part-sub">{{.L.ViaCode}}{{if .L.Tags}} · {{range $i, $t := .L.Tags}}{{if $i}}, {{end}}{{$t}}{{end}}{{end}}{{if .L.Notes}} · {{.L.Notes}}{{end}}</div>
 
 {{if .Error}}<div class="conflict"><p>{{.Error}}</p></div>{{end}}
 
 <div class="spec-rows">
   <div class="spec-row"><span>Via</span><span class="phos">{{.L.ViaCode}}</span></div>
-  <div class="spec-row"><span>Contents</span><span>{{len .Contents}} part(s)</span></div>
+  <div class="spec-row"><span>Contents</span><span>{{len .Contents}} component(s)</span></div>
 </div>
 
 {{if .Contents}}
 <div style="margin-top:8px">
   <div class="eyebrow" style="margin-bottom:4px">Contents (scan-to-find)</div>
   <ul class="loc-contents" style="list-style:none;padding:0;margin:0">
-    {{range .Contents}}<li style="padding:2px 0;border-bottom:1px solid var(--line,rgba(255,255,255,.06))">{{.MPN}}{{if .Description}} <span class="muted">— {{.Description}}</span>{{end}} <span class="phos">×{{.QtyOnHand}}</span></li>{{end}}
+    {{range .Contents}}<li style="padding:2px 0;border-bottom:1px solid var(--line,rgba(255,255,255,.06))">{{.PartID}} <span class="phos">×{{.Quantity}}</span></li>{{end}}
   </ul>
 </div>
 {{end}}
@@ -25,15 +25,8 @@
   <input type="hidden" name="version" value="{{.L.Version}}">
   <div class="spec-rows">
     <div class="spec-row"><span>Label</span><input type="text" name="label" value="{{.L.Label}}" style="flex:1"></div>
-    <div class="spec-row">
-      <span>Parent</span>
-      <select name="parent_id" style="flex:1">
-        <option value="">(top-level)</option>
-        {{range .Locations}}{{if ne .ID $.L.ID}}<option value="{{.ID}}"{{if eq .ID $.L.ParentID}} selected{{end}}>{{.Label}} · {{.ViaCode}}</option>{{end}}{{end}}
-      </select>
-    </div>
+    <div class="spec-row"><span>Tags</span><input type="text" name="tags" value="{{formatTags .L.Tags}}" placeholder="comma-sep" style="flex:1"></div>
     <div class="spec-row"><span>Notes</span><input type="text" name="notes" value="{{.L.Notes}}" style="flex:1"></div>
-    <div class="spec-row"><span>Single</span><label style="flex:1;display:flex;align-items:center;gap:6px"><input type="checkbox" name="single_part_only" value="true"{{if .L.SinglePartOnly}} checked{{end}}> one part type only</label></div>
   </div>
   <button class="btn btn-primary" type="submit" style="margin-top:10px;width:100%">save</button>
 </form>

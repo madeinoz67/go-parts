@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,18 +18,10 @@ import (
 // WITHOUT importing Pebble — the §5.1 boundary.
 var ErrNotFound = errors.New("locations: not found")
 
-// ErrHasChildren is returned by Delete when the location has child locations
-// (ParentID == id). The caller must reparent the children first. Never cascade.
-var ErrHasChildren = errors.New("locations: has children")
-
-// ErrCycle is returned by Update when a ParentID change would form a cycle
-// (the new parent is the location itself or one of its descendants).
-var ErrCycle = errors.New("locations: parent change would form a cycle")
-
 // ErrVersionConflict is returned by Update when the stored Version no longer
 // matches expectedVersion (§5.14 — reject, never silently overwrite). A
 // sentinel (not a plain fmt.Errorf) so the UI handler can distinguish it from
-// ErrCycle / a missing parent and surface a reload prompt (the operator's
+// a missing-parent path and surface a reload prompt (the operator's
 // stale-field edit must not be applied onto a record state they never saw).
 var ErrVersionConflict = errors.New("locations: version conflict")
 
@@ -36,40 +29,24 @@ var ErrVersionConflict = errors.New("locations: version conflict")
 // remove`; the daemon delete handler when Slice 5/6 wires the locations
 // transport) when a location still has parts assigned to it. locations.Store
 // cannot see the parts keyspace (§5.1 — the two stores are decoupled), so the
-// has-parts check is composed at the caller via parts.CountByLocation and this
-// sentinel is the cross-package signal. Never cascade — the operator reassigns
-// or clears the parts' DefaultLocationID first.
+// has-parts check is composed at the caller (via components.Store.List or the
+// parts keyspace) and this sentinel is the cross-package signal. Never cascade.
 var ErrHasParts = errors.New("locations: has parts")
-
-// (RedTeam: stripeShards + the per-id locks pool were removed — treeMu
-// serializes ALL structural writes, so the per-id lockFor never contends. The
-// 5a lock-ordering doc claimed "treeMu → lockFor → via.mu"; with lockFor gone,
-// the order simplifies to "treeMu → via.mu" — a two-lock total order.)
 
 // Store is the Location entity's CRUD authority (PRD §6.1, §5.14). No FTS —
 // locations are navigated/scanned, not full-text-searched. Optimistic
-// concurrency on Version backs Update; a per-id striped-lock pool serializes
-// each id's read-check-write RMW.
+// concurrency on Version backs Update; treeMu serializes each RMW so two
+// concurrent writers cannot both pass the version check.
 //
-// STRUCTURAL tree ops (Create-with-parent, Update reparent, Delete) are
-// serialized across ALL nodes by treeMu (Slice 5a) — a single tree-write lock,
-// taken OUTERMOST. The per-id striped locks alone can't serialize cross-node
-// reparents (X→A ‖ A→X each take different shards, both pass the cycle walk,
-// both commit → a real A↔X cycle) or the Delete/Create-child TOCTOU (an orphan
-// child under a deleted parent). treeMu makes the cycle-guard's ancestor walk
-// + the has-children check see a consistent, unchanging tree.
-//
-// Lock ordering: treeMu (outermost, structural ops only) → lockFor(id) (the
-// version RMW) → via.mu (Create/Delete's Reserve/Release). A clean total order;
-// no reverse edge. Get/List/Children/ByVia take NO lock (best-effort reads;
-// each is a single Pebble op or a scan snapshot, consistent pre- or post-write).
-// The 3a single_part_only policy calls locations.Get (lock-free) under parts'
-// locLock — it never takes treeMu, so the parts + locations lock domains are
-// disjoint (no cross-store cycle). locations MUST NOT import parts.
+// Flat-locations model (2026-08-11 principal-directed redesign): no ParentID,
+// no tree, no cycle-guard. Every location is a flat bin tagged with its
+// physical context ("garage", "workbench"). Components carry the per-location
+// stock; a location's "contents" are queried via components.Store.List(id),
+// not via a parts scan.
 type Store struct {
 	db     *pebble.DB
 	via    *via.Store
-	treeMu sync.Mutex // the sole write lock: serializes ALL structural ops (Create-with-parent, Update, Delete) — Slice 5a + RedTeam simplification (the per-id striped pool was dead weight)
+	treeMu sync.Mutex // serializes each Update's RMW so optimistic Version is race-clean
 }
 
 // NewStore returns a Location store over db whose via codes are reserved in the
@@ -84,24 +61,12 @@ func NewStore(db *pebble.DB, viaStore *via.Store) *Store {
 // audit timestamps + Version=1. Via-code uses the L- prefix (§5.17) with the
 // same collision-retry + write-failure compensation as parts.Store.Create
 // (reserve-then-write; Release on write failure so a caller-supplied code is
-// never permanently burned). If ParentID is set, the parent must exist.
+// never permanently burned). Tags are lowercased via normalizeTags before save.
 func (s *Store) Create(l *Location) error {
-	// Slice 5a: a nested create's parent-existence check + write serialize
-	// against a concurrent Delete of the parent (the Delete/Create TOCTOU that
-	// would orphan this child). Top-level creates (no parent) need no tree
-	// serialization — nothing to orphan, no cycle. treeMu is OUTERMOST.
-	if l.ParentID != "" {
-		s.treeMu.Lock()
-		defer s.treeMu.Unlock()
-	}
+	normalizeTags(l)
 	now := time.Now().UTC()
 	if l.ID == "" {
 		l.ID = newID()
-	}
-	if l.ParentID != "" {
-		if _, err := s.Get(l.ParentID); err != nil {
-			return fmt.Errorf("locations: parent %s: %w", l.ParentID, err)
-		}
 	}
 	if l.ViaCode == "" {
 		for i := 0; i < 8; i++ { // index used for last-iteration detection (i == 7)
@@ -126,7 +91,7 @@ func (s *Store) Create(l *Location) error {
 	l.CreatedAt, l.UpdatedAt = now, now
 	l.Version = 1
 	if err := s.write(l); err != nil {
-		_ = s.via.Release(l.ViaCode) // compensate the reservation; part not stored
+		_ = s.via.Release(l.ViaCode) // compensate the reservation; location not stored
 		return err
 	}
 	return nil
@@ -152,16 +117,10 @@ func (s *Store) Get(id string) (*Location, error) {
 
 // Update writes l under l.ID after verifying the stored Version equals
 // expectedVersion (§5.14). Via-code is immutable post-Create (preserved from
-// cur). ParentID changes run the cycle guard (Task 3 adds that; here Update
-// preserves via-code + bumps version only — cycle guard lands with Children).
+// cur). Flat-locations model: no ParentID, no cycle guard, no parent-exists
+// check. Tags are normalized via normalizeTags before write.
 func (s *Store) Update(l *Location, expectedVersion int) error {
-	// Slice 5a: treeMu OUTERMOST. It's taken for every Update (not just
-	// reparents) because whether this is a reparent can only be known after the
-	// in-lock read of cur — and a consistent lock order requires treeMu before
-	// lockFor (Delete takes treeMu→lockFor too). Over-serialization of
-	// non-structural edits is negligible (location edits are rare). treeMu
-	// makes the wouldCycle ancestor walk see an unchanging tree, closing the
-	// cross-node reparent cycle.
+	normalizeTags(l)
 	s.treeMu.Lock()
 	defer s.treeMu.Unlock()
 	cur, err := s.Get(l.ID)
@@ -171,23 +130,6 @@ func (s *Store) Update(l *Location, expectedVersion int) error {
 	if cur.Version != expectedVersion {
 		return fmt.Errorf("locations: version conflict for %s: stored %d != expected %d: %w", l.ID, cur.Version, expectedVersion, ErrVersionConflict)
 	}
-	if l.ParentID != cur.ParentID {
-		if s.wouldCycle(l, l.ParentID) {
-			return ErrCycle
-		}
-		// Slice 5a (adversary): a reparent must also verify the new parent
-		// EXISTS, mirroring Create's check. wouldCycle treats a missing parent
-		// as "terminate the walk, not a cycle, allow" — so without this check,
-		// reparenting onto a just-deleted id silently orphans (Delete(X) ‖
-		// Update(Y→X), or even serially: Delete(X) then Update(Y→X)). Clearing
-		// to "" stays allowed (top-level). Runs under treeMu → serialized with
-		// Delete, no TOCTOU. Returns a wrapped ErrNotFound so callers 404.
-		if l.ParentID != "" {
-			if _, err := s.Get(l.ParentID); err != nil {
-				return fmt.Errorf("locations: parent %s: %w", l.ParentID, err)
-			}
-		}
-	}
 	// Via-code is immutable (§5.17) — preserve the stored value.
 	l.ViaCode = cur.ViaCode
 	l.Version = cur.Version + 1
@@ -195,21 +137,16 @@ func (s *Store) Update(l *Location, expectedVersion int) error {
 	return s.write(l)
 }
 
-// Delete removes a location. Task 2: plain delete + via release. Task 3 adds
-// the has-children refusal before the record delete.
+// Delete removes a location. Flat-locations model: plain delete + via release —
+// no children (no tree), so no has-children check. The has-parts composition
+// (does this bin still hold stock via Components?) is the caller's
+// responsibility: locations.Store cannot see the components keyspace (§5.1).
 func (s *Store) Delete(id string) error {
-	// Slice 5a: treeMu OUTERMOST. The has-children check + the delete serialize
-	// against a concurrent Create-child (the Delete/Create TOCTOU that would
-	// orphan a child under a deleted parent) and against a concurrent child
-	// reparent. treeMu before lockFor — same order as Update (no inversion).
 	s.treeMu.Lock()
 	defer s.treeMu.Unlock()
 	cur, err := s.Get(id)
 	if err != nil {
 		return err
-	}
-	if len(s.Children(id)) > 0 {
-		return ErrHasChildren
 	}
 	var ws [8]byte
 	if err := s.db.Delete(keys.LocationKey(ws, id), pebble.Sync); err != nil {
@@ -259,20 +196,6 @@ func (s *Store) Count() int {
 	return n
 }
 
-// Children returns locations whose ParentID == id (a within-keyspace scan +
-// decode filter via List). Best-effort: skips undecodable records (inherited
-// from List). No reverse index — v1 scale doesn't justify one (YAGNI).
-func (s *Store) Children(id string) []*Location {
-	all := s.List()
-	var out []*Location
-	for _, l := range all {
-		if l.ParentID == id {
-			out = append(out, l)
-		}
-	}
-	return out
-}
-
 // ByVia resolves a Via code to its Location (via.Lookup → Get). A via-miss is
 // wrapped as ErrNotFound so callers test errors.Is(err, ErrNotFound) for both
 // "no such via code" and "via resolved but record gone".
@@ -288,50 +211,18 @@ func (s *Store) ByVia(code string) (*Location, error) {
 	return s.Get(id)
 }
 
-// wouldCycle reports whether setting l.ParentID = newParentID would form a
-// cycle: true if newParentID == l.ID, or newParentID is a descendant of l (the
-// new parent's ancestor chain reaches l.ID). The walk is bounded by the
-// acyclic-forest invariant the guard maintains; a missing ancestor terminates
-// the walk (not a cycle).
-//
-// Caller MUST hold treeMu (Update acquires it outermost). The per-id lockFor
-// was removed (RedTeam: dead weight — treeMu alone serializes all structural
-// writes). treeMu (Slice 5a) is what makes the walk sound under concurrency:
-// it serializes ALL structural tree ops, so no concurrent reparent
-// can change the ancestor chain mid-walk. (The slice-1 adversary flagged the
-// cross-node reparent cycle this closes — v1-unreachable then, now closed
-// before the daemon becomes a multi-writer in 5b.)
-func (s *Store) wouldCycle(l *Location, newParentID string) bool {
-	if newParentID == "" {
-		return false
+// normalizeTags lowercases all tags in place (mirrors parts.Store.normalizeTags
+// — tags are the organizational layer for flat bins, replacing ParentID).
+// Called by Create and Update so tag-based queries never split on case.
+func normalizeTags(l *Location) {
+	for i, tg := range l.Tags {
+		l.Tags[i] = strings.ToLower(tg)
 	}
-	if newParentID == l.ID {
-		return true
-	}
-	// Walk the new parent's ancestor chain; if it reaches l.ID, the new parent
-	// is a descendant of l → cycle.
-	cur := newParentID
-	for range 1000 { // hard cap defends a corrupted cyclic store
-		if cur == "" {
-			return false
-		}
-		if cur == l.ID {
-			return true
-		}
-		p, err := s.Get(cur)
-		if err != nil {
-			return false // missing parent terminates the walk; not a cycle
-		}
-		cur = p.ParentID
-	}
-	return true // chain too deep → treat as cycle (defensive; store invariant broken)
 }
 
 // BulkOpts carries the shared fields applied to every location created by a
 // bulk run. Label is NOT here — each row gets its own label from GenerateLabels.
 type BulkOpts struct {
-	ParentID       string
-	SinglePartOnly bool
 	Notes          string
 	CreationMethod string // "single" | "row" | "grid" | "3d_grid" — reference metadata
 }
@@ -355,8 +246,6 @@ func (s *Store) CreateBulk(labels []string, opts BulkOpts) ([]*Location, error) 
 	for _, label := range labels {
 		l := &Location{
 			Label:          label,
-			ParentID:       opts.ParentID,
-			SinglePartOnly: opts.SinglePartOnly,
 			Notes:          opts.Notes,
 			CreationMethod: opts.CreationMethod,
 		}

@@ -16,11 +16,10 @@ import (
 // convention as parts.Part.
 type Location struct {
 	ID             string
-	Label          string // "Bin A3", "Drawer 12"
-	ViaCode        string // "L-7B3D1E" — unique, indexed (§5.17)
-	ParentID       string // nested storage; "" = top-level
-	CreationMethod string // "single" | "row" | "grid" | "3d_grid" — reference metadata (§7.1)
-	SinglePartOnly bool   // bin dedicated to one part type
+	Label          string   // "Bin A3", "Drawer 12"
+	ViaCode        string   // "L-7B3D1E" — unique, indexed (§5.17)
+	Tags           []string // physical context: "garage", "workbench" — replaces ParentID (flat model)
+	CreationMethod string   // "single" | "row" | "grid" | "3d_grid" — reference metadata (creation-only)
 	Notes          string
 	CreatedBy      string // nullable, "local" in v1 (§5.8)
 	CreatedAt      time.Time

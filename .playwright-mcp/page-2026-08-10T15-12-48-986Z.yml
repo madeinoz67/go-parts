@@ -1,0 +1,44 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - text: "> go"
+      - generic [ref=e5]: "-"
+      - text: parts
+  - navigation [ref=e7]:
+    - link "Parts" [ref=e8] [cursor=pointer]:
+      - /url: /ui/
+    - generic [ref=e9] [cursor=pointer]: Storage
+    - generic "later slice" [ref=e10]: Projects
+    - generic "later slice" [ref=e11]: Purchasing
+    - generic "later slice" [ref=e12]: Builds
+    - generic "later slice" [ref=e13]: Reports
+  - generic [ref=e14]:
+    - main [ref=e15]:
+      - generic [ref=e16]:
+        - textbox "label (e.g. Bin A3)" [ref=e17]
+        - combobox [ref=e18]:
+          - option "(top-level)" [selected]
+          - option "Drawer 12"
+          - option "Solo"
+        - generic [ref=e19]:
+          - checkbox "single" [ref=e20]
+          - text: single
+        - textbox "notes" [ref=e21]
+        - button "add" [ref=e22] [cursor=pointer]
+      - list [ref=e23]:
+        - listitem [ref=e24]:
+          - generic [ref=e25] [cursor=pointer]:
+            - generic [ref=e26]: Drawer 12
+            - generic [ref=e27]: L-LRQ56N
+            - generic [ref=e28]: 2 part(s)
+        - listitem [ref=e29]:
+          - generic [ref=e30] [cursor=pointer]:
+            - generic [ref=e31]: Solo
+            - generic [ref=e32]: L-KMJXI7
+            - generic [ref=e33]: 0 part(s)
+    - paragraph [ref=e35]: select a location
+  - contentinfo [ref=e36]:
+    - generic [ref=e37]: "-- STORAGE --"
+    - generic [ref=e38]: "|"
+    - generic [ref=e39]: 2 locations
+    - generic [ref=e40]: v2.1 · dev

@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -20,23 +19,9 @@ import (
 // (with %w) when the underlying Pebble lookup misses, so callers can
 // `errors.Is(err, parts.ErrNotFound)` WITHOUT importing the storage engine —
 // the §5.1 storage-encapsulation boundary (a Pebble swap must not leak through
-// REST/RPC/MCP/Web). Delete/AdjustStock/Update call Get, so they propagate
+// REST/RPC/MCP/Web). Delete/Update call Get, so they propagate
 // parts.ErrNotFound automatically — no per-method translation needed.
 var ErrNotFound = errors.New("parts: not found")
-
-// ErrLocationNotFound is returned via the injected LocationPolicy (Locations
-// Slice 3a) when a part is assigned to a DefaultLocationID that does not
-// reference a real Location. Prevents silent dangling references — a typo'd id
-// reaching the store via raw REST JSON. The UI picker (a <select> of real
-// locations) cannot produce a bad id, but the store guards the boundary anyway.
-var ErrLocationNotFound = errors.New("parts: location not found")
-
-// ErrLocationSinglePartConflict is returned via the injected LocationPolicy
-// when a part is assigned to a SinglePartOnly location that already holds a
-// different part (§6.1 single_part_only guard). The guard lives on the
-// Part-write path (Create/Update) so every surface — CLI/REST/UI — inherits it
-// without duplicating the cross-store check.
-var ErrLocationSinglePartConflict = errors.New("parts: location is single-part-only and holds another part")
 
 // stripeShards is the size of the per-id striped-lock pool. 64 is coarse enough
 // to spread contention across a typical single-vault parts corpus and fine
@@ -51,12 +36,11 @@ const stripeShards = 64
 // keyspace is written serially per-call through Pebble; optimistic concurrency
 // on Version backs Update (§5.14 — reject stale expectedVersion, never silently
 // overwrite), and a per-id striped-lock pool serializes the read-check-write
-// RMW of Update AND the commutative stock delta of AdjustStock so two
-// concurrent writers on one part cannot both pass the version check (silent
-// overwrite) and two concurrent AdjustStock calls always net their sum.
+// RMW of Update so two concurrent writers on one part cannot both pass the
+// version check (silent overwrite).
 //
 // Lock ordering: lockFor(id) is the OUTERMOST lock for any part operation
-// that takes it (Update, AdjustStock, Delete). Under it the code calls
+// that takes it (Update, Delete, SetQty). Under it the code calls
 // Get/write/writePartsKey, and write calls fts.Index/fts.Delete which take
 // the FTS's internal mu. Delete also touches the via index (via.Release →
 // via.mu) within the lockFor critical section, after fts.Delete. So the
@@ -67,27 +51,11 @@ const stripeShards = 64
 // holds via.mu + fts.mu simultaneously: via.Reserve takes and releases via.mu
 // before Create's tail calls write, which then takes fts.mu. Neither the FTS
 // nor the via index ever calls back into parts, so there is no cycle.
-//
-// Slice 3a adds locLocks (a second striped pool, keyed by location id) and an
-// optional injected LocationPolicy for the single_part_only guard. The verified
-// lock topology (adversary-confirmed acyclic across all Create/Update/Delete
-// and locations.Update/Delete/Create paths): partLock and locLock are the only
-// structural locks — partLock is outermost when taken (Update, AdjustStock,
-// Delete); locLock nests under it on Update's assignment path and is outermost
-// on Create's. Under those, the policy calls locations.Get (LOCK-FREE — a bare
-// Pebble read, NOT locations.lockFor) and Store.ListByLocation (a lock-free
-// keyspace scan). fts.mu and via.mu are LEAF locks, taken one at a time and
-// never held simultaneously (Create: via.mu during Reserve, released, then
-// fts.mu during write; Delete: fts.mu then via.mu). locations never calls into
-// parts, so the one cross-package edge (parts.locLock → the policy's locations
-// Get) cannot reverse. No cycle, no self-deadlock (the scan takes no parts lock).
 type Store struct {
-	db       *pebble.DB
-	fts      *index.FTS
-	via      *via.Store
-	locks    [stripeShards]sync.Mutex
-	locLocks [stripeShards]sync.Mutex     // serializes single_part_only assignment to the same location (Slice 3a)
-	policy   atomic.Pointer[policyHolder] // the single_part_only guard; zero value (never Store'd) = no enforcement. atomic.Pointer so a concurrent SetLocationPolicy can't race Create/Update reads (adversary A4) — unconditionally -race-clean, not bootstrap-discipline-clean.
+	db    *pebble.DB
+	fts   *index.FTS
+	via   *via.Store
+	locks [stripeShards]sync.Mutex
 }
 
 // NewStore returns a Part store over db whose writes keep fts in sync and
@@ -98,7 +66,7 @@ func NewStore(db *pebble.DB, fts *index.FTS, viaStore *via.Store) *Store {
 }
 
 // lockFor returns the mutex governing operations on id. All Store ops that
-// touch a single part's record (Update, AdjustStock) MUST take this lock so
+// touch a single part's record (Update, SetQty) MUST take this lock so
 // their read-modify-write critical sections serialize per-id. Byte-sum hashing
 // is allocation-free and collision-tolerant (collisions over-serialize, never
 // under-serialize — see stripeShards).
@@ -108,52 +76,6 @@ func (s *Store) lockFor(id string) *sync.Mutex {
 		sum += int(id[i])
 	}
 	return &s.locks[sum%stripeShards]
-}
-
-// LocationPolicy is the cross-store hook that lets Store enforce the
-// single_part_only guard (§6.1) WITHOUT importing the locations package (§5.1
-// encapsulation: the two stores stay decoupled; the composition is injected).
-// The daemon and CLI inject the real implementation (internal/link.NewPolicy);
-// a nil policy (the zero value) means no enforcement — standalone parts.Store
-// use and tests that predate locations skip the check.
-//
-// The hook receives the location being assigned and the id of the part being
-// assigned to it. It returns nil if the assignment is allowed, or a wrapped
-// error otherwise: ErrLocationNotFound (no such location) or
-// ErrLocationSinglePartConflict (SinglePartOnly location already holds a
-// different part). The impl reads the Location's SinglePartOnly flag via
-// locations.Store and the current occupants via Store.ListByLocation.
-type LocationPolicy func(locationID, assigningPartID string) error
-
-// policyHolder wraps LocationPolicy so it can live in an atomic.Pointer
-// (atomic.Pointer[T] stores *T). The zero-value Pointer (never Store'd) loads
-// as nil → no enforcement, the standalone/test posture.
-type policyHolder struct{ fn LocationPolicy }
-
-// SetLocationPolicy installs the single_part_only guard. The store holds the
-// policy in an atomic.Pointer, so this is safe to call any time — including
-// concurrently with Create/Update (adversary A4): atomic.Pointer.Store/Load
-// establishes happens-before without a bootstrap-ordering requirement. The
-// daemon and CLI both call it once at bootstrap after locations.Store exists;
-// tests call it to exercise the guard. Pass the SAME *Store you are wiring
-// (link.NewPolicy captures a store and the guard should scan the one it protects).
-func (s *Store) SetLocationPolicy(fn LocationPolicy) {
-	s.policy.Store(&policyHolder{fn: fn})
-}
-
-// lockForLoc returns the mutex governing single_part_only assignment to locID
-// (Slice 3a). Distinct locations spread across the pool; the same location
-// always maps to the same lock — the invariant that serializes two concurrent
-// assigns of different parts into one SinglePartOnly location (closing the
-// per-location TOCTOU that the per-part `locks` pool cannot, since two
-// different parts hash to different part-shards). Same byte-sum scheme as
-// lockFor.
-func (s *Store) lockForLoc(id string) *sync.Mutex {
-	var sum int
-	for i := 0; i < len(id); i++ {
-		sum += int(id[i])
-	}
-	return &s.locLocks[sum%stripeShards]
 }
 
 // Create writes a new part record, assigns id/via_code if absent, sets the
@@ -166,22 +88,6 @@ func (s *Store) Create(p *Part) error {
 	now := time.Now().UTC()
 	if p.ID == "" {
 		p.ID = newID()
-	}
-	// single_part_only guard (Slice 3a, §6.1). When assigning to a non-empty
-	// default location under an injected policy, take the per-location lock and
-	// HOLD it across the via-reserve + write so a concurrent Create/Update
-	// assigning a different part to the same SinglePartOnly location cannot
-	// interleave: the loser re-checks under locLock and conflicts. Lock order
-	// for Create is locLock → via.mu → fts.mu (Create never takes the per-part
-	// lock — new ULID, no contender); no path takes these in reverse, so there
-	// is no cycle (see Store doc for the full order).
-	if h := s.policy.Load(); h != nil && p.DefaultLocationID != "" {
-		locMu := s.lockForLoc(p.DefaultLocationID)
-		locMu.Lock()
-		defer locMu.Unlock()
-		if err := h.fn(p.DefaultLocationID, p.ID); err != nil {
-			return err
-		}
 	}
 	if p.ViaCode == "" {
 		// Generate + reserve with collision-retry. Astronomically rare, but the
@@ -282,24 +188,6 @@ func (s *Store) Update(p *Part, expectedVersion int) error {
 	if cur.Version != expectedVersion {
 		return fmt.Errorf("parts: version conflict for %s: stored %d != expected %d", p.ID, cur.Version, expectedVersion)
 	}
-	// single_part_only guard (Slice 3a, §6.1). Fires only on a real assignment:
-	// new DefaultLocationID is non-empty AND differs from the stored value.
-	// partLock is already held; locLock(new location) is taken UNDER it (fixed
-	// order partLock → locLock) and held across fts.Delete + write so two
-	// concurrent assigns of distinct parts to the same SinglePartOnly location
-	// serialize — the loser re-checks under locLock and conflicts. The OLD
-	// location is intentionally not locked: removing a part can never violate
-	// single_part_only (a location with ≤1 occupant after removal is fine). defer
-	// is LIFO, so locLock releases before partLock — symmetric acquire/release.
-	reassign := p.DefaultLocationID != "" && p.DefaultLocationID != cur.DefaultLocationID
-	if h := s.policy.Load(); reassign && h != nil {
-		locMu := s.lockForLoc(p.DefaultLocationID)
-		locMu.Lock()
-		defer locMu.Unlock()
-		if err := h.fn(p.DefaultLocationID, p.ID); err != nil {
-			return err
-		}
-	}
 	// Delete the prior FTS entry before writing the new record so the Index
 	// call's idempotency guard doesn't no-op on the still-indexed id.
 	var ws [8]byte
@@ -399,67 +287,6 @@ func (s *Store) List() []*Part {
 	return out
 }
 
-// ListByLocation returns every part whose DefaultLocationID == locID, via a
-// prefix scan over the parts keyspace + a decode filter (Locations Slice 3a,
-// §6.1). Powers scan-to-find ("what's in this bin?") and the single_part_only
-// guard's "does this location already hold a different part" check. Best-effort
-// read-only: skips undecodable records (same posture as List). No reverse index
-// — v1 scale doesn't justify one (YAGNI; the spec §13 defers location→[part ids]).
-func (s *Store) ListByLocation(locID string) []*Part {
-	if locID == "" {
-		return nil // unassigned is not a queryable location
-	}
-	var ws [8]byte
-	lower, upper := keys.PartsPrefixBound(ws)
-	it, err := s.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
-	if err != nil {
-		return nil
-	}
-	defer it.Close()
-	var out []*Part
-	for it.First(); it.Valid(); it.Next() {
-		var p Part
-		if err := json.Unmarshal(it.Value(), &p); err != nil {
-			continue
-		}
-		if p.DefaultLocationID == locID {
-			out = append(out, &p)
-		}
-	}
-	return out
-}
-
-// CountByLocation returns the number of parts whose DefaultLocationID == locID.
-// Powers the delete-refuse-has-parts guard composed at the caller layer (the
-// CLI's `locations remove`; the daemon delete handler when Slice 5/6 wires the
-// locations transport). locID == "" returns 0 (unassigned is not queryable).
-func (s *Store) CountByLocation(locID string) int {
-	if locID == "" {
-		return 0
-	}
-	var ws [8]byte
-	lower, upper := keys.PartsPrefixBound(ws)
-	it, err := s.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
-	if err != nil {
-		return 0
-	}
-	defer it.Close()
-	n := 0
-	for it.First(); it.Valid(); it.Next() {
-		var p Part
-		if err := json.Unmarshal(it.Value(), &p); err != nil {
-			continue
-		}
-		if p.DefaultLocationID == locID {
-			n++
-		}
-	}
-	if err := it.Error(); err != nil {
-		return 0
-	}
-	return n
-}
-
 // DistinctFootprints returns the sorted set of distinct non-empty Footprint
 // values across all part records, via a prefix scan over the parts keyspace
 // (same PartsPrefixBound pattern as Count/List). Used by the web UI's create +
@@ -546,34 +373,6 @@ func normalizeTags(p *Part) {
 	for i, tg := range p.Tags {
 		p.Tags[i] = strings.ToLower(tg)
 	}
-}
-
-// AdjustStock applies a commutative stock delta (§5.14) to QtyOnHand under a
-// per-id striped lock. Two concurrent -10 calls always net -20 regardless of
-// interleaving; the read-modify-write on QtyOnHand is atomic per-id.
-//
-// Stock is authoritative: AdjustStock does NOT bump Version (§5.14) and does
-// NOT touch the FTS — QtyOnHand is not an indexed field, so the FTS content is
-// unchanged. (Stock changes write the parts keyspace only via writePartsKey.)
-//
-// The `reason` parameter is accepted for a future stock-movement audit log
-// (PRD §5.14 envisions a movement history); it is not persisted in v1.
-//
-// The lock is the OUTERMOST lock held; under it the code calls writePartsKey
-// (no further locks) — there is no fts.mu interaction here because the FTS is
-// untouched. AdjustStock-vs-Update on the same id serialize via lockFor; an
-// AdjustStock running concurrently on the same id as an Update cannot see a
-// half-written FTS or a stale Version.
-func (s *Store) AdjustStock(id string, delta int, reason string) error {
-	mu := s.lockFor(id)
-	mu.Lock()
-	defer mu.Unlock()
-	p, err := s.Get(id)
-	if err != nil {
-		return err
-	}
-	p.QtyOnHand += delta
-	return s.writePartsKey(p)
 }
 
 // SetQty writes JUST the QtyOnHand field (no Version bump, no FTS) — the cache

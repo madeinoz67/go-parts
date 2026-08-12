@@ -1,0 +1,80 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - text: "> go"
+      - generic [ref=e5]: "-"
+      - text: parts
+  - navigation [ref=e7]:
+    - link "Parts" [ref=e8] [cursor=pointer]:
+      - /url: /ui/
+    - generic [ref=e9] [cursor=pointer]: Storage
+    - generic "later slice" [ref=e10]: Projects
+    - generic "later slice" [ref=e11]: Purchasing
+    - generic "later slice" [ref=e12]: Builds
+    - generic "later slice" [ref=e13]: Reports
+  - generic [ref=e14]:
+    - main [ref=e15]:
+      - generic [ref=e16]:
+        - textbox "label (e.g. Bin A3)" [ref=e17]
+        - combobox [ref=e18]:
+          - option "(top-level)" [selected]
+          - option "Drawer 12"
+          - option "Solo"
+        - generic [ref=e19]:
+          - checkbox "single" [ref=e20]
+          - text: single
+        - textbox "notes" [ref=e21]
+        - button "add" [ref=e22] [cursor=pointer]
+      - list [ref=e23]:
+        - listitem [ref=e24]:
+          - generic [ref=e25] [cursor=pointer]:
+            - generic [ref=e26]: Drawer 12
+            - generic [ref=e27]: L-LRQ56N
+            - generic [ref=e28]: 2 part(s)
+        - listitem [ref=e29]:
+          - generic [ref=e30] [cursor=pointer]:
+            - generic [ref=e31]: Solo
+            - generic [ref=e32]: L-KMJXI7
+            - generic [ref=e33]: 0 part(s)
+    - generic [ref=e34]:
+      - generic [ref=e41]: ▣
+      - heading "Drawer 12" [level=2] [ref=e42]
+      - generic [ref=e43]: L-LRQ56N
+      - generic [ref=e44]:
+        - generic [ref=e45]:
+          - generic [ref=e46]: Via
+          - generic [ref=e47]: L-LRQ56N
+        - generic [ref=e48]:
+          - generic [ref=e49]: Contents
+          - generic [ref=e50]: 2 part(s)
+      - generic [ref=e51]:
+        - generic [ref=e52]: Contents (scan-to-find)
+        - list [ref=e53]:
+          - listitem [ref=e54]: R-10K-0805 ×0
+          - listitem [ref=e55]: RC0805-10K — 10k 0805 resistor ×25
+      - separator [ref=e56]
+      - generic [ref=e57]:
+        - generic [ref=e58]:
+          - generic [ref=e59]:
+            - generic [ref=e60]: Label
+            - textbox [ref=e61]: Drawer 12
+          - generic [ref=e62]:
+            - generic [ref=e63]: Parent
+            - combobox [ref=e64]:
+              - option "(top-level)" [selected]
+              - option "Solo · L-KMJXI7"
+          - generic [ref=e65]:
+            - generic [ref=e66]: Notes
+            - textbox [ref=e67]
+          - generic [ref=e68]:
+            - generic [ref=e69]: Single
+            - generic [ref=e70]:
+              - checkbox "one part type only" [ref=e71]
+              - text: one part type only
+        - button "save" [ref=e72] [cursor=pointer]
+      - button "print label" [ref=e74] [cursor=pointer]
+  - contentinfo [ref=e36]:
+    - generic [ref=e37]: "-- STORAGE --"
+    - generic [ref=e38]: "|"
+    - generic [ref=e39]: 2 locations
+    - generic [ref=e40]: v2.1 · dev

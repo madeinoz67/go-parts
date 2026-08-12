@@ -1,0 +1,60 @@
+- generic [ref=f1e2]:
+  - banner [ref=f1e3]:
+    - generic [ref=f1e4]:
+      - text: "> go"
+      - generic [ref=f1e5]: "-"
+      - text: parts
+    - generic [ref=f1e7]:
+      - generic [ref=f1e8]: ">"
+      - textbox "search mpn, description, footprint…" [ref=f1e9]
+      - generic [ref=f1e10]: /
+    - button "+ new" [ref=f1e11] [cursor=pointer]
+  - navigation [ref=f1e12]:
+    - generic [ref=f1e13] [cursor=pointer]: Parts
+    - link "Storage" [ref=f1e14] [cursor=pointer]:
+      - /url: /ui/locations
+    - generic "later slice" [ref=f1e15]: Projects
+    - generic "later slice" [ref=f1e16]: Purchasing
+    - generic "later slice" [ref=f1e17]: Builds
+    - generic "later slice" [ref=f1e18]: Reports
+  - generic [ref=f1e19]:
+    - complementary [ref=f1e20]:
+      - generic [ref=f1e21]: Tags
+    - main [ref=f1e22]:
+      - generic [ref=f1e24]:
+        - generic [ref=f1e25] [cursor=pointer]: all parts
+        - generic [ref=f1e26] [cursor=pointer]: low stock
+      - table [ref=f1e27]:
+        - rowgroup [ref=f1e28]:
+          - row [ref=f1e29]:
+            - columnheader [ref=f1e30]:
+              - checkbox "select all visible" [ref=f1e31] [cursor=pointer]
+            - columnheader "MPN ↕" [ref=f1e32] [cursor=pointer]
+            - columnheader "Description" [ref=f1e34]
+            - columnheader "Package ↕" [ref=f1e35] [cursor=pointer]
+            - columnheader "Qty ↕" [ref=f1e37] [cursor=pointer]
+            - columnheader "Status" [ref=f1e39]
+        - rowgroup [ref=f1e40]:
+          - row [ref=f1e41]:
+            - cell [ref=f1e42]:
+              - checkbox "select row" [ref=f1e43] [cursor=pointer]
+            - cell "R-10K-0805" [ref=f1e44]
+            - cell [ref=f1e45]
+            - cell [ref=f1e46]
+            - cell "0" [ref=f1e47]
+            - cell "LOW" [ref=f1e48]
+          - row [ref=f1e50]:
+            - cell [ref=f1e51]:
+              - checkbox "select row" [ref=f1e52] [cursor=pointer]
+            - cell "RC0805-10K" [ref=f1e53]
+            - cell "10k 0805 resistor" [ref=f1e54]
+            - cell [ref=f1e55]
+            - cell "25" [ref=f1e56]
+            - cell "OK" [ref=f1e57]
+    - paragraph [ref=f1e60]: select a part
+  - contentinfo [ref=f1e61]:
+    - generic [ref=f1e62]: "-- NORMAL --"
+    - generic [ref=f1e63]: "|"
+    - generic [ref=f1e64]: 2 parts indexed
+    - generic [ref=f1e65]: "|"
+    - generic [ref=f1e66]: v2.1 · dev

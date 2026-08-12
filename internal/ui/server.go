@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/madeinoz67/go-parts/internal/components"
 	"github.com/madeinoz67/go-parts/internal/index"
 	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
@@ -20,18 +21,20 @@ var embedded embed.FS
 // Server is the /ui/* http.Handler. It shares the same *parts.Store and
 // *index.FTS instances as the REST server (constructed once in the daemon).
 type Server struct {
-	store     *parts.Store
-	fts       *index.FTS
-	locations *locations.Store // Slice 3b: feeds the part-detail + create-form location picker (server-rendered, in-process)
-	mux       *http.ServeMux
-	tmpl      *template.Template
+	store      *parts.Store
+	fts        *index.FTS
+	locations  *locations.Store  // feeds the Storage tab + location pickers (server-rendered, in-process)
+	components *components.Store // flat-locations: a location's contents are its Components
+	mux        *http.ServeMux
+	tmpl       *template.Template
 }
 
-// NewServer wires a /ui/* Server over store + fts + locStore. The locations
-// store populates the location picker (in-process — the UI does not call REST).
-// locStore may be nil in tests that don't exercise the picker; the handlers
-// guard a nil locations list as empty.
-func NewServer(store *parts.Store, fts *index.FTS, locStore *locations.Store) *Server {
+// NewServer wires a /ui/* Server over store + fts + locStore + compStore. The
+// locations store populates the Storage tab + pickers; components feeds the
+// "what's in this bin?" view (in-process — the UI does not call REST). locStore
+// may be nil in tests that don't exercise the picker; the handlers guard a nil
+// locations list as empty.
+func NewServer(store *parts.Store, fts *index.FTS, locStore *locations.Store, compStore *components.Store) *Server {
 	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
 		// dict builds a map[string]any from key/value pairs so a child template
 		// invoked via {{template "x" (dict "P" .)}} receives named fields
@@ -48,7 +51,7 @@ func NewServer(store *parts.Store, fts *index.FTS, locStore *locations.Store) *S
 		"formatTags": formatTags,
 		"formatKV":   formatKV,
 	}).ParseFS(embedded, "templates/*.html"))
-	s := &Server{store: store, fts: fts, locations: locStore, tmpl: tmpl, mux: http.NewServeMux()}
+	s := &Server{store: store, fts: fts, locations: locStore, components: compStore, tmpl: tmpl, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -126,9 +129,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /ui/parts", s.auth(s.handleCreate))                 // create → new-row fragment
 	s.mux.HandleFunc("POST /ui/parts/bulk-delete", s.auth(s.handleBulkDelete)) // bulk delete → refreshed tbody + OOB tag-nav (§7.2, hx-include name=id)
 	s.mux.HandleFunc("POST /ui/parts/bulk-tag", s.auth(s.handleBulkTag))       // bulk tag → refreshed tbody + OOB tag-nav (§7.2)
-	s.mux.HandleFunc("POST /ui/parts/bulk-move", s.auth(s.handleBulkMove))     // bulk move-to-location → refreshed tbody (§7.2, Slice 3b)
 	s.mux.HandleFunc("POST /ui/parts/{id}", s.auth(s.handleEdit))              // inline edit → updated detail (409 on stale version)
-	s.mux.HandleFunc("POST /ui/parts/{id}/stock", s.auth(s.handleStock))       // inline stock-adjust → updated detail (404 on miss)
 	// Slice 5b — the Storage tab (locations management UI, in-process like the parts UI).
 	s.mux.HandleFunc("GET /ui/locations", s.auth(s.handleLocationsPage))          // the Storage page (list + detail + create form)
 	s.mux.HandleFunc("GET /ui/locations/search", s.auth(s.handleLocationsSearch)) // sortable table-body fragment (mirrors /ui/parts/search)

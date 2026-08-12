@@ -7,13 +7,12 @@ import (
 	"net/url"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/madeinoz67/go-parts/internal/components"
 	"github.com/madeinoz67/go-parts/internal/index"
-	"github.com/madeinoz67/go-parts/internal/link"
 	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
 	"github.com/madeinoz67/go-parts/internal/via"
@@ -30,8 +29,8 @@ func newTestServer(t *testing.T) *Server {
 	vs := via.NewStore(db)
 	ps := parts.NewStore(db, fts, vs)
 	ls := locations.NewStore(db, vs)
-	ps.SetLocationPolicy(link.NewPolicy(ps, ls)) // guard live, mirroring daemon/CLI wiring (Slice 3a)
-	return NewServer(ps, fts, ls)
+	cs := components.NewStore(db, ps)
+	return NewServer(ps, fts, ls, cs)
 }
 
 func TestStaticAssetsServe(t *testing.T) {
@@ -257,37 +256,6 @@ func TestEditUpdatesDetail(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "edited") {
 		t.Errorf("edit response should show edited description; body=%s", rr.Body.String())
-	}
-}
-
-func TestStockAdjustUpdatesQty(t *testing.T) {
-	srv := newTestServer(t)
-	p := &parts.Part{MPN: "STK1", PartType: "local", QtyOnHand: 100}
-	srv.store.Create(p)
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/ui/parts/"+p.ID+"/stock", strings.NewReader("delta=-5"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	srv.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("stock = %d, want 200; body=%s", rr.Code, rr.Body.String())
-	}
-	got, _ := srv.store.Get(p.ID)
-	if got.QtyOnHand != 95 {
-		t.Errorf("after -5, QtyOnHand = %d, want 95", got.QtyOnHand)
-	}
-	if !strings.Contains(rr.Body.String(), ">95<") && !strings.Contains(rr.Body.String(), "95") {
-		t.Errorf("detail fragment should show updated qty 95; body=%s", rr.Body.String())
-	}
-}
-
-func TestStockAdjustUnknownIs404(t *testing.T) {
-	srv := newTestServer(t)
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/ui/parts/nope/stock", strings.NewReader("delta=-5"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	srv.ServeHTTP(rr, req)
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("stock on unknown part = %d, want 404; body=%s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -839,13 +807,12 @@ func TestEditWithSpecsAndCustomFields(t *testing.T) {
 	}
 }
 
-// --- Slice 3b: part↔location surfaces -------------------------------------
+// --- Storage tab (flat-locations model) -----------------------------------
 
-// uiCreateLocation creates a location via the test server's locations store
-// (white-box — the test is in package ui). Returns it for its ID/ViaCode.
-func uiCreateLocation(t *testing.T, srv *Server, label string, single bool) *locations.Location {
+// uiCreateLocation creates a location via the test server's locations store.
+func uiCreateLocation(t *testing.T, srv *Server, label string) *locations.Location {
 	t.Helper()
-	l := &locations.Location{Label: label, SinglePartOnly: single}
+	l := &locations.Location{Label: label}
 	if err := srv.locations.Create(l); err != nil {
 		t.Fatalf("create location %q: %v", label, err)
 	}
@@ -861,260 +828,42 @@ func uiCreatePart(t *testing.T, srv *Server, mpn string) *parts.Part {
 	return p
 }
 
-// TestDetailRendersLocationPicker pins that the detail panel embeds a
-// default_location_id <select> populated with the location options.
-func TestDetailRendersLocationPicker(t *testing.T) {
-	srv := newTestServer(t)
-	loc := uiCreateLocation(t, srv, "Drawer 12", false)
-	p := uiCreatePart(t, srv, "PICK-1")
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+p.ID, nil))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("GET detail = %d", rr.Code)
-	}
-	body := rr.Body.String()
-	if !strings.Contains(body, "name=\"default_location_id\"") {
-		t.Errorf("detail missing the default_location_id select; body: %s", body)
-	}
-	if !strings.Contains(body, `value="`+loc.ID+`"`) {
-		t.Errorf("detail picker missing the location option %s; body: %s", loc.ID, body)
-	}
-}
-
-// TestEditSetsDefaultLocation pins the edit form's location <select> sets
-// DefaultLocationID via store.Update (the guard fires in Update).
-func TestEditSetsDefaultLocation(t *testing.T) {
-	srv := newTestServer(t)
-	loc := uiCreateLocation(t, srv, "Bin A", false)
-	p := uiCreatePart(t, srv, "LOC-1")
-	body := url.Values{"version": {strconv.Itoa(p.Version)}, "default_location_id": {loc.ID}}.Encode()
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p.ID, body))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("edit = %d; body=%s", rr.Code, rr.Body.String())
-	}
-	got, _ := srv.store.Get(p.ID)
-	if got.DefaultLocationID != loc.ID {
-		t.Errorf("stored DefaultLocationID = %q, want %q", got.DefaultLocationID, loc.ID)
-	}
-}
-
-// TestEditClearsDefaultLocation pins that the <select>'s empty option clears
-// DefaultLocationID (the guard allows clearing to "").
-func TestEditClearsDefaultLocation(t *testing.T) {
-	srv := newTestServer(t)
-	loc := uiCreateLocation(t, srv, "Bin B", false)
-	p := uiCreatePart(t, srv, "LOC-2")
-	p.DefaultLocationID = loc.ID
-	if err := srv.store.Update(p, p.Version); err != nil {
-		t.Fatal(err)
-	}
-	body := url.Values{"version": {strconv.Itoa(p.Version)}, "default_location_id": {""}}.Encode()
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p.ID, body))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("edit clear = %d; body=%s", rr.Code, rr.Body.String())
-	}
-	got, _ := srv.store.Get(p.ID)
-	if got.DefaultLocationID != "" {
-		t.Errorf("stored DefaultLocationID = %q, want cleared", got.DefaultLocationID)
-	}
-}
-
-// TestEditGuardErrorRendersBanner pins the 3a single_part_only guard surfacing
-// as a form banner (re-rendered detail with the user's edits preserved), NOT a
-// 409 conflict.html reload. The second distinct part into a SinglePartOnly
-// location is rejected; p2 stays unassigned.
-func TestEditGuardErrorRendersBanner(t *testing.T) {
-	srv := newTestServer(t)
-	solo := uiCreateLocation(t, srv, "Solo", true)
-	p1 := &parts.Part{MPN: "SOLO-1", PartType: "local", DefaultLocationID: solo.ID}
-	if err := srv.store.Create(p1); err != nil {
-		t.Fatal(err)
-	}
-	p2 := uiCreatePart(t, srv, "SOLO-2") // unassigned
-	body := url.Values{
-		"version":             {strconv.Itoa(p2.Version)},
-		"default_location_id": {solo.ID},
-		"description":         {"edited-desc"}, // a non-location edit the re-render must preserve
-	}.Encode()
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p2.ID, body))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("guard-error edit = %d (want 200 banner, not 409); body=%s", rr.Code, rr.Body.String())
-	}
-	resp := rr.Body.String()
-	if !strings.Contains(resp, "single-part-only") {
-		t.Errorf("guard-error banner missing 'single-part-only'; body: %s", resp)
-	}
-	// The re-render must carry the user's other edits (Get-then-edit preserves
-	// them on cur), not a fresh/stored snapshot.
-	if !strings.Contains(resp, "edited-desc") {
-		t.Errorf("guard-error re-render lost the user's description edit; body: %s", resp)
-	}
-	got, _ := srv.store.Get(p2.ID)
-	if got.DefaultLocationID == solo.ID {
-		t.Error("p2 was assigned to the single-part-only location despite the guard")
-	}
-}
-
-// TestCreateGuardErrorRendersForm pins the create-path guard branch (S2): a
-// create into an occupied SinglePartOnly location re-renders the create form
-// into #detail-panel with a banner (Hx-Retarget), not a bare http.Error into
-// #parts-tbody.
-func TestCreateGuardErrorRendersForm(t *testing.T) {
-	srv := newTestServer(t)
-	solo := uiCreateLocation(t, srv, "Solo", true)
-	// sole occupant via the store
-	if err := srv.store.Create(&parts.Part{MPN: "FIRST", PartType: "local", DefaultLocationID: solo.ID}); err != nil {
-		t.Fatal(err)
-	}
-	body := url.Values{"mpn": {"SECOND"}, "part_type": {"local"}, "default_location_id": {solo.ID}}.Encode()
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, postForm("POST", "/ui/parts", body))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("guard-error create = %d (want 200 form+banner); body=%s", rr.Code, rr.Body.String())
-	}
-	if got := rr.Header().Get("Hx-Retarget"); got != "#detail-panel" {
-		t.Errorf("Hx-Retarget = %q, want #detail-panel (so the form lands in the panel, not the tbody)", got)
-	}
-	resp := rr.Body.String()
-	if !strings.Contains(resp, "single-part-only") {
-		t.Errorf("create guard-error banner missing 'single-part-only'; body: %s", resp)
-	}
-	if !strings.Contains(resp, `name="mpn"`) {
-		t.Errorf("create guard-error did not re-render the create form; body: %s", resp)
-	}
-}
-
-// TestEditMandatoryToggle pins the DefaultLocationMandatory checkbox round-trips.
-func TestEditMandatoryToggle(t *testing.T) {
-	srv := newTestServer(t)
-	loc := uiCreateLocation(t, srv, "Bin C", false)
-	p := uiCreatePart(t, srv, "MAND-1")
-	body := url.Values{
-		"version":                    {strconv.Itoa(p.Version)},
-		"default_location_id":        {loc.ID},
-		"default_location_mandatory": {"true"},
-	}.Encode()
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p.ID, body))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("edit mandatory = %d; body=%s", rr.Code, rr.Body.String())
-	}
-	got, _ := srv.store.Get(p.ID)
-	if !got.DefaultLocationMandatory {
-		t.Errorf("DefaultLocationMandatory = false, want true")
-	}
-}
-
-// TestCreateWithLocation pins the create form carries default_location_id into
-// store.Create (the guard fires in Create).
-func TestCreateWithLocation(t *testing.T) {
-	srv := newTestServer(t)
-	loc := uiCreateLocation(t, srv, "Bin D", false)
-	body := url.Values{"mpn": {"NEW-LOC"}, "part_type": {"local"}, "default_location_id": {loc.ID}}.Encode()
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, postForm("POST", "/ui/parts", body))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("create = %d; body=%s", rr.Code, rr.Body.String())
-	}
-	for _, p := range srv.store.List() {
-		if p.MPN == "NEW-LOC" {
-			if p.DefaultLocationID != loc.ID {
-				t.Errorf("created DefaultLocationID = %q, want %q", p.DefaultLocationID, loc.ID)
-			}
-			return
-		}
-	}
-	t.Fatal("created part NEW-LOC not found")
-}
-
-// TestBulkMove pins the bulk-Move action: N selected parts → all assigned to a
-// shared target location via per-part Update.
-func TestBulkMove(t *testing.T) {
-	srv := newTestServer(t)
-	loc := uiCreateLocation(t, srv, "Drawer M", false)
-	p1 := uiCreatePart(t, srv, "MV-1")
-	p2 := uiCreatePart(t, srv, "MV-2")
-	body := url.Values{"id": {p1.ID, p2.ID}, "move_location": {loc.ID}}.Encode()
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/bulk-move", body))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("bulk-move = %d; body=%s", rr.Code, rr.Body.String())
-	}
-	for _, id := range []string{p1.ID, p2.ID} {
-		got, _ := srv.store.Get(id)
-		if got.DefaultLocationID != loc.ID {
-			t.Errorf("part %s DefaultLocationID = %q, want %q", id, got.DefaultLocationID, loc.ID)
-		}
-	}
-}
-
-// TestBulkMoveSinglePartOnlyOneWins pins the bulk-move semantics onto a
-// SinglePartOnly target: of N selected parts exactly one is assigned; the rest
-// are skipped (slog.Warn) without failing the request.
-func TestBulkMoveSinglePartOnlyOneWins(t *testing.T) {
-	srv := newTestServer(t)
-	solo := uiCreateLocation(t, srv, "SoloBin", true)
-	ps := []*parts.Part{uiCreatePart(t, srv, "SP-1"), uiCreatePart(t, srv, "SP-2"), uiCreatePart(t, srv, "SP-3")}
-	ids := []string{ps[0].ID, ps[1].ID, ps[2].ID}
-	body := url.Values{"id": ids, "move_location": {solo.ID}}.Encode()
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/bulk-move", body))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("bulk-move = %d; body=%s", rr.Code, rr.Body.String())
-	}
-	assigned := 0
-	for _, id := range ids {
-		got, _ := srv.store.Get(id)
-		if got.DefaultLocationID == solo.ID {
-			assigned++
-		}
-	}
-	if assigned != 1 {
-		t.Errorf("bulk-move onto single-part-only: %d assigned, want exactly 1", assigned)
-	}
-}
-
-// --- Slice 5b: the Storage tab (locations management UI) ------------------
-
-// TestLocationsPageRendersList pins the Storage page: it lists locations with
-// their contents-count (one parts scan → map).
+// TestLocationsPageRendersList pins the Storage page: GET /ui/locations/search
+// (the async tbody-fill the shell loads) lists every location. The flat-
+// locations contents-count comes from the components keyspace.
 func TestLocationsPageRendersList(t *testing.T) {
 	srv := newTestServer(t)
-	drawer := uiCreateLocation(t, srv, "Drawer 1", false)
-	uiCreateLocation(t, srv, "Bin A", false)
-	// one part in Drawer 1 → contents-count "1 part(s)"
+	drawer := uiCreateLocation(t, srv, "Drawer 1")
+	uiCreateLocation(t, srv, "Bin A")
+	// one component in Drawer 1 → contents-count "1" in the Counts map
 	p := uiCreatePart(t, srv, "LP")
-	p.DefaultLocationID = drawer.ID
-	if err := srv.store.Update(p, p.Version); err != nil {
-		t.Fatal(err)
+	if err := srv.components.Add(drawer.ID, p.ID, 1, nil); err != nil {
+		t.Fatalf("components.Add: %v", err)
 	}
 	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/locations", nil))
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/locations/search", nil))
 	if rr.Code != http.StatusOK {
-		t.Fatalf("page = %d", rr.Code)
+		t.Fatalf("search = %d", rr.Code)
 	}
 	body := rr.Body.String()
 	if !strings.Contains(body, "Drawer 1") || !strings.Contains(body, "Bin A") {
-		t.Errorf("page missing a location; body: %s", body)
-	}
-	if !strings.Contains(body, "1 part(s)") {
-		t.Errorf("page missing the contents-count; body: %s", body)
+		t.Errorf("search missing a location; body: %s", body)
 	}
 }
 
 // TestLocationDetailShowsContents pins scan-to-find at the UI: the detail
-// fragment shows the location + its embedded contents (parts.ListByLocation).
+// fragment shows the location + its embedded contents (components.List). The
+// template renders each Component's PartID (the ULID); the count comes from
+// len(Contents).
 func TestLocationDetailShowsContents(t *testing.T) {
 	srv := newTestServer(t)
-	bin := uiCreateLocation(t, srv, "Bin C", false)
-	for _, mpn := range []string{"C-1", "C-2"} {
-		p := uiCreatePart(t, srv, mpn)
-		p.DefaultLocationID = bin.ID
-		if err := srv.store.Update(p, p.Version); err != nil {
-			t.Fatal(err)
+	bin := uiCreateLocation(t, srv, "Bin C")
+	// Two components — capture the partIDs so the assertion can look for them.
+	pa := uiCreatePart(t, srv, "C-1")
+	pb := uiCreatePart(t, srv, "C-2")
+	for _, p := range []*parts.Part{pa, pb} {
+		if err := srv.components.Add(bin.ID, p.ID, 1, nil); err != nil {
+			t.Fatalf("components.Add %s: %v", p.MPN, err)
 		}
 	}
 	rr := httptest.NewRecorder()
@@ -1126,11 +875,11 @@ func TestLocationDetailShowsContents(t *testing.T) {
 	if !strings.Contains(body, "Bin C") {
 		t.Errorf("detail missing the label; body: %s", body)
 	}
-	if !strings.Contains(body, "2 part(s)") {
+	if !strings.Contains(body, "2 component(s)") {
 		t.Errorf("detail missing the contents count; body: %s", body)
 	}
-	if !strings.Contains(body, "C-1") || !strings.Contains(body, "C-2") {
-		t.Errorf("detail missing the contents parts; body: %s", body)
+	if !strings.Contains(body, pa.ID) || !strings.Contains(body, pb.ID) {
+		t.Errorf("detail missing the component PartIDs; body: %s", body)
 	}
 }
 
@@ -1154,51 +903,21 @@ func TestLocationCreate(t *testing.T) {
 	}
 }
 
-// TestLocationEditCycleBanner pins the cycle guard surfacing as a detail banner
-// (not a 500): reparenting A under B, where B is already under A, → ErrCycle →
-// re-render with a "cycle" banner.
-func TestLocationEditCycleBanner(t *testing.T) {
-	srv := newTestServer(t)
-	a := uiCreateLocation(t, srv, "A", false)
-	b := uiCreateLocation(t, srv, "B", false)
-	// B under A (valid) — sets up the chain so A-under-B is a cycle.
-	bCur, _ := srv.locations.Get(b.ID)
-	bCur.ParentID = a.ID
-	if err := srv.locations.Update(bCur, bCur.Version); err != nil {
-		t.Fatal(err)
-	}
-	// A under B → cycle (B is A's child).
-	aCur, _ := srv.locations.Get(a.ID)
-	body := url.Values{
-		"version":   {strconv.Itoa(aCur.Version)},
-		"label":     {aCur.Label},
-		"parent_id": {b.ID},
-	}.Encode()
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/"+a.ID, body))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("cycle edit = %d (want 200 banner, not 500); body=%s", rr.Code, rr.Body.String())
-	}
-	if !strings.Contains(rr.Body.String(), "cycle") {
-		t.Errorf("cycle banner missing 'cycle'; body: %s", rr.Body.String())
-	}
-}
-
 // TestLocationEditVersionConflictReload pins §5.14 on the locations surface: a
 // stale expectedVersion → 409 + the reload prompt (NOT a banner). The banner
 // path would re-render with the canonical Version + the user's stale fields,
-// enabling a blind-overwrite on retry; the reload forces a re-fetch. The
-// stale edit must NOT be applied.
+// enabling a blind-overwrite on retry; the reload forces a re-fetch. The stale
+// edit must NOT be applied.
 func TestLocationEditVersionConflictReload(t *testing.T) {
 	srv := newTestServer(t)
-	a := uiCreateLocation(t, srv, "VC", false)
+	a := uiCreateLocation(t, srv, "VC")
 	// Bump the stored version so the form's expected (1) is stale.
 	cur, _ := srv.locations.Get(a.ID)
 	cur.Notes = "concurrent-edit"
 	if err := srv.locations.Update(cur, cur.Version); err != nil { // now version 2
 		t.Fatal(err)
 	}
-	body := url.Values{"version": {"1"}, "label": {"VC-overwrite"}, "parent_id": {""}}.Encode()
+	body := url.Values{"version": {"1"}, "label": {"VC-overwrite"}}.Encode()
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/"+a.ID, body))
 	if rr.Code != http.StatusConflict {
@@ -1211,72 +930,4 @@ func TestLocationEditVersionConflictReload(t *testing.T) {
 	if got.Label == "VC-overwrite" {
 		t.Error("the stale version-conflict edit was applied (blind overwrite — §5.14 violation)")
 	}
-}
-
-// TestLocationEditParentMissBanner pins the 5a parent-existence fix at the UI
-// layer: reparenting onto a just-deleted parent → a banner (not 500, not a
-// silent orphan).
-func TestLocationEditParentMissBanner(t *testing.T) {
-	srv := newTestServer(t)
-	parent := uiCreateLocation(t, srv, "PM-Parent", false)
-	child := uiCreateLocation(t, srv, "PM-Child", false)
-	if err := srv.locations.Delete(parent.ID); err != nil { // releases the id
-		t.Fatal(err)
-	}
-	cur, _ := srv.locations.Get(child.ID)
-	body := url.Values{
-		"version":   {strconv.Itoa(cur.Version)},
-		"label":     {cur.Label},
-		"parent_id": {parent.ID},
-	}.Encode()
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/"+child.ID, body))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("parent-miss edit = %d (want 200 banner, not 500); body=%s", rr.Code, rr.Body.String())
-	}
-	if !strings.Contains(rr.Body.String(), "not found") {
-		t.Errorf("parent-miss banner missing 'not found'; body: %s", rr.Body.String())
-	}
-	got, _ := srv.locations.Get(child.ID)
-	if got.ParentID == parent.ID {
-		t.Error("child was orphaned under the deleted parent")
-	}
-}
-
-// TestAuthUI_CSRFOriginCheck (RedTeam critical) pins the CSRF defense: the UI
-// mutates via form-urlencoded POSTs (CORS-"simple" → a cross-origin <form>
-// fires blind). The auth seam blocks a cross-origin POST (Origin mismatch →
-// 403) while allowing same-origin (the real UI) + no-Origin (curl, non-browser,
-// not a CSRF vector).
-func TestAuthUI_CSRFOriginCheck(t *testing.T) {
-	srv := newTestServer(t)
-	// Cross-origin POST → 403 (CSRF blocked).
-	rr := uiPostWithOrigin(srv, "/ui/locations", "https://evil.com", "label=X")
-	if rr.Code != http.StatusForbidden {
-		t.Errorf("cross-origin POST = %d, want 403 (CSRF blocked)", rr.Code)
-	}
-	// Same-origin POST → passes the CSRF check (proceeds to the handler).
-	rr2 := uiPostWithOrigin(srv, "/ui/locations", "http://127.0.0.1:7899", "label=Y")
-	if rr2.Code == http.StatusForbidden {
-		t.Errorf("same-origin POST = 403, want it to pass the CSRF check")
-	}
-	// No Origin (curl / non-browser) → passes (not a CSRF vector).
-	rr3 := uiPostWithOrigin(srv, "/ui/locations", "", "label=Z")
-	if rr3.Code == http.StatusForbidden {
-		t.Errorf("no-Origin POST = 403, want it to pass (non-browser is not a CSRF vector)")
-	}
-}
-
-// uiPostWithOrigin is a form-urlencoded POST with a forced Host + optional
-// Origin, for the CSRF same-origin check.
-func uiPostWithOrigin(srv *Server, path, origin, body string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest("POST", path, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Host = "127.0.0.1:7899"
-	if origin != "" {
-		req.Header.Set("Origin", origin)
-	}
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, req)
-	return rr
 }

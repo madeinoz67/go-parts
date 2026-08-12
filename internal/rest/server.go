@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/madeinoz67/go-parts/internal/components"
 	"github.com/madeinoz67/go-parts/internal/index"
 	"github.com/madeinoz67/go-parts/internal/label"
 	"github.com/madeinoz67/go-parts/internal/link"
@@ -43,19 +44,20 @@ import (
 type Server struct {
 	store         *parts.Store
 	fts           *index.FTS
-	via           *via.Store       // Slice 4: GET /via/{code} resolver spine
-	locations     *locations.Store // Slice 4: location branch of the resolver + label endpoint
-	publicBaseURL string           // Slice 4: base for label QR URLs (config; "" = request-derived)
+	via           *via.Store        // Slice 4: GET /via/{code} resolver spine
+	locations     *locations.Store  // Slice 4: location branch of the resolver + label endpoint
+	components    *components.Store // Flat-locations: via-resolver embeds a location's Components
+	publicBaseURL string            // Slice 4: base for label QR URLs (config; "" = request-derived)
 	mux           *http.ServeMux
 }
 
 // NewServer wires a Server over store + fts + the shared via index + locations
-// store, and registers every route. It does NOT listen — the caller does
-// http.ListenAndServe(addr, srv) — so the Server is also a http.Handler usable
-// from httptest.NewServer or in-process tests. Set the label base URL (if any)
-// via SetPublicBaseURL.
-func NewServer(store *parts.Store, fts *index.FTS, viaStore *via.Store, locStore *locations.Store) *Server {
-	s := &Server{store: store, fts: fts, via: viaStore, locations: locStore, mux: http.NewServeMux()}
+// store + components store, and registers every route. It does NOT listen —
+// the caller does http.ListenAndServe(addr, srv) — so the Server is also a
+// http.Handler usable from httptest.NewServer or in-process tests. Set the
+// label base URL (if any) via SetPublicBaseURL.
+func NewServer(store *parts.Store, fts *index.FTS, viaStore *via.Store, locStore *locations.Store, compStore *components.Store) *Server {
+	s := &Server{store: store, fts: fts, via: viaStore, locations: locStore, components: compStore, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -122,7 +124,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /parts/{id}", s.auth(s.handleGet))
 	s.mux.HandleFunc("PATCH /parts/{id}", s.auth(s.handlePatch))
 	s.mux.HandleFunc("DELETE /parts/{id}", s.auth(s.handleDelete))
-	s.mux.HandleFunc("POST /parts/{id}/stock", s.auth(s.handleStock))
 	// Slice 4 — generic Via resolver + per-entity label endpoints (§5.17, §8).
 	s.mux.HandleFunc("GET /via/{code}", s.auth(s.handleVia))
 	s.mux.HandleFunc("POST /parts/{id}/label", s.auth(s.handlePartLabel))
@@ -180,15 +181,6 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	p.CreatedAt = time.Time{}
 	p.UpdatedAt = time.Time{}
 	if err := s.store.Create(&p); err != nil {
-		// Slice 3b: a DefaultLocationID on create can trip the guard.
-		if errors.Is(err, parts.ErrLocationNotFound) {
-			http.Error(w, "location not found: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		if errors.Is(err, parts.ErrLocationSinglePartConflict) {
-			http.Error(w, "single-part-only conflict: "+err.Error(), http.StatusConflict)
-			return
-		}
 		http.Error(w, "create: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -266,23 +258,12 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.Update(loaded, expectedVersion); err != nil {
 		// Update calls Get under the striped lock, so a part deleted between
-		// our outer Get and Update surfaces here as parts.ErrNotFound → 404
-		// (mirrors handleDelete/handleStock's not-found handling). Slice 3b:
-		// a DefaultLocationID assignment can trip the single_part_only guard
-		// (ErrLocationSinglePartConflict → 409) or reference a missing location
-		// (ErrLocationNotFound → 400). The remaining case is a version conflict
-		// (the expectedVersion no longer matches the in-lock stored version) —
-		// the §5.14 race window optimistic concurrency exists for → 409.
+		// our outer Get and Update surfaces here as parts.ErrNotFound → 404.
+		// The remaining case is a version conflict (the expectedVersion no
+		// longer matches the in-lock stored version) — the §5.14 race window
+		// optimistic concurrency exists for → 409.
 		if errors.Is(err, parts.ErrNotFound) {
 			http.NotFound(w, r)
-			return
-		}
-		if errors.Is(err, parts.ErrLocationNotFound) {
-			http.Error(w, "location not found: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		if errors.Is(err, parts.ErrLocationSinglePartConflict) {
-			http.Error(w, "single-part-only conflict: "+err.Error(), http.StatusConflict)
 			return
 		}
 		http.Error(w, "version conflict: "+err.Error(), http.StatusConflict)
@@ -311,10 +292,8 @@ func applyPatch(dst *parts.Part, raw map[string]json.RawMessage) error {
 		{"Footprint", func() error { return patchStr(raw, "Footprint", &dst.Footprint) }},
 		{"UnitOfMeasure", func() error { return patchStr(raw, "UnitOfMeasure", &dst.UnitOfMeasure) }},
 		{"DatasheetRef", func() error { return patchStr(raw, "DatasheetRef", &dst.DatasheetRef) }},
-		{"DefaultLocationID", func() error { return patchStr(raw, "DefaultLocationID", &dst.DefaultLocationID) }},
 		{"PackageQty", func() error { return patchInt(raw, "PackageQty", &dst.PackageQty) }},
 		{"ReorderPoint", func() error { return patchInt(raw, "ReorderPoint", &dst.ReorderPoint) }},
-		{"DefaultLocationMandatory", func() error { return patchBool(raw, "DefaultLocationMandatory", &dst.DefaultLocationMandatory) }},
 		{"Tags", func() error { return patchTags(raw, "Tags", &dst.Tags) }},
 		{"Specs", func() error { return patchMap(raw, "Specs", &dst.Specs) }},
 		{"CustomFields", func() error { return patchMap(raw, "CustomFields", &dst.CustomFields) }},
@@ -406,39 +385,6 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleStock applies a commutative stock delta (§5.14) via Store.AdjustStock.
-// The body is `{"Delta": <int>}` (Go field name; no json tags on the body
-// struct). AdjustStock does NOT bump Version and does NOT touch the FTS —
-// QtyOnHand is not an indexed field. The `reason` field is accepted by the
-// store for a future stock-movement audit log; the REST layer passes "rest"
-// as a placeholder pending a richer caller-identity story (post-auth).
-func (s *Server) handleStock(w http.ResponseWriter, r *http.Request) {
-	// io.EOF (empty body) is treated as Delta=0 — a no-op stock adjustment.
-	var body struct{ Delta int }
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-		http.Error(w, "invalid stock body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	id := r.PathValue("id")
-	if err := s.store.AdjustStock(id, body.Delta, "rest"); err != nil {
-		if errors.Is(err, parts.ErrNotFound) {
-			http.NotFound(w, r)
-			return
-		}
-		http.Error(w, "adjust stock: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	// Return the updated part so callers see the new QtyOnHand without a
-	// follow-up GET. ETag is pinned to the unchanged Version (stock doesn't
-	// bump version — §5.14).
-	p, err := s.store.Get(id)
-	if err != nil {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	writePart(w, http.StatusOK, p)
-}
-
 // handleSearch drives GET /parts?q=… through the field-weighted BM25 FTS,
 // hydrating the top hits via Store.Get. An empty query returns an empty list
 // (FTS.Tokenize drops everything → Search returns nil → empty slice). The
@@ -494,7 +440,7 @@ func parseETagVersion(s string) (int, error) {
 // response shape is link.Resolved (PascalCase, no json tags — api.md §"JSON
 // field names").
 func (s *Server) handleVia(w http.ResponseWriter, r *http.Request) {
-	res, err := link.Resolve(s.via, s.store, s.locations, r.PathValue("code"))
+	res, err := link.Resolve(s.via, s.store, s.components, s.locations, r.PathValue("code"))
 	if err != nil {
 		// A via-miss OR a dangling reference (via.Lookup succeeded but the
 		// entity record is gone — e.g. a via.Release that failed mid-delete
@@ -657,8 +603,8 @@ func (s *Server) handleLocationCreateREST(w http.ResponseWriter, r *http.Request
 }
 
 // handleLocationPatch is PATCH /locations/{id} — RFC 7396 JSON Merge Patch
-// (Label, ParentID, Notes, SinglePartOnly; ViaCode immutable). If-Match
-// required. Cycle → 409, version-conflict → 409, parent-miss → 400.
+// (Label, Notes, Tags; ViaCode immutable). If-Match required.
+// Version-conflict → 409.
 func (s *Server) handleLocationPatch(w http.ResponseWriter, r *http.Request) {
 	etag := r.Header.Get("If-Match")
 	if etag == "" {
@@ -687,9 +633,8 @@ func (s *Server) handleLocationPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, f := range []func() error{
 		func() error { return patchStr(raw, "Label", &loaded.Label) },
-		func() error { return patchStr(raw, "ParentID", &loaded.ParentID) },
 		func() error { return patchStr(raw, "Notes", &loaded.Notes) },
-		func() error { return patchBool(raw, "SinglePartOnly", &loaded.SinglePartOnly) },
+		func() error { return patchTags(raw, "Tags", &loaded.Tags) },
 	} {
 		if err := f(); err != nil {
 			http.Error(w, "invalid field: "+err.Error(), http.StatusBadRequest)
@@ -701,32 +646,29 @@ func (s *Server) handleLocationPatch(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		if errors.Is(err, locations.ErrVersionConflict) || errors.Is(err, locations.ErrCycle) {
+		if errors.Is(err, locations.ErrVersionConflict) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest) // parent-miss etc.
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	writeLocation(w, http.StatusOK, loaded)
 }
 
-// handleLocationDeleteREST is DELETE /locations/{id}. Two composed refusals:
-// has-parts (parts.CountByLocation > 0 → 409; the store can't see parts, §5.1)
-// and has-children (locations.Delete → ErrHasChildren → 409). 204 on success.
+// handleLocationDeleteREST is DELETE /locations/{id}. One composed refusal:
+// has-components (components.List(id) is non-empty → 409; the location still
+// holds stock). locations.Store cannot see the components keyspace (§5.1), so
+// the check is composed here. 204 on success.
 func (s *Server) handleLocationDeleteREST(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if n := s.store.CountByLocation(id); n > 0 {
-		http.Error(w, fmt.Sprintf("location has %d part(s) assigned — reassign first", n), http.StatusConflict)
+	if comps := s.components.List(id); len(comps) > 0 {
+		http.Error(w, fmt.Sprintf("location has %d component(s) assigned — reassign first", len(comps)), http.StatusConflict)
 		return
 	}
 	if err := s.locations.Delete(id); err != nil {
 		if errors.Is(err, locations.ErrNotFound) {
 			http.NotFound(w, r)
-			return
-		}
-		if errors.Is(err, locations.ErrHasChildren) {
-			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)

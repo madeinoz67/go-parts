@@ -20,12 +20,12 @@ func newViaCmd(dataDir *string) *cobra.Command {
 		Short: "Resolve a Via code (P-/L-) to its entity — scan-to-find (§5.17)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ps, ls, vs, cleanup, err := openStores(*dataDir)
+			ps, ls, cs, vs, cleanup, err := openStores(*dataDir)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
-			res, err := link.Resolve(vs, ps, ls, args[0])
+			res, err := link.Resolve(vs, ps, cs, ls, args[0])
 			if err != nil {
 				return err
 			}

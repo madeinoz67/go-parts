@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/madeinoz67/go-parts/internal/components"
 	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
 )
@@ -371,14 +372,13 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := &parts.Part{
-		MPN:               r.PostFormValue("mpn"),
-		Description:       r.PostFormValue("description"),
-		PartType:          r.PostFormValue("part_type"),
-		Manufacturer:      r.PostFormValue("manufacturer"),
-		Footprint:         r.PostFormValue("footprint"),
-		UnitOfMeasure:     r.PostFormValue("unit_of_measure"),
-		Tags:              parseTags(r.PostFormValue("tags")),
-		DefaultLocationID: r.PostFormValue("default_location_id"), // Slice 3b; guard fires in store.Create
+		MPN:           r.PostFormValue("mpn"),
+		Description:   r.PostFormValue("description"),
+		PartType:      r.PostFormValue("part_type"),
+		Manufacturer:  r.PostFormValue("manufacturer"),
+		Footprint:     r.PostFormValue("footprint"),
+		UnitOfMeasure: r.PostFormValue("unit_of_measure"),
+		Tags:          parseTags(r.PostFormValue("tags")),
 	}
 	if v := r.PostFormValue("qty"); v != "" {
 		fmt.Sscanf(v, "%d", &p.QtyOnHand)
@@ -390,30 +390,6 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(v, "%d", &p.PackageQty)
 	}
 	if err := s.store.Create(p); err != nil {
-		// Slice 3b: a single_part_only / missing-location guard failure on
-		// create is a user error, not a 500. Re-render the create form into
-		// #detail-panel with a banner (the form's own hx-target is #parts-tbody,
-		// so retarget — same mechanism as renderConfirmFootprint). A fresh form
-		// is rendered (the rare create-path guard failure doesn't preserve the
-		// typed entries, unlike handleEdit which preserves via the Get-then-edit
-		// cur); the banner carries the reason.
-		if errors.Is(err, parts.ErrLocationSinglePartConflict) || errors.Is(err, parts.ErrLocationNotFound) {
-			msg := "that bin is single-part-only and already holds a different part"
-			if errors.Is(err, parts.ErrLocationNotFound) {
-				msg = "that location does not exist"
-			}
-			w.Header().Set("Hx-Retarget", "#detail-panel")
-			w.Header().Set("Hx-Reswap", "innerHTML")
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if tErr := s.tmpl.ExecuteTemplate(w, "create.html", map[string]any{
-				"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
-				"Locations":  s.locationOptions(),
-				"Error":      msg,
-			}); tErr != nil {
-				http.Error(w, tErr.Error(), http.StatusInternalServerError)
-			}
-			return
-		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -477,11 +453,6 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	cur.Manufacturer = r.PostFormValue("manufacturer")
 	cur.UnitOfMeasure = r.PostFormValue("unit_of_measure")
-	// Slice 3b: location assignment. Read explicitly (not zero-skip) so the
-	// <select>'s empty option clears DefaultLocationID (the guard allows "").
-	// The checkbox submits only when checked; unchecked → "" → false.
-	cur.DefaultLocationID = r.PostFormValue("default_location_id")
-	cur.DefaultLocationMandatory = r.PostFormValue("default_location_mandatory") == "true"
 	cur.Tags = parseTags(r.PostFormValue("tags"))
 	cur.Specs = parseKV(r.PostFormValue("specs"))
 	cur.CustomFields = parseKV(r.PostFormValue("custom_fields"))
@@ -492,27 +463,6 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(v, "%d", &cur.PackageQty)
 	}
 	if err := s.store.Update(cur, expected); err != nil {
-		// Slice 3b: location-assignment guard errors (3a's injected policy) →
-		// re-render the detail form with the user's edits preserved + a banner
-		// so they pick a different bin. Distinct from a version conflict (the
-		// record changed under you → conflict.html reload). The banner reuses
-		// the .conflict styling.
-		if errors.Is(err, parts.ErrLocationSinglePartConflict) || errors.Is(err, parts.ErrLocationNotFound) {
-			msg := "that bin is single-part-only and already holds a different part"
-			if errors.Is(err, parts.ErrLocationNotFound) {
-				msg = "that location no longer exists"
-			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if tErr := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{
-				"P":          cur,
-				"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
-				"Locations":  s.locationOptions(),
-				"Error":      msg,
-			}); tErr != nil {
-				http.Error(w, tErr.Error(), http.StatusInternalServerError)
-			}
-			return
-		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusConflict)
 		if tErr := s.tmpl.ExecuteTemplate(w, "conflict.html", map[string]any{"Reload": "/ui/parts/" + id}); tErr != nil {
@@ -528,44 +478,6 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 		"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
 		"Locations":  s.locationOptions(),
 	}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-// handleStock applies a commutative stock delta inline from the detail panel
-// (the inline stock form wired into detail.html: hx-post="/ui/parts/{id}/stock"
-// with a delta field). It calls store.AdjustStock IN-PROCESS (PRD §5.2 — the
-// web UI is a 5th surface over the core, never over REST), then re-renders the
-// detail.html fragment with the updated QtyOnHand. AdjustStock does not bump
-// Version (§5.14 — stock is authoritative), so the round-tripped *Part from
-// store.Get carries the post-delta QtyOnHand and the unchanged Version, which
-// keeps the inline edit form's hidden version field consistent on the next
-// submit. parts.ErrNotFound maps to HTTP 404, matching handleDetail/handleEdit.
-func (s *Server) handleStock(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	var delta int
-	fmt.Sscanf(r.PostFormValue("delta"), "%d", &delta)
-	if err := s.store.AdjustStock(id, delta, "ui"); err != nil {
-		if errors.Is(err, parts.ErrNotFound) {
-			http.NotFound(w, r)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	p, err := s.store.Get(id)
-	if err != nil {
-		// AdjustStock succeeded but the record is now unreadable — treat as
-		// not-found (the canonical not-found recovery for a single-part read).
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{"P": p, "Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints())}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -701,97 +613,21 @@ func (s *Server) handleBulkTag(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleBulkMove sets DefaultLocationID on every selected part to the chosen
-// location (the bulk-action bar's move form, §7.2, Slice 3b). Per-part
-// Get/set-location/Update — the single_part_only guard fires per part under
-// each part's own lock + the target location's locLock. Moving N parts onto a
-// shared location succeeds for all N; onto a SinglePartOnly location exactly
-// one succeeds and the rest conflict → slog.Warn per skip (the same
-// degrade-loudly posture as handleBulkTag's concurrent-edit warn). An empty
-// target short-circuits (the "move to…" placeholder option).
-//
-// Re-renders the current view (q/tag/low/sort/dir read from the POST body —
-// injected client-side by layout.html's htmx:configRequest handler for
-// #bulkMoveForm, same mechanism as delete/tag).
-func (s *Server) handleBulkMove(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	tagFilter := r.PostFormValue("tag")
-	target := r.PostFormValue("move_location")
-	var ok, skip int
-	for _, id := range r.PostForm["id"] {
-		if target == "" {
-			break
-		}
-		p, err := s.store.Get(id)
-		if err != nil {
-			skip++
-			continue
-		}
-		p.DefaultLocationID = target
-		if err := s.store.Update(p, p.Version); err != nil {
-			slog.Warn("bulk-move: part skipped", "id", id, "location", target, "error", err)
-			skip++
-		} else {
-			ok++
-		}
-	}
-	if skip > 0 {
-		w.Header().Set("HX-Trigger", fmt.Sprintf(`{"showToast":"Moved %d, skipped %d (guard conflict or concurrent edit)"}`, ok, skip))
-	}
-	q := r.PostFormValue("q")
-	lowParam := r.PostFormValue("low")
-	low := lowParam == "1"
-	sortKey := r.PostFormValue("sort")
-	sortDir := r.PostFormValue("dir")
-	pts := s.filteredParts(q, tagFilter, low, sortKey, sortDir)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "rows.html", map[string]any{
-		"Parts":  pts,
-		"Q":      q,
-		"Tags":   s.store.TagCounts(),
-		"Active": tagFilter,
-		"Tag":    tagFilter,
-	}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // --- Slice 5b: the Storage tab (locations management UI) ------------------
 
-// locationCounts tallies parts per location in ONE parts scan (map[locID]count)
-// — the contents-count column in the locations list. O(parts), the cheaper
-// direction at homelab scale (not locations×parts scans).
+// locationCounts tallies components per location (map[locID]count) — the
+// contents-count column in the locations list. Flat-locations model: a
+// location's stock is its Component set, so the count comes from the components
+// keyspace, not a parts scan.
 func (s *Server) locationCounts() map[string]int {
 	counts := make(map[string]int)
-	for _, p := range s.store.List() {
-		if p.DefaultLocationID != "" {
-			counts[p.DefaultLocationID]++
-		}
+	if s.components == nil {
+		return counts
+	}
+	for _, loc := range s.locationOptions() {
+		counts[loc.ID] = len(s.components.List(loc.ID))
 	}
 	return counts
-}
-
-// locationParentLabels builds a map[locID]→parent-label for the Parent column
-// (or "" for top-level). Used by the locations table.
-func (s *Server) locationParentLabels(locs []*locations.Location) map[string]string {
-	idToLabel := make(map[string]string, len(locs))
-	for _, l := range locs {
-		idToLabel[l.ID] = l.Label
-	}
-	out := make(map[string]string, len(locs))
-	for _, l := range locs {
-		if l.ParentID == "" {
-			out[l.ID] = ""
-		} else if label, ok := idToLabel[l.ParentID]; ok {
-			out[l.ID] = label
-		} else {
-			out[l.ID] = "(missing)"
-		}
-	}
-	return out
 }
 
 // applyLocationSort re-orders locs in place by the requested key/direction.
@@ -814,13 +650,11 @@ func (s *Server) handleLocationsSearch(w http.ResponseWriter, r *http.Request) {
 	sortDir := r.URL.Query().Get("dir")  // "asc" | "desc"
 	locs := s.locationOptions()
 	counts := s.locationCounts()
-	parentLabels := s.locationParentLabels(locs)
 	applyLocationSort(locs, counts, sortKey, sortDir)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "locations-rows.html", map[string]any{
-		"Locations":    locs,
-		"Counts":       counts,
-		"ParentLabels": parentLabels,
+		"Locations": locs,
+		"Counts":    counts,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -840,9 +674,8 @@ func (s *Server) handleLocationsPage(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleLocationDetail renders the location-detail.html fragment (htmx into
-// #loc-detail on row click): the fields, CONTENTS (parts.ListByLocation —
-// scan-to-find, the point of opening a bin), an edit form (parent as a select
-// of other locations — the cycle guard is the authority), and a print-label
+// #loc-detail on row click): the fields, CONTENTS (components.List —
+// scan-to-find, the point of opening a bin), an edit form, and a print-label
 // button. locations.ErrNotFound → 404.
 func (s *Server) handleLocationDetail(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -858,27 +691,34 @@ func (s *Server) handleLocationDetail(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "location-detail.html", map[string]any{
 		"L":         l,
-		"Contents":  s.store.ListByLocation(id),
+		"Contents":  s.componentList(id),
 		"Locations": s.locationOptions(),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
+// componentList is a nil-safe helper that returns the components held at id.
+// Flat-locations model: a location's contents are its Components.
+func (s *Server) componentList(id string) []*components.Component {
+	if s.components == nil {
+		return nil
+	}
+	return s.components.List(id)
+}
+
 // handleLocationCreate handles the create-single form (POST /ui/locations): a
 // plain form that POSTs then redirects to the page (full reload — robust, no
-// htmx partial). On a guard error (e.g. missing parent) re-renders the page
-// with a banner.
+// htmx partial). On error re-renders the page with a banner.
 func (s *Server) handleLocationCreate(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	l := &locations.Location{
-		Label:          r.PostFormValue("label"),
-		ParentID:       r.PostFormValue("parent_id"),
-		SinglePartOnly: r.PostFormValue("single_part_only") == "true",
-		Notes:          r.PostFormValue("notes"),
+		Label: r.PostFormValue("label"),
+		Tags:  parseTags(r.PostFormValue("tags")),
+		Notes: r.PostFormValue("notes"),
 	}
 	if err := s.locations.Create(l); err != nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -893,9 +733,8 @@ func (s *Server) handleLocationCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleLocationEdit handles the edit form (POST /ui/locations/{id}): Get-then-
-// edit + Update with the version. On success redirect to the page; on a cycle,
-// parent-miss, or version conflict re-render the detail with a banner (mirrors
-// the parts edit UX).
+// edit + Update with the version. On success redirect to the page; on a version
+// conflict re-render the detail with a banner (mirrors the parts edit UX).
 func (s *Server) handleLocationEdit(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := r.ParseForm(); err != nil {
@@ -913,9 +752,8 @@ func (s *Server) handleLocationEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	expected, _ := strconv.Atoi(r.PostFormValue("version"))
 	cur.Label = r.PostFormValue("label")
-	cur.ParentID = r.PostFormValue("parent_id")
+	cur.Tags = parseTags(r.PostFormValue("tags"))
 	cur.Notes = r.PostFormValue("notes")
-	cur.SinglePartOnly = r.PostFormValue("single_part_only") == "true"
 	if err := s.locations.Update(cur, expected); err != nil {
 		// §5.14 cross-surface: a version conflict → 409 + reload prompt (NOT a
 		// banner). The banner path would re-render with the canonical record's
@@ -928,25 +766,21 @@ func (s *Server) handleLocationEdit(w http.ResponseWriter, r *http.Request) {
 			_ = s.tmpl.ExecuteTemplate(w, "conflict.html", map[string]any{"Reload": "/ui/locations/" + id, "Target": "#loc-detail"})
 			return
 		}
-		// cycle / parent-miss → banner (the operator fixes the input, not a
-		// concurrent edit). Header not sent yet (200 implied).
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", map[string]any{
 			"L":         cur,
-			"Contents":  s.store.ListByLocation(id),
+			"Contents":  s.componentList(id),
 			"Locations": s.locationOptions(),
 			"Error":     err.Error(),
 		})
 		return
 	}
 	// Success → re-render the updated detail (htmx swaps it into #loc-detail,
-	// matching the parts edit UX; the edit form is hx-post, not a plain POST,
-	// so a version-conflict's conflict.html fragment renders correctly with the
-	// reload link live — not as a bare dead-end page).
+	// matching the parts edit UX).
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if tErr := s.tmpl.ExecuteTemplate(w, "location-detail.html", map[string]any{
 		"L":         cur,
-		"Contents":  s.store.ListByLocation(id),
+		"Contents":  s.componentList(id),
 		"Locations": s.locationOptions(),
 	}); tErr != nil {
 		http.Error(w, tErr.Error(), http.StatusInternalServerError)

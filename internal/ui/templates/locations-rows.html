@@ -1,15 +1,13 @@
 {{define "locations-rows.html"}}
 <tbody id="loc-tbody">
 {{if not .Locations}}
-  <tr class="empty"><td colspan="5" style="text-align:center;color:var(--text-faint);padding:18px">no locations yet — add one above.</td></tr>
+  <tr class="empty"><td colspan="3" style="text-align:center;color:var(--text-faint);padding:18px">no locations yet — add one above.</td></tr>
 {{else}}
 {{range .Locations}}
 <tr hx-get="/ui/locations/{{.ID}}" hx-target="#loc-detail" hx-swap="innerHTML">
   <td>{{.Label}}</td>
   <td class="phos">{{.ViaCode}}</td>
-  <td class="muted">{{index $.ParentLabels .ID}}</td>
   <td class="num">{{index $.Counts .ID}}</td>
-  <td>{{if .SinglePartOnly}}◉{{end}}</td>
 </tr>
 {{end}}
 {{end}}

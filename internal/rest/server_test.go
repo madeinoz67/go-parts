@@ -1,8 +1,8 @@
 // Package rest exposes go-parts' parts.Store + FTS over a stdlib net/http
 // ServeMux (Go 1.26 method-patterns). These tests drive every route end-to-end
 // against a real Pebble + FTS + Store — no mocks — so the §5.14 concurrency
-// safety built into Store.Update/AdjustStock is exercised through the HTTP
-// layer that will be the first multi-writer surface in production.
+// safety built into Store.Update is exercised through the HTTP layer that will
+// be the first multi-writer surface in production.
 //
 // JSON field names are Go field names verbatim (parts.Part ships no json tags;
 // REST T10 and the e2e test T12 use Go field names per the part.go comment —
@@ -16,13 +16,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/madeinoz67/go-parts/internal/components"
 	"github.com/madeinoz67/go-parts/internal/index"
-	"github.com/madeinoz67/go-parts/internal/link"
 	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
 	"github.com/madeinoz67/go-parts/internal/via"
@@ -44,15 +42,15 @@ func newTestServer(t *testing.T) *Server {
 	fts := index.NewFTS(db)
 	vs := via.NewStore(db)
 	store := parts.NewStore(db, fts, vs)
-	ls := locations.NewStore(db, vs) // Slice 4: resolver + label handlers read it
-	return NewServer(store, fts, vs, ls)
+	ls := locations.NewStore(db, vs)
+	cs := components.NewStore(db, store)
+	return NewServer(store, fts, vs, ls, cs)
 }
 
-// newTestServerWithLocations wires a REST server whose parts.Store has the
-// single_part_only guard live (link.NewPolicy over a locations.Store), so PATCH
-// /parts DefaultLocationID assignment exercises the guard through the HTTP
-// layer. Mirrors daemon wiring. Slice 3b — this is the surface that makes 3a's
-// locLocks TOCTOU fix reachable.
+// newTestServerWithLocations wires a REST server over the same store wiring as
+// newTestServer and also returns the locations.Store for tests that drive the
+// via resolver or location CRUD. Flat-locations model: the policy seam is
+// gone; this helper exists for tests that need the locations handle.
 func newTestServerWithLocations(t *testing.T) (*Server, *locations.Store) {
 	t.Helper()
 	db, err := pebble.Open(filepath.Join(t.TempDir(), "p"), &pebble.Options{})
@@ -64,8 +62,8 @@ func newTestServerWithLocations(t *testing.T) (*Server, *locations.Store) {
 	vs := via.NewStore(db)
 	ps := parts.NewStore(db, fts, vs)
 	ls := locations.NewStore(db, vs)
-	ps.SetLocationPolicy(link.NewPolicy(ps, ls))
-	return NewServer(ps, fts, vs, ls), ls
+	cs := components.NewStore(db, ps)
+	return NewServer(ps, fts, vs, ls, cs), ls
 }
 
 // post/get/patch/delete are thin dispatch helpers that drive srv.ServeHTTP via
@@ -262,8 +260,11 @@ func TestPatchStaleVersion(t *testing.T) {
 
 // TestPatchPreservesStock pins the F3 invariant at the REST layer: even when a
 // PATCH body carries a QtyOnHand, it MUST NOT change the stock — stock is the
-// AdjustStock endpoint's exclusive domain (§5.14). Store.Update enforces this
-// server-side; this test proves the REST handler doesn't bypass it.
+// AdjustStock/component-stock exclusive domain (§5.14). Store.Update enforces
+// this server-side; this test proves the REST handler doesn't bypass it. The
+// AdjustStock endpoint was removed in the flat-locations redesign (stock is
+// now Component-driven); the create body's QtyOnHand is the only way to set
+// stock from REST, and PATCH still MUST NOT change it.
 func TestPatchPreservesStock(t *testing.T) {
 	srv := newTestServer(t)
 	rr := post(srv, "/parts", `{"MPN":"SKU1","PartType":"local","Description":"cap","QtyOnHand":5}`)
@@ -273,13 +274,7 @@ func TestPatchPreservesStock(t *testing.T) {
 	id := extractID(t, rr.Body.Bytes())
 	etag := rr.Header().Get("ETag")
 
-	// Adjust stock the authoritative way: +3 → QtyOnHand = 8.
-	rr = post(srv, "/parts/"+id+"/stock", `{"Delta":3}`)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("stock adjust = %d, want 200; body=%s", rr.Code, rr.Body.String())
-	}
-
-	// Now PATCH with a bogus QtyOnHand in the body — the F3 invariant says it
+	// PATCH with a bogus QtyOnHand in the body — the F3 invariant says it
 	// must be ignored (Update preserves cur.QtyOnHand).
 	rr = patch(srv, "/parts/"+id, `{"Description":"cap-edited","QtyOnHand":9999}`, etag)
 	if rr.Code != http.StatusOK {
@@ -290,20 +285,11 @@ func TestPatchPreservesStock(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.QtyOnHand != 8 {
-		t.Fatalf("PATCH leaked stock change: QtyOnHand = %d, want 8 (AdjustStock-only)", got.QtyOnHand)
+	if got.QtyOnHand != 5 {
+		t.Fatalf("PATCH leaked stock change: QtyOnHand = %d, want 5 (create-time value preserved)", got.QtyOnHand)
 	}
 	if got.Description != "cap-edited" {
 		t.Fatalf("PATCH didn't apply Description: got %q, want %q", got.Description, "cap-edited")
-	}
-}
-
-// TestStockAdjustAdjustUnknown returns 5xx (AdjustStock errors on missing part).
-func TestStockAdjustUnknown(t *testing.T) {
-	srv := newTestServer(t)
-	rr := post(srv, "/parts/nope/stock", `{"Delta":1}`)
-	if rr.Code == http.StatusOK {
-		t.Fatalf("stock adjust on missing part = 200, want error")
 	}
 }
 
@@ -370,10 +356,8 @@ func TestSearchEmptyQuery(t *testing.T) {
 	}
 }
 
-// --- Slice 3b: REST DefaultLocationID + the guard on the PATCH surface -----
-
 // restCreate POSTs a part body and returns the decoded stored record (with the
-// server-assigned ID + Version). Slice 3b helper.
+// server-assigned ID + Version).
 func restCreate(t *testing.T, srv *Server, body string) parts.Part {
 	t.Helper()
 	rr := post(srv, "/parts", body)
@@ -385,81 +369,6 @@ func restCreate(t *testing.T, srv *Server, body string) parts.Part {
 		t.Fatalf("decode created part: %v", err)
 	}
 	return p
-}
-
-// TestPatchSetsDefaultLocation pins applyPatch copies DefaultLocationID into the
-// store (the guard fires in Update). Slice 3b.
-func TestPatchSetsDefaultLocation(t *testing.T) {
-	srv, ls := newTestServerWithLocations(t)
-	loc := &locations.Location{Label: "RA"}
-	if err := ls.Create(loc); err != nil {
-		t.Fatal(err)
-	}
-	p := restCreate(t, srv, `{"MPN":"R-LOC","PartType":"local"}`)
-	etag := strconv.Quote(strconv.Itoa(p.Version))
-	rr := patch(srv, "/parts/"+p.ID, `{"DefaultLocationID":"`+loc.ID+`"}`, etag)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("patch = %d: %s", rr.Code, rr.Body.String())
-	}
-	got, _ := srv.store.Get(p.ID)
-	if got.DefaultLocationID != loc.ID {
-		t.Errorf("stored DefaultLocationID = %q, want %q", got.DefaultLocationID, loc.ID)
-	}
-}
-
-// TestPatchGuardConflict409 pins the guard surfaces as 409 on the PATCH surface
-// (a second distinct part onto an occupied SinglePartOnly location).
-func TestPatchGuardConflict409(t *testing.T) {
-	srv, ls := newTestServerWithLocations(t)
-	solo := &locations.Location{Label: "SOLO", SinglePartOnly: true}
-	if err := ls.Create(solo); err != nil {
-		t.Fatal(err)
-	}
-	restCreate(t, srv, `{"MPN":"A","PartType":"local","DefaultLocationID":"`+solo.ID+`"}`) // sole occupant
-	b := restCreate(t, srv, `{"MPN":"B","PartType":"local"}`)
-	etag := strconv.Quote(strconv.Itoa(b.Version))
-	rr := patch(srv, "/parts/"+b.ID, `{"DefaultLocationID":"`+solo.ID+`"}`, etag)
-	if rr.Code != http.StatusConflict {
-		t.Fatalf("patch into occupied single-part-only = %d, want 409; body=%s", rr.Code, rr.Body)
-	}
-}
-
-// TestPatchConcurrentSinglePartOnlyExactlyOneWins is the load-bearing
-// confirmation that 3a's locLocks hold on the now-reachable REST PATCH surface:
-// N concurrent PATCHes, each assigning a distinct part to the SAME
-// SinglePartOnly location, must yield exactly one 200 — the rest get 409. Before
-// 3a's locLocks this would multi-win; before 3b's applyPatch the surface could
-// not even set the field. Run with -race.
-func TestPatchConcurrentSinglePartOnlyExactlyOneWins(t *testing.T) {
-	srv, ls := newTestServerWithLocations(t)
-	solo := &locations.Location{Label: "SOLO", SinglePartOnly: true}
-	if err := ls.Create(solo); err != nil {
-		t.Fatal(err)
-	}
-	const N = 30
-	ids := make([]string, N)
-	vers := make([]int, N)
-	for i := range N {
-		p := restCreate(t, srv, `{"MPN":"C","PartType":"local"}`)
-		ids[i], vers[i] = p.ID, p.Version
-	}
-	var wg sync.WaitGroup
-	var ok int32
-	for i := range N {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			etag := strconv.Quote(strconv.Itoa(vers[i]))
-			rr := patch(srv, "/parts/"+ids[i], `{"DefaultLocationID":"`+solo.ID+`"}`, etag)
-			if rr.Code == http.StatusOK {
-				atomic.AddInt32(&ok, 1)
-			}
-		}(i)
-	}
-	wg.Wait()
-	if ok != 1 {
-		t.Errorf("concurrent PATCH onto single-part-only: %d ok, want exactly 1 (locLocks not holding on REST surface)", ok)
-	}
 }
 
 // --- Slice 4: generic Via resolver + label endpoints ----------------------
@@ -484,15 +393,24 @@ func checkLabel(t *testing.T, rr *httptest.ResponseRecorder, code string) {
 }
 
 // TestViaResolvesLocationWithContents pins scan-to-find (§5.17): resolving a
-// location's code returns the location WITH its assigned parts embedded.
+// location's code returns the location WITH its embedded Components. Flat-
+// locations model: a location's contents are its Components (one per part per
+// location, with quantity + history).
 func TestViaResolvesLocationWithContents(t *testing.T) {
 	srv, ls := newTestServerWithLocations(t)
 	bin := &locations.Location{Label: "Bin"}
 	if err := ls.Create(bin); err != nil {
 		t.Fatal(err)
 	}
-	post(srv, "/parts", `{"MPN":"a","PartType":"local","DefaultLocationID":"`+bin.ID+`"}`)
-	post(srv, "/parts", `{"MPN":"b","PartType":"local","DefaultLocationID":"`+bin.ID+`"}`)
+	// Two parts, each with a Component at bin via the components store.
+	pa := restCreate(t, srv, `{"MPN":"a","PartType":"local"}`)
+	pb := restCreate(t, srv, `{"MPN":"b","PartType":"local"}`)
+	if err := srv.components.Add(bin.ID, pa.ID, 1, nil); err != nil {
+		t.Fatalf("Add component a: %v", err)
+	}
+	if err := srv.components.Add(bin.ID, pb.ID, 1, nil); err != nil {
+		t.Fatalf("Add component b: %v", err)
+	}
 	rr := get(srv, "/via/"+bin.ViaCode)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("via = %d: %s", rr.Code, rr.Body.String())
@@ -501,9 +419,9 @@ func TestViaResolvesLocationWithContents(t *testing.T) {
 	if !strings.Contains(body, `"Type":"location"`) {
 		t.Errorf("via body missing Type=location: %s", body)
 	}
-	// 2 parts embedded (2 DefaultLocationID occurrences in Contents).
-	if c := strings.Count(body, `"DefaultLocationID"`); c != 2 {
-		t.Errorf("via body has %d part DefaultLocationID fields, want 2 (contents embedded): %s", c, body)
+	// 2 components embedded (each carries the partID it stocks).
+	if c := strings.Count(body, `"PartID"`); c != 2 {
+		t.Errorf("via body has %d Component PartID fields, want 2 (contents embedded): %s", c, body)
 	}
 }
 
@@ -665,16 +583,12 @@ func TestCreate_ZeroesCreatedBy(t *testing.T) {
 
 // TestPatch_RFC7396ClearsNull (RedTeam HIGH) pins the RFC 7396 JSON Merge Patch
 // semantics that replace the zero-means-skip rule: a JSON null CLEARS a field
-// (was: silently dropped). Description/ReorderPoint/DefaultLocationID all clear.
+// (was: silently dropped). Description/ReorderPoint/Tags all clear.
 func TestPatch_RFC7396ClearsNull(t *testing.T) {
-	srv, ls := newTestServerWithLocations(t)
-	loc := &locations.Location{Label: "CLR-loc"}
-	if err := ls.Create(loc); err != nil {
-		t.Fatal(err)
-	}
-	p := restCreate(t, srv, `{"MPN":"CLR","PartType":"local","Description":"to-clear","ReorderPoint":10,"DefaultLocationID":"`+loc.ID+`"}`)
+	srv := newTestServer(t)
+	p := restCreate(t, srv, `{"MPN":"CLR","PartType":"local","Description":"to-clear","ReorderPoint":10,"Tags":["x"]}`)
 	etag := strconv.Quote(strconv.Itoa(p.Version))
-	rr := patch(srv, "/parts/"+p.ID, `{"Description":null,"ReorderPoint":null,"DefaultLocationID":null}`, etag)
+	rr := patch(srv, "/parts/"+p.ID, `{"Description":null,"ReorderPoint":null,"Tags":null}`, etag)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("patch = %d: %s", rr.Code, rr.Body.String())
 	}
@@ -685,8 +599,8 @@ func TestPatch_RFC7396ClearsNull(t *testing.T) {
 	if got.ReorderPoint != 0 {
 		t.Errorf("ReorderPoint = %d, want 0 (cleared)", got.ReorderPoint)
 	}
-	if got.DefaultLocationID != "" {
-		t.Errorf("DefaultLocationID = %q, want \"\" (cleared)", got.DefaultLocationID)
+	if len(got.Tags) != 0 {
+		t.Errorf("Tags = %v, want nil (cleared)", got.Tags)
 	}
 }
 
@@ -768,15 +682,20 @@ func TestLocationDeleteREST(t *testing.T) {
 	if err := ls.Create(loc); err != nil {
 		t.Fatal(err)
 	}
-	// Assign a part → delete refuses (has-parts → 409).
-	p := restCreate(t, srv, `{"MPN":"DP","PartType":"local","DefaultLocationID":"`+loc.ID+`"}`)
-	if rr := deleteReq(srv, "/locations/"+loc.ID); rr.Code != http.StatusConflict {
-		t.Errorf("delete with parts = %d, want 409", rr.Code)
+	// Stock the location with a Component → delete refuses (has-components → 409).
+	p := restCreate(t, srv, `{"MPN":"DP","PartType":"local"}`)
+	if err := srv.components.Add(loc.ID, p.ID, 1, nil); err != nil {
+		t.Fatalf("components.Add: %v", err)
 	}
-	// Clear the part's location (RFC 7396 null) → delete succeeds.
-	patch(srv, "/parts/"+p.ID, `{"DefaultLocationID":null}`, strconv.Quote(strconv.Itoa(p.Version)))
+	if rr := deleteReq(srv, "/locations/"+loc.ID); rr.Code != http.StatusConflict {
+		t.Errorf("delete with components = %d, want 409", rr.Code)
+	}
+	// Remove the Component → delete succeeds.
+	if err := srv.components.Remove(loc.ID, p.ID); err != nil {
+		t.Fatalf("components.Remove: %v", err)
+	}
 	rr2 := deleteReq(srv, "/locations/"+loc.ID)
 	if rr2.Code != http.StatusNoContent {
-		t.Fatalf("delete after clear = %d, want 204; body: %s", rr2.Code, rr2.Body.String())
+		t.Fatalf("delete after remove = %d, want 204; body: %s", rr2.Code, rr2.Body.String())
 	}
 }

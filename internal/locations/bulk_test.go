@@ -34,13 +34,7 @@ func TestCreateBulk_RowCreatesEach(t *testing.T) {
 
 func TestCreateBulk_SharedOpts(t *testing.T) {
 	s, _ := newStore(t)
-	parent := &Location{Label: "Parent"}
-	if err := s.Create(parent); err != nil {
-		t.Fatal(err)
-	}
 	created, err := s.CreateBulk([]string{"c1", "c2"}, BulkOpts{
-		ParentID:       parent.ID,
-		SinglePartOnly: true,
 		Notes:          "batch",
 		CreationMethod: "grid",
 	})
@@ -48,27 +42,26 @@ func TestCreateBulk_SharedOpts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, l := range created {
-		if l.ParentID != parent.ID || !l.SinglePartOnly || l.Notes != "batch" || l.CreationMethod != "grid" {
+		if l.Notes != "batch" || l.CreationMethod != "grid" {
 			t.Fatalf("bulk row not carrying shared opts: %+v", l)
 		}
-	}
-	// Children reflect the shared parent.
-	if len(s.Children(parent.ID)) != 2 {
-		t.Fatalf("Children(parent) = %d, want 2", len(s.Children(parent.ID)))
 	}
 }
 
 func TestCreateBulk_PartialOnFailure(t *testing.T) {
+	// Flat-locations model: no parent-existence check. A bulk now always
+	// succeeds unless the underlying Pebble DB fails. The "report-not-rollback"
+	// contract on partial failure is documented in store.go; the empty-partial
+	// case (all rows succeed OR the first failure returns an empty result) is
+	// not reachable without external state mutation. This test is kept as a
+	// smoke that CreateBulk with empty input returns empty + no error.
 	s, _ := newStore(t)
-	// A non-existent parent makes EVERY Create fail at the parent-existence
-	// check (Slice 1's Create validates ParentID). So nothing is created and
-	// the error surfaces — verify the partial result is empty + error is non-nil.
-	created, err := s.CreateBulk([]string{"a", "b"}, BulkOpts{ParentID: "ghost", CreationMethod: "single"})
-	if err == nil {
-		t.Fatal("expected error for ghost parent, got nil")
+	created, err := s.CreateBulk(nil, BulkOpts{CreationMethod: "single"})
+	if err != nil {
+		t.Fatalf("CreateBulk(nil): %v", err)
 	}
 	if len(created) != 0 {
-		t.Fatalf("partial = %d, want 0 (parent check fails before any create)", len(created))
+		t.Fatalf("created = %d, want 0", len(created))
 	}
 }
 

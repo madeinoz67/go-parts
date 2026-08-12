@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/madeinoz67/go-parts/internal/components"
 	"github.com/madeinoz67/go-parts/internal/index"
 	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
@@ -60,7 +61,8 @@ func TestWalkingSkeleton(t *testing.T) {
 	vs := via.NewStore(dbStore.DB)
 	store := parts.NewStore(dbStore.DB, fts, vs)
 	ls := locations.NewStore(dbStore.DB, vs) // Slice 4: the resolver/label handlers read it
-	srv := rest.NewServer(store, fts, vs, ls)
+	cs := components.NewStore(dbStore.DB, store)
+	srv := rest.NewServer(store, fts, vs, ls, cs)
 	httpSrv := httptest.NewServer(srv)
 	t.Cleanup(httpSrv.Close)
 	client := httpSrv.Client()
@@ -115,25 +117,15 @@ func TestWalkingSkeleton(t *testing.T) {
 		t.Fatalf("hit ID = %#v, want non-empty string", idRaw)
 	}
 
-	// Adjust stock through POST /parts/{id}/stock. The body uses the Go field
-	// name (Delta) for the same reason as the create body — no json tags.
-	stockBody, _ := json.Marshal(map[string]int{"Delta": -1})
-	stockResp, err := client.Post(httpSrv.URL+"/parts/"+id+"/stock", "application/json", bytes.NewReader(stockBody))
-	if err != nil {
-		t.Fatalf("stock adjust: %v", err)
-	}
-	if stockResp.StatusCode != http.StatusOK {
-		t.Fatalf("stock adjust status = %d, want %d", stockResp.StatusCode, http.StatusOK)
-	}
-	_ = stockResp.Body.Close()
-
-	// Re-GET the part and assert QtyOnHand reflects the delta. This proves the
-	// stock delta was persisted to the parts keyspace (not just in-memory) and
-	// that a fresh Get round-trips it through JSON. AdjustStock does NOT bump
-	// Version (§5.14) — the version is left untouched from create (== 1).
+	// Re-GET the part directly by id to round-trip it through JSON. This
+	// proves the create persisted to the parts keyspace (not just in-memory)
+	// and that a fresh Get round-trips the fields through JSON. The stock
+	// endpoint was removed in the flat-locations redesign (stock is now
+	// AdjustStock's domain via Components), so the walking-skeleton proof
+	// narrows to create→search→GET.
 	getResp, err := client.Get(httpSrv.URL + "/parts/" + id)
 	if err != nil {
-		t.Fatalf("get after stock: %v", err)
+		t.Fatalf("get after search: %v", err)
 	}
 	defer getResp.Body.Close()
 	if getResp.StatusCode != http.StatusOK {
@@ -142,9 +134,6 @@ func TestWalkingSkeleton(t *testing.T) {
 	var p parts.Part
 	if err := json.NewDecoder(getResp.Body).Decode(&p); err != nil {
 		t.Fatalf("decode part: %v", err)
-	}
-	if p.QtyOnHand != -1 {
-		t.Fatalf("QtyOnHand = %d, want -1", p.QtyOnHand)
 	}
 	if p.ID != id {
 		t.Fatalf("ID round-trip = %q, want %q", p.ID, id)

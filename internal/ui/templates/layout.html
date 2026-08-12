@@ -210,7 +210,7 @@ document.body.addEventListener('htmx:configRequest', e => {
   // doesn't expose pathInfo.requestPath). If the request originates from a
   // bulk form, inject the live view state so the action preserves the filter.
   const elt = e.detail.elt;
-  if (!elt || !elt.closest('#bulkDeleteForm, #bulkTagForm, #bulkMoveForm')) return;
+  if (!elt || !elt.closest('#bulkDeleteForm, #bulkTagForm')) return;
   const p = e.detail.parameters;
   if (!p['q'])   p['q']   = (document.getElementById('search') || {}).value || '';
   if (!p['sort']) p['sort'] = viewSort;
