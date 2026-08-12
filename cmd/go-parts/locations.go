@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -69,6 +70,10 @@ func newLocationsCmd(dataDir *string) *cobra.Command {
 	cmd.AddCommand(newLocationsListCmd(dataDir))
 	cmd.AddCommand(newLocationsRemoveCmd(dataDir))
 	cmd.AddCommand(newLocationsLabelCmd(dataDir))
+	cmd.AddCommand(newLocationsAddComponentCmd(dataDir))
+	cmd.AddCommand(newLocationsListComponentsCmd(dataDir))
+	cmd.AddCommand(newLocationsAdjustCmd(dataDir))
+	cmd.AddCommand(newLocationsRemoveComponentCmd(dataDir))
 	return cmd
 }
 
@@ -323,6 +328,155 @@ func newLocationsLabelCmd(dataDir *string) *cobra.Command {
 			}
 			_, err = os.Stdout.Write(svg)
 			return err
+		},
+	}
+	return cmd
+}
+
+// resolveID resolves a via code (L-.../P-...) to its entity id, or returns the
+// bare id as-is. Used by the component CLI commands that accept <id|via>.
+func resolveID(vs *via.Store, id string) (string, error) {
+	if len(id) > 2 && (id[:2] == "L-" || id[:2] == "P-") {
+		_, resolved, err := vs.Lookup(id)
+		if err != nil {
+			return "", err
+		}
+		return resolved, nil
+	}
+	return id, nil
+}
+
+// newLocationsAddComponentCmd: go-parts locations add-component <loc> <part> <qty> [--tag ...]
+func newLocationsAddComponentCmd(dataDir *string) *cobra.Command {
+	var tags []string
+	cmd := &cobra.Command{
+		Use:   "add-component <locID|via> <partID|via> <qty>",
+		Short: "Add a part to a location with an initial quantity",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, _, cs, vs, cleanup, err := openStores(*dataDir)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			locID, err := resolveID(vs, args[0])
+			if err != nil {
+				return err
+			}
+			partID, err := resolveID(vs, args[1])
+			if err != nil {
+				return err
+			}
+			qty, err := strconv.Atoi(args[2])
+			if err != nil {
+				return fmt.Errorf("qty must be an integer: %w", err)
+			}
+			if err := cs.Add(locID, partID, qty, tags); err != nil {
+				return err
+			}
+			fmt.Printf("added %d × %s → %s\n", qty, args[1], args[0])
+			return nil
+		},
+	}
+	cmd.Flags().StringSliceVar(&tags, "tag", nil, "component tags (repeatable)")
+	return cmd
+}
+
+// newLocationsListComponentsCmd: go-parts locations list-components <loc>
+func newLocationsListComponentsCmd(dataDir *string) *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "list-components <locID|via>",
+		Short: "List components at a location",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, _, cs, vs, cleanup, err := openStores(*dataDir)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			locID, err := resolveID(vs, args[0])
+			if err != nil {
+				return err
+			}
+			comps := cs.List(locID)
+			if asJSON {
+				return json.NewEncoder(os.Stdout).Encode(comps)
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "PARTID\tQTY\tTAGS")
+			for _, c := range comps {
+				fmt.Fprintf(tw, "%s\t%d\t%s\n", c.PartID, c.Quantity, strings.Join(c.Tags, ","))
+			}
+			return tw.Flush()
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")
+	return cmd
+}
+
+// newLocationsAdjustCmd: go-parts locations adjust <loc> <part> <delta> [--reason ...]
+func newLocationsAdjustCmd(dataDir *string) *cobra.Command {
+	var reason string
+	cmd := &cobra.Command{
+		Use:   "adjust <locID|via> <partID|via> <delta>",
+		Short: "Adjust a component's quantity (stock in/out with history)",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, _, cs, vs, cleanup, err := openStores(*dataDir)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			locID, err := resolveID(vs, args[0])
+			if err != nil {
+				return err
+			}
+			partID, err := resolveID(vs, args[1])
+			if err != nil {
+				return err
+			}
+			delta, err := strconv.Atoi(args[2])
+			if err != nil {
+				return fmt.Errorf("delta must be an integer: %w", err)
+			}
+			if err := cs.AdjustQty(locID, partID, delta, reason); err != nil {
+				return err
+			}
+			c, _ := cs.Get(locID, partID)
+			fmt.Printf("adjusted by %d → qty=%d\n", delta, c.Quantity)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&reason, "reason", "", "reason for the adjustment (recorded in history)")
+	return cmd
+}
+
+// newLocationsRemoveComponentCmd: go-parts locations remove-component <loc> <part>
+func newLocationsRemoveComponentCmd(dataDir *string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "remove-component <locID|via> <partID|via>",
+		Short: "Remove a component from a location",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, _, cs, vs, cleanup, err := openStores(*dataDir)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			locID, err := resolveID(vs, args[0])
+			if err != nil {
+				return err
+			}
+			partID, err := resolveID(vs, args[1])
+			if err != nil {
+				return err
+			}
+			if err := cs.Remove(locID, partID); err != nil {
+				return err
+			}
+			fmt.Printf("removed %s from %s\n", args[1], args[0])
+			return nil
 		},
 	}
 	return cmd

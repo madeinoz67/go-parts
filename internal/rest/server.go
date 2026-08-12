@@ -134,6 +134,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /locations", s.auth(s.handleLocationCreateREST))
 	s.mux.HandleFunc("PATCH /locations/{id}", s.auth(s.handleLocationPatch))
 	s.mux.HandleFunc("DELETE /locations/{id}", s.auth(s.handleLocationDeleteREST))
+	// Flat-locations: component management (the stock-at-location junction).
+	s.mux.HandleFunc("GET /locations/{id}/components", s.auth(s.handleComponentList))
+	s.mux.HandleFunc("POST /locations/{id}/components", s.auth(s.handleComponentAdd))
+	s.mux.HandleFunc("PATCH /locations/{id}/components/{partId}", s.auth(s.handleComponentPatch))
+	s.mux.HandleFunc("DELETE /locations/{id}/components/{partId}", s.auth(s.handleComponentDelete))
 }
 
 // auth is the §5.8 single interceptor point. v1 is a no-op: every request
@@ -671,4 +676,93 @@ func writeLocation(w http.ResponseWriter, status int, l *locations.Location) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(l)
+}
+
+// --- Flat-locations: component management (stock-at-location junction) -------
+
+// handleComponentList is GET /locations/{id}/components — list a bin's
+// components (Part refs with quantity, tags, history).
+func (s *Server) handleComponentList(w http.ResponseWriter, r *http.Request) {
+	locID := r.PathValue("id")
+	out := s.components.List(locID)
+	if out == nil {
+		out = []*components.Component{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// handleComponentAdd is POST /locations/{id}/components — add a part to a bin
+// with an initial quantity. Body: {"PartID":"...", "Quantity":N, "Tags":[...]}.
+func (s *Server) handleComponentAdd(w http.ResponseWriter, r *http.Request) {
+	locID := r.PathValue("id")
+	var body struct {
+		PartID   string
+		Quantity int
+		Tags     []string
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.PartID == "" {
+		http.Error(w, "PartID required", http.StatusBadRequest)
+		return
+	}
+	if err := s.components.Add(locID, body.PartID, body.Quantity, body.Tags); err != nil {
+		if errors.Is(err, components.ErrDuplicate) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, "add: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Return the created component.
+	c, _ := s.components.Get(locID, body.PartID)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(c)
+}
+
+// handleComponentPatch is PATCH /locations/{id}/components/{partId} — adjust
+// the quantity (delta + reason) or update tags. Body: {"Delta":N, "Reason":"..."}.
+func (s *Server) handleComponentPatch(w http.ResponseWriter, r *http.Request) {
+	locID := r.PathValue("id")
+	partID := r.PathValue("partId")
+	var body struct {
+		Delta  int
+		Reason string
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.components.AdjustQty(locID, partID, body.Delta, body.Reason); err != nil {
+		if errors.Is(err, components.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "adjust: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	c, _ := s.components.Get(locID, partID)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(c)
+}
+
+// handleComponentDelete is DELETE /locations/{id}/components/{partId} — remove a
+// component from a bin (the part is no longer at this location).
+func (s *Server) handleComponentDelete(w http.ResponseWriter, r *http.Request) {
+	locID := r.PathValue("id")
+	partID := r.PathValue("partId")
+	if err := s.components.Remove(locID, partID); err != nil {
+		if errors.Is(err, components.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "remove: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
