@@ -4,7 +4,7 @@
   {{range .Components}}
   {{$l := index $.LocLookup .LocationID}}
   <div class="spec-row">
-    <span>{{if $l}}{{$l.Label}}{{else}}<span class="muted">{{.LocationID}}</span>{{end}}</span>
+    <span><a href="/ui/locations?loc={{.LocationID}}" style="text-decoration:none;color:inherit">{{if $l}}{{$l.Label}}{{else}}<span class="muted">{{.LocationID}}</span>{{end}}</a></span>
     <span class="phos">{{.Quantity}}</span>
   </div>
   {{end}}
