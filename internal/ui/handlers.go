@@ -702,13 +702,34 @@ func (s *Server) handleLocationDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "location-detail.html", map[string]any{
-		"L":         l,
-		"Contents":  s.componentList(id),
-		"Locations": s.locationOptions(),
-	}); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, l, "")); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// locationDetailData builds the template data for the location detail fragment
+// (shared by the detail handler + the component management handlers). Includes
+// a PartLookup map (component PartID → *Part for MPN display) + a PartsList
+// (for the add-component picker).
+func (s *Server) locationDetailData(id string, l *locations.Location, errMsg string) map[string]any {
+	contents := s.componentList(id)
+	partLookup := make(map[string]*parts.Part, len(contents))
+	for _, c := range contents {
+		if p, err := s.store.Get(c.PartID); err == nil {
+			partLookup[c.PartID] = p
+		}
+	}
+	data := map[string]any{
+		"L":          l,
+		"Contents":   contents,
+		"PartLookup": partLookup,
+		"PartsList":  s.store.List(),
+		"Locations":  s.locationOptions(),
+	}
+	if errMsg != "" {
+		data["Error"] = errMsg
+	}
+	return data
 }
 
 // componentList is a nil-safe helper that returns the components held at id.
@@ -798,6 +819,101 @@ func (s *Server) handleLocationEdit(w http.ResponseWriter, r *http.Request) {
 	}); tErr != nil {
 		http.Error(w, tErr.Error(), http.StatusInternalServerError)
 	}
+}
+
+// --- Flat-locations: component management UI handlers ----------------------
+
+// handleComponentAddUI: POST /ui/locations/{id}/components/add — adds a part
+// to this bin with an initial quantity. Re-renders the detail fragment.
+func (s *Server) handleComponentAddUI(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	partID := r.PostFormValue("part_id")
+	qty := 0
+	fmt.Sscanf(r.PostFormValue("qty"), "%d", &qty)
+	if partID == "" {
+		s.renderLocationDetailError(w, r, id, "select a part to add")
+		return
+	}
+	if err := s.components.Add(id, partID, qty, parseTags(r.PostFormValue("tags"))); err != nil {
+		s.renderLocationDetailError(w, r, id, err.Error())
+		return
+	}
+	s.renderLocationDetail(w, r, id)
+}
+
+// handleComponentAdjustUI: POST /ui/locations/{id}/components/{partId}/adjust
+// — adjusts the quantity by delta (+1/-1 stepper). Re-renders the detail.
+func (s *Server) handleComponentAdjustUI(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	partID := r.PathValue("partId")
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	delta := 0
+	fmt.Sscanf(r.PostFormValue("delta"), "%d", &delta)
+	if err := s.components.AdjustQty(id, partID, delta, r.PostFormValue("reason")); err != nil {
+		s.renderLocationDetailError(w, r, id, err.Error())
+		return
+	}
+	s.renderLocationDetail(w, r, id)
+}
+
+// handleComponentRemoveUI: POST /ui/locations/{id}/components/{partId}/remove
+// — removes a component from this bin. Re-renders the detail.
+func (s *Server) handleComponentRemoveUI(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	partID := r.PathValue("partId")
+	if err := s.components.Remove(id, partID); err != nil {
+		s.renderLocationDetailError(w, r, id, err.Error())
+		return
+	}
+	s.renderLocationDetail(w, r, id)
+}
+
+// handlePartLocations: GET /ui/parts/{id}/locations — renders a read-only
+// "stock at locations" fragment (which bins hold this part + quantities).
+func (s *Server) handlePartLocations(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	comps := s.components.FindByPart(id)
+	locLookup := make(map[string]*locations.Location)
+	for _, c := range comps {
+		if l, err := s.locations.Get(c.LocationID); err == nil {
+			locLookup[c.LocationID] = l
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = s.tmpl.ExecuteTemplate(w, "part-locations.html", map[string]any{
+		"Components": comps,
+		"LocLookup":  locLookup,
+	})
+}
+
+// renderLocationDetail re-renders the location detail fragment (the common
+// success path for the component management handlers).
+func (s *Server) renderLocationDetail(w http.ResponseWriter, r *http.Request, id string) {
+	l, err := s.locations.Get(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, l, ""))
+}
+
+// renderLocationDetailError re-renders the detail with an error banner.
+func (s *Server) renderLocationDetailError(w http.ResponseWriter, r *http.Request, id, errMsg string) {
+	l, err := s.locations.Get(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, l, errMsg))
 }
 
 // applySort re-orders pts in place by the requested key/direction. No-op when

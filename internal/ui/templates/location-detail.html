@@ -12,11 +12,43 @@
 
 {{if .Contents}}
 <div style="margin-top:8px">
-  <div class="eyebrow" style="margin-bottom:4px">Contents (scan-to-find)</div>
-  <ul class="loc-contents" style="list-style:none;padding:0;margin:0">
-    {{range .Contents}}<li style="padding:2px 0;border-bottom:1px solid var(--line,rgba(255,255,255,.06))">{{.PartID}} <span class="phos">×{{.Quantity}}</span></li>{{end}}
-  </ul>
+  <div class="eyebrow" style="margin-bottom:4px">Components</div>
+  {{range .Contents}}
+  {{$p := index $.PartLookup .PartID}}
+  <div class="spec-rows" style="margin-bottom:4px">
+    <div class="spec-row">
+      <span>{{if $p}}{{$p.MPN}}{{else}}<span class="muted">{{.PartID}}</span>{{end}}</span>
+      <span>
+        <form style="display:inline" hx-post="/ui/locations/{{$.L.ID}}/components/{{.PartID}}/adjust" hx-target="#loc-detail">
+          <input type="hidden" name="delta" value="-1">
+          <button type="submit" class="step" style="padding:0 6px;font-size:14px;background:none;border:1px solid var(--border);cursor:pointer">−</button>
+        </form>
+        <span class="qty-value" style="display:inline-block;min-width:2em;text-align:center">{{.Quantity}}</span>
+        <form style="display:inline" hx-post="/ui/locations/{{$.L.ID}}/components/{{.PartID}}/adjust" hx-target="#loc-detail">
+          <input type="hidden" name="delta" value="1">
+          <button type="submit" class="step" style="padding:0 6px;font-size:14px;background:none;border:1px solid var(--border);cursor:pointer">+</button>
+        </form>
+        <form style="display:inline;margin-left:8px" hx-post="/ui/locations/{{$.L.ID}}/components/{{.PartID}}/remove" hx-target="#loc-detail">
+          <button type="submit" class="step" style="padding:0 6px;font-size:12px;background:none;border:1px solid var(--border);cursor:pointer;color:var(--warn,red)">✕</button>
+        </form>
+      </span>
+    </div>
+  </div>
+  {{end}}
 </div>
+{{end}}
+
+{{if .PartsList}}
+<hr>
+<div class="eyebrow" style="margin-bottom:4px">Add component</div>
+<form class="create" style="flex-direction:row;gap:6px;flex-wrap:wrap" hx-post="/ui/locations/{{.L.ID}}/components/add" hx-target="#loc-detail">
+  <select name="part_id" style="flex:1;min-width:12em">
+    <option value="">select part…</option>
+    {{range .PartsList}}<option value="{{.ID}}">{{.MPN}}{{if .Description}} — {{.Description}}{{end}}</option>{{end}}
+  </select>
+  <input name="qty" type="number" value="0" min="0" style="width:5em" placeholder="qty">
+  <button class="btn btn-primary" type="submit" style="flex:0">add</button>
+</form>
 {{end}}
 
 <hr>

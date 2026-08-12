@@ -1,0 +1,15 @@
+{{define "part-locations.html"}}
+{{if .Components}}
+<div class="spec-rows">
+  {{range .Components}}
+  {{$l := index $.LocLookup .LocationID}}
+  <div class="spec-row">
+    <span>{{if $l}}{{$l.Label}}{{else}}<span class="muted">{{.LocationID}}</span>{{end}}</span>
+    <span class="phos">{{.Quantity}}</span>
+  </div>
+  {{end}}
+</div>
+{{else}}
+<p class="hint" style="margin:4px 0">not stocked at any location</p>
+{{end}}
+{{end}}

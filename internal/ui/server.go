@@ -136,6 +136,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /ui/locations/{id}", s.auth(s.handleLocationDetail))    // location detail fragment (htmx into #loc-detail)
 	s.mux.HandleFunc("POST /ui/locations", s.auth(s.handleLocationCreate))        // create-single → redirect to the page
 	s.mux.HandleFunc("POST /ui/locations/{id}", s.auth(s.handleLocationEdit))     // edit (Update) → redirect or banner
+	// Flat-locations: component management UI (htmx into #loc-detail).
+	s.mux.HandleFunc("POST /ui/locations/{id}/components/add", s.auth(s.handleComponentAddUI))
+	s.mux.HandleFunc("POST /ui/locations/{id}/components/{partId}/adjust", s.auth(s.handleComponentAdjustUI))
+	s.mux.HandleFunc("POST /ui/locations/{id}/components/{partId}/remove", s.auth(s.handleComponentRemoveUI))
+	s.mux.HandleFunc("GET /ui/parts/{id}/locations", s.auth(s.handlePartLocations)) // stock-at-locations fragment
 }
 
 // handleShell renders the full shell page.
