@@ -101,6 +101,18 @@ func ComponentPrefixBound(ws [8]byte) (lower, upper []byte) {
 	return lower, upper
 }
 
+// ComponentLocationPrefixBound returns the [lower, upper) range covering every
+// Component at one location — the "what's in this bin?" query (§6.1). Lower is
+// kind|ws|locID; upper is that plus a 0xFF sentinel — strictly greater than any
+// partID byte (ULID characters from Crockford Base32, all ASCII ≤ 0x5A, all
+// < 0xFF), so the exclusive upper bound captures every component under locID
+// without overlapping the next location's range.
+func ComponentLocationPrefixBound(ws [8]byte, locID string) (lower, upper []byte) {
+	lower = ComponentKey(ws, locID, "")
+	upper = append(append([]byte{}, lower...), 0xFF)
+	return lower, upper
+}
+
 func metaSchemaVersionKey() []byte {
 	var ws [8]byte
 	return scopedString(metaPrefix, ws, "schemaver")

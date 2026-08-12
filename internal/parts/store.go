@@ -576,6 +576,26 @@ func (s *Store) AdjustStock(id string, delta int, reason string) error {
 	return s.writePartsKey(p)
 }
 
+// SetQty writes JUST the QtyOnHand field (no Version bump, no FTS) — the cache
+// writer for the Component store's stock-adjustment path (§6.1). Reads the part
+// under lockFor(id), sets QtyOnHand=qty, writes the parts key only via
+// writePartsKey. Mirrors the AdjustStock no-FTS discipline: QtyOnHand is not an
+// indexed field, so the FTS is untouched. Under lockFor(id) so it serializes
+// with Update/AdjustStock on the same id (§5.14). Called by components.Store
+// after Add/AdjustQty/Remove re-derives the Part's total stock from its
+// Component set.
+func (s *Store) SetQty(id string, qty int) error {
+	mu := s.lockFor(id)
+	mu.Lock()
+	defer mu.Unlock()
+	p, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+	p.QtyOnHand = qty
+	return s.writePartsKey(p)
+}
+
 // ReindexAll re-indexes every part into the FTS, fixing entries missed by a
 // partial failure (writePartsKey succeeded but fts.Index didn't — a SIGKILL/OOM
 // between the two Pebble writes). Parts already correctly indexed are no-ops
