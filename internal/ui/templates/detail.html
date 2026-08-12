@@ -11,15 +11,7 @@
   <div class="spec-row"><span>{{$k}}</span><span>{{$v}}</span></div>
   {{end}}
   <div class="spec-row"><span>Via</span><span class="phos">{{.P.ViaCode}}</span></div>
-  <div class="spec-row">
-    <span>On hand</span>
-    <form class="qty-stepper" hx-post="/ui/parts/{{.P.ID}}/stock" hx-target="#detail-panel" hx-swap="innerHTML">
-      <button type="button" class="step" onclick="var i=this.form.querySelector('input[name=delta]'); i.value=-1; this.form.requestSubmit()" aria-label="decrease">−</button>
-      <span class="qty-value">{{.P.QtyOnHand}}</span>
-      <input type="hidden" name="delta" value="0">
-      <button type="button" class="step" onclick="var i=this.form.querySelector('input[name=delta]'); i.value=1; this.form.requestSubmit()" aria-label="increase">+</button>
-    </form>
-  </div>
+  <div class="spec-row"><span>On hand</span><span class="qty-value">{{.P.QtyOnHand}}</span></div>
 </div>
 
 <hr>

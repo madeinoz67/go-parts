@@ -670,7 +670,7 @@ func TestDetailRendersSpecRows(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+p.ID, nil))
 	body := rr.Body.String()
-	for _, want := range []string{"DT1", "Yageo", "0805", "resistance", "10k", "qty-stepper", "42"} {
+	for _, want := range []string{"DT1", "Yageo", "0805", "resistance", "10k", "qty-value", "42"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("detail missing %q; body=%s", want, body)
 		}

@@ -333,18 +333,6 @@ func patchInt(raw map[string]json.RawMessage, key string, dst *int) error {
 	return json.Unmarshal(v, dst)
 }
 
-func patchBool(raw map[string]json.RawMessage, key string, dst *bool) error {
-	v, ok := raw[key]
-	if !ok {
-		return nil
-	}
-	if string(v) == "null" {
-		*dst = false
-		return nil
-	}
-	return json.Unmarshal(v, dst)
-}
-
 func patchTags(raw map[string]json.RawMessage, key string, dst *[]string) error {
 	v, ok := raw[key]
 	if !ok {
