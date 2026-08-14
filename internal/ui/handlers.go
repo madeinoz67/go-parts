@@ -785,6 +785,87 @@ func (s *Server) handleLocationCreateForm(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// formInt parses a form value as an int (empty/invalid → 0) — the bulk form's
+// numeric range fields.
+func formInt(v string) int {
+	n, _ := strconv.Atoi(strings.TrimSpace(v))
+	return n
+}
+
+// handleLocationBulkForm renders the bulk-create form (the "+ bulk" header
+// button's target): method + prefix + per-method ranges + notes + the sanity
+// cap, over the SAME GenerateLabels/CreateBulk engine the CLI drives.
+func (s *Server) handleLocationBulkForm(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "location-bulk.html", map[string]any{}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleLocationBulkCreate: POST /ui/locations/bulk — the UI adapter over
+// locations.GenerateLabels + Store.CreateBulk (the CLI is the sibling adapter;
+// zero new label logic here). The UI method value "3d" adapts to the engine's
+// "3d_grid", mirroring the CLI. GenerateLabels is pure and errors BEFORE any
+// write, so a bad range re-renders the form with the error and nothing is
+// created. A mid-bulk CreateBulk failure is partial-not-rolled-back (the
+// documented recovery contract): the response refreshes the whole tbody (+
+// OOB tag sidebar) with whatever now exists and the panel notice reports
+// created-so-far + the error.
+func (s *Server) handleLocationBulkCreate(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	engineMethod := strings.ToLower(r.PostFormValue("method"))
+	if engineMethod == "3d" {
+		engineMethod = "3d_grid" // UI/CLI spelling → engine spelling
+	}
+	maxLabels := 100
+	if v := r.PostFormValue("max_labels"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			maxLabels = n
+		}
+	}
+	p := locations.LabelParams{
+		Prefix:    r.PostFormValue("prefix"),
+		From:      formInt(r.PostFormValue("from")),
+		To:        formInt(r.PostFormValue("to")),
+		RowFrom:   strings.ToUpper(r.PostFormValue("row_from")),
+		RowTo:     strings.ToUpper(r.PostFormValue("row_to")),
+		ColFrom:   formInt(r.PostFormValue("col_from")),
+		ColTo:     formInt(r.PostFormValue("col_to")),
+		LevelFrom: formInt(r.PostFormValue("level_from")),
+		LevelTo:   formInt(r.PostFormValue("level_to")),
+	}
+	labels, err := locations.GenerateLabels(engineMethod, p, maxLabels)
+	if err != nil {
+		w.Header().Set("Hx-Retarget", "#loc-detail")
+		w.Header().Set("Hx-Reswap", "innerHTML")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = s.tmpl.ExecuteTemplate(w, "location-bulk.html", map[string]any{"Error": err.Error()})
+		return
+	}
+	created, cErr := s.locations.CreateBulk(labels, locations.BulkOpts{
+		Notes:          r.PostFormValue("notes"),
+		CreationMethod: engineMethod,
+	})
+	// Refreshed view (tbody + OOB sidebar) + the panel reset to a count notice.
+	locs := s.locationOptions()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := map[string]any{
+		"Locations": locs,
+		"Counts":    s.locationCounts(locs),
+		"Tags":      s.locations.TagCounts(),
+		"Active":    "",
+		"Created":   len(created),
+	}
+	if cErr != nil {
+		data["Partial"] = true
+		data["PartialErr"] = cErr.Error()
+	}
+	_ = s.tmpl.ExecuteTemplate(w, "loc-bulk-created.html", data)
+}
+
 // handleLocationCreate handles the create-single form (POST /ui/locations). The
 // form lives in the detail panel (loaded by the "+ new" header button); on
 // submit it renders the loc-row-created fragment — the new row prepended into

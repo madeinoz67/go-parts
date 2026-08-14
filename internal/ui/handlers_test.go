@@ -1025,6 +1025,97 @@ func TestLocationTagFilter(t *testing.T) {
 	}
 }
 
+// TestLocationBulkFormRenders pins the "+ bulk" header button's target (Task
+// 44): GET /ui/locations/bulk renders the bulk-create form with the method
+// selector, prefix, and the sanity cap. The literal route must win over {id}.
+func TestLocationBulkFormRenders(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/locations/bulk", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /ui/locations/bulk = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{`hx-post="/ui/locations/bulk"`, `name="method"`, `name="prefix"`, `name="max_labels"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("bulk form missing %q; body=%s", want, body)
+		}
+	}
+}
+
+// TestLocationBulkCreateRow pins the row method end-to-end: a bulk POST
+// creates the labels via GenerateLabels+CreateBulk, refreshes the tbody with
+// every new location, ships the OOB tag-sidebar swap, and resets the panel to
+// a created-count notice.
+func TestLocationBulkCreateRow(t *testing.T) {
+	srv := newTestServer(t)
+	before := len(srv.locations.List())
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/bulk",
+		"method=row&prefix=box&from=1&to=3&max_labels=100"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bulk = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"box1", "box2", "box3"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("refreshed tbody missing %q; body=%s", want, body)
+		}
+	}
+	if !strings.Contains(body, `id="loc-detail" hx-swap-oob`) || !strings.Contains(body, "created 3") {
+		t.Errorf("bulk response should reset the panel to a created-3 notice; body=%s", body)
+	}
+	if !strings.Contains(body, `id="loc-tag-nav" hx-swap-oob`) {
+		t.Errorf("bulk response should ship the OOB sidebar refresh; body=%s", body)
+	}
+	if got := len(srv.locations.List()); got != before+3 {
+		t.Errorf("locations = %d, want %d", got, before+3)
+	}
+}
+
+// TestLocationBulkCreateGrid pins the grid method + the UI→engine method
+// adapter shape (grid params flow through LabelParams): rows A-B × cols 1-2
+// → four shelf-A1..shelf-B2 locations.
+func TestLocationBulkCreateGrid(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/bulk",
+		"method=grid&prefix=shelf&row_from=A&row_to=B&col_from=1&col_to=2"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bulk = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"shelf-A1", "shelf-A2", "shelf-B1", "shelf-B2"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("refreshed tbody missing %q; body=%s", want, body)
+		}
+	}
+	if !strings.Contains(body, "created 4") {
+		t.Errorf("panel notice should say created 4; body=%s", body)
+	}
+}
+
+// TestLocationBulkCreateBadRange pins the no-write error path: GenerateLabels
+// is pure and errors BEFORE CreateBulk, so a reversed range re-renders the
+// form with the error (retargeted into #loc-detail) and creates nothing.
+func TestLocationBulkCreateBadRange(t *testing.T) {
+	srv := newTestServer(t)
+	before := len(srv.locations.List())
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/bulk",
+		"method=row&prefix=box&from=5&to=1"))
+	if got := rr.Header().Get("Hx-Retarget"); got != "#loc-detail" {
+		t.Errorf("Hx-Retarget = %q, want #loc-detail", got)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "invalid") {
+		t.Errorf("bad range should re-render the form with the error; body=%s", body)
+	}
+	if got := len(srv.locations.List()); got != before {
+		t.Errorf("bad range must create nothing; locations = %d, want %d", got, before)
+	}
+}
+
 // TestLocationEditVersionConflictReload pins §5.14 on the locations surface: a
 // stale expectedVersion → 409 + the reload prompt (NOT a banner). The banner
 // path would re-render with the canonical Version + the user's stale fields,

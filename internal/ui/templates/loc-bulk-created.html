@@ -1,0 +1,10 @@
+{{define "loc-bulk-created.html"}}
+{{/* Bulk-create success: the PRIMARY swap is the full refreshed tbody (the
+     form targets #loc-tbody outerHTML — every new location included), with
+     locations-rows.html's own OOB #loc-tag-nav swap refreshing the sidebar.
+     The extra OOB section resets the detail panel (the bulk form lived there)
+     to a created-count notice; a partial CreateBulk failure reports
+     created-so-far + the error (partial is reported, never rolled back). */}}
+{{template "locations-rows.html" .}}
+<section class="detail" id="loc-detail" hx-swap-oob="true"><p class="hint">created {{.Created}} location(s){{if .Partial}} (partial: {{.PartialErr}}){{end}}</p></section>
+{{end}}

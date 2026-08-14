@@ -1,0 +1,53 @@
+{{define "location-bulk.html"}}
+<div class="panel-icon">▤</div>
+<h2 class="panel-title">bulk create</h2>
+<div class="part-sub">row / grid / 3d-grid — the same engine as the CLI</div>
+{{if .Error}}<div class="conflict"><p>{{.Error}}</p></div>{{end}}
+{{/* The form POSTs to /ui/locations/bulk targeting #loc-tbody (outerHTML) —
+     the response (loc-bulk-created.html) re-renders the full table with the
+     new locations + OOB tag-sidebar swap + resets this panel to a count
+     notice. Field groups toggle with the method selector (bulkMethod). No
+     tags field: BulkOpts carries Notes only — CLI parity. */}}
+<form class="create" hx-post="/ui/locations/bulk" hx-target="#loc-tbody" hx-swap="outerHTML">
+  <div class="spec-rows">
+    <div class="spec-row"><span>Method</span>
+      <select name="method" onchange="bulkMethod(this)" style="flex:1">
+        <option value="row">row (prefix1..N)</option>
+        <option value="grid">grid (prefix-A1..)</option>
+        <option value="3d">3d grid (prefix-1-A1..)</option>
+      </select>
+    </div>
+    <div class="spec-row"><span>Prefix</span><input type="text" name="prefix" placeholder="box, shelf, rack" required style="flex:1"></div>
+    <div class="spec-row bulk-f" data-m="row"><span>From</span><input type="number" name="from" min="0" value="1" style="flex:1"></div>
+    <div class="spec-row bulk-f" data-m="row"><span>To</span><input type="number" name="to" min="0" value="4" style="flex:1"></div>
+    <div class="spec-row bulk-f" data-m="grid,3d" style="display:none"><span>Rows</span>
+      <span style="display:flex;gap:6px;flex:1">
+        <input type="text" name="row_from" placeholder="A" maxlength="1" style="flex:1">
+        <input type="text" name="row_to" placeholder="B" maxlength="1" style="flex:1">
+      </span>
+    </div>
+    <div class="spec-row bulk-f" data-m="grid,3d" style="display:none"><span>Cols</span>
+      <span style="display:flex;gap:6px;flex:1">
+        <input type="number" name="col_from" placeholder="1" style="flex:1">
+        <input type="number" name="col_to" placeholder="4" style="flex:1">
+      </span>
+    </div>
+    <div class="spec-row bulk-f" data-m="3d" style="display:none"><span>Levels</span>
+      <span style="display:flex;gap:6px;flex:1">
+        <input type="number" name="level_from" placeholder="1" style="flex:1">
+        <input type="number" name="level_to" placeholder="2" style="flex:1">
+      </span>
+    </div>
+    <div class="spec-row"><span>Notes</span><input type="text" name="notes" placeholder="applied to every row" style="flex:1"></div>
+    <div class="spec-row"><span>Max labels</span><input type="number" name="max_labels" min="1" value="100" style="flex:1"></div>
+  </div>
+  <button class="btn btn-primary" type="submit" style="margin-top:10px;width:100%">create</button>
+</form>
+<script>
+function bulkMethod(sel){
+  document.querySelectorAll('.bulk-f').forEach(function(el){
+    el.style.display = el.dataset.m.split(',').indexOf(sel.value) >= 0 ? '' : 'none';
+  });
+}
+</script>
+{{end}}
