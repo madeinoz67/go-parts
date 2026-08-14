@@ -18,21 +18,38 @@
   <div class="spec-rows" style="margin-bottom:4px">
     <div class="spec-row">
       <span><a href="/ui/?part={{.PartID}}" style="text-decoration:none;color:inherit">{{if $p}}{{$p.MPN}}{{else}}<span class="muted">{{.PartID}}</span>{{end}}</a></span>
-      <span>
-        <form style="display:inline" hx-post="/ui/locations/{{$.L.ID}}/components/{{.PartID}}/adjust" hx-target="#loc-detail">
-          <input type="hidden" name="delta" value="-1">
-          <button type="submit" class="step" style="padding:0 6px;font-size:14px;background:none;border:1px solid var(--border);cursor:pointer">−</button>
-        </form>
+      <span style="display:flex;align-items:center;gap:6px">
         <span class="qty-value" style="display:inline-block;min-width:2em;text-align:center">{{.Quantity}}</span>
-        <form style="display:inline" hx-post="/ui/locations/{{$.L.ID}}/components/{{.PartID}}/adjust" hx-target="#loc-detail">
-          <input type="hidden" name="delta" value="1">
-          <button type="submit" class="step" style="padding:0 6px;font-size:14px;background:none;border:1px solid var(--border);cursor:pointer">+</button>
-        </form>
-        <form style="display:inline;margin-left:8px" hx-post="/ui/locations/{{$.L.ID}}/components/{{.PartID}}/remove" hx-target="#loc-detail">
-          <button type="submit" class="step" style="padding:0 6px;font-size:12px;background:none;border:1px solid var(--border);cursor:pointer;color:var(--warn,red)">✕</button>
+        <form style="display:inline" hx-post="/ui/locations/{{$.L.ID}}/components/{{.PartID}}/remove" hx-target="#loc-detail">
+          <button type="submit" class="step" style="padding:0 6px;font-size:12px;background:none;border:1px solid var(--border);cursor:pointer;color:var(--warn,red)" title="remove component">✕</button>
         </form>
       </span>
     </div>
+    {{/* Task 45: explicit stock in/out — qty + direction + a REQUIRED reason
+         (enforced server-side; the client `required` is convenience only).
+         The submit button's name=dir value carries the direction. */}}
+    <form class="create" style="flex-direction:row;flex-wrap:wrap;gap:4px;align-items:center;padding:4px 0" hx-post="/ui/locations/{{$.L.ID}}/components/{{.PartID}}/adjust" hx-target="#loc-detail">
+      <input type="number" name="qty" value="1" min="1" style="width:4em">
+      <input type="text" name="reason" placeholder="reason (required)" required style="flex:1;min-width:8em">
+      <button class="btn btn-primary" type="submit" name="dir" value="in" style="padding:4px 10px">in</button>
+      <button class="btn btn-danger" type="submit" name="dir" value="out" style="padding:4px 10px">out</button>
+    </form>
+    {{if .History}}
+    {{/* Movement history (stored by AdjustQty since the redesign; Task 45 adds
+         the surface): timestamp · delta · reason, collapsed by default. */}}
+    <details style="margin:2px 0 4px">
+      <summary style="cursor:pointer;color:var(--text-faint);font-size:11px">history ({{len .History}})</summary>
+      <div class="spec-rows">
+        {{range .History}}
+        <div class="spec-row" style="font-size:11px">
+          <span>{{.Timestamp.Format "2006-01-02 15:04"}}</span>
+          <span>{{if lt .Delta 0}}<span style="color:var(--warn)">{{.Delta}}</span>{{else}}<span class="phos">+{{.Delta}}</span>{{end}}</span>
+          <span>{{.Reason}}</span>
+        </div>
+        {{end}}
+      </div>
+    </details>
+    {{end}}
   </div>
   {{end}}
 </div>

@@ -1116,6 +1116,83 @@ func TestLocationBulkCreateBadRange(t *testing.T) {
 	}
 }
 
+// TestComponentStockMoveRequiresReason pins Task 45's server-side contract: a
+// stock movement without a reason is rejected and records nothing (no
+// Quantity change, no History entry). The client `required` attribute is
+// convenience only.
+func TestComponentStockMoveRequiresReason(t *testing.T) {
+	srv := newTestServer(t)
+	bin := uiCreateLocation(t, srv, "RBin")
+	p := uiCreatePart(t, srv, "RSN1")
+	if err := srv.components.Add(bin.ID, p.ID, 5, nil); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/"+bin.ID+"/components/"+p.ID+"/adjust",
+		"qty=3&dir=in"))
+	body := rr.Body.String()
+	if !strings.Contains(body, "reason is required") {
+		t.Errorf("reason-less move should be rejected with a banner; body=%s", body)
+	}
+	c, err := srv.components.Get(bin.ID, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Add itself appends the initial-stock movement, so the baseline is 1
+	// history entry — the rejected move must leave it at exactly that.
+	if c.Quantity != 5 || len(c.History) != 1 {
+		t.Errorf("rejected move must record nothing; qty=%d history=%d (want 5 and 1)", c.Quantity, len(c.History))
+	}
+}
+
+// TestComponentStockInOutAndHistory pins the Task 45 flow end-to-end: in/out
+// with a reason adjusts the quantity (via AdjustQty's signed delta + Part
+// re-derivation) AND the movement history renders in the detail — collapsed
+// <details> with count, timestamp, signed delta, reason.
+func TestComponentStockInOutAndHistory(t *testing.T) {
+	srv := newTestServer(t)
+	bin := uiCreateLocation(t, srv, "HBin")
+	p := uiCreatePart(t, srv, "HIST1")
+	if err := srv.components.Add(bin.ID, p.ID, 2, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Stock IN 5.
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/"+bin.ID+"/components/"+p.ID+"/adjust",
+		"qty=5&dir=in&reason=restock"))
+	body := rr.Body.String()
+	if !strings.Contains(body, `>+5<`) || !strings.Contains(body, "restock") {
+		t.Errorf("stock-in should render a +5 history entry with the reason; body=%s", body)
+	}
+	if !strings.Contains(body, "history (2)") {
+		t.Errorf("history summary should show count 2 (initial add + this move); body=%s", body)
+	}
+	// Stock OUT 3.
+	rr2 := httptest.NewRecorder()
+	srv.ServeHTTP(rr2, postForm("POST", "/ui/locations/"+bin.ID+"/components/"+p.ID+"/adjust",
+		"qty=3&dir=out&reason=used for repair"))
+	body2 := rr2.Body.String()
+	if !strings.Contains(body2, `>-3<`) || !strings.Contains(body2, "used for repair") {
+		t.Errorf("stock-out should render a -3 history entry with the reason; body=%s", body2)
+	}
+	if !strings.Contains(body2, "history (3)") {
+		t.Errorf("history summary should show count 3 (add + in + out); body=%s", body2)
+	}
+	// Store truth: 2 + 5 - 3 = 4, three movements (initial add + in + out),
+	// and the part cache followed.
+	c, err := srv.components.Get(bin.ID, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Quantity != 4 || len(c.History) != 3 {
+		t.Errorf("qty=%d history=%d, want 4 and 3", c.Quantity, len(c.History))
+	}
+	got, _ := srv.store.Get(p.ID)
+	if got.QtyOnHand != 4 {
+		t.Errorf("Part.QtyOnHand=%d, want 4 (re-derived from components)", got.QtyOnHand)
+	}
+}
+
 // TestLocationEditVersionConflictReload pins §5.14 on the locations surface: a
 // stale expectedVersion → 409 + the reload prompt (NOT a banner). The banner
 // path would re-render with the canonical Version + the user's stale fields,

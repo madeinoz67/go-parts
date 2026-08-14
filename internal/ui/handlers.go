@@ -988,7 +988,13 @@ func (s *Server) handleComponentAddUI(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleComponentAdjustUI: POST /ui/locations/{id}/components/{partId}/adjust
-// — adjusts the quantity by delta (+1/-1 stepper). Re-renders the detail.
+// — the stock in/out form (Task 45): qty + dir ("in"/"out", carried by the
+// submit button's name/value) + a REQUIRED reason, computed into the signed
+// delta for AdjustQty (which appends the Movement{Timestamp, Delta, Reason}
+// history entry and re-derives Part.QtyOnHand). The blind +/− steppers are
+// gone — every movement carries an operator reason, enforced server-side (the
+// client `required` attribute is convenience, not the contract). Re-renders
+// the detail (history included) on success; the error banner records nothing.
 func (s *Server) handleComponentAdjustUI(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	partID := r.PathValue("partId")
@@ -996,9 +1002,21 @@ func (s *Server) handleComponentAdjustUI(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	delta := 0
-	fmt.Sscanf(r.PostFormValue("delta"), "%d", &delta)
-	if err := s.components.AdjustQty(id, partID, delta, r.PostFormValue("reason")); err != nil {
+	reason := strings.TrimSpace(r.PostFormValue("reason"))
+	if reason == "" {
+		s.renderLocationDetailError(w, r, id, "a reason is required for stock movements")
+		return
+	}
+	qty := formInt(r.PostFormValue("qty"))
+	if qty <= 0 {
+		s.renderLocationDetailError(w, r, id, "qty must be a positive number")
+		return
+	}
+	delta := qty
+	if r.PostFormValue("dir") == "out" {
+		delta = -qty
+	}
+	if err := s.components.AdjustQty(id, partID, delta, reason); err != nil {
 		s.renderLocationDetailError(w, r, id, err.Error())
 		return
 	}
@@ -1044,7 +1062,11 @@ func (s *Server) renderLocationDetail(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, l, ""))
+	// Loud, not swallowed: a template failure here silently blanks the detail
+	// panel (the 2026-08-14 nil-PartLookup bug class) — surface it instead.
+	if tErr := s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, l, "")); tErr != nil {
+		http.Error(w, tErr.Error(), http.StatusInternalServerError)
+	}
 }
 
 // renderLocationDetailError re-renders the detail with an error banner.
