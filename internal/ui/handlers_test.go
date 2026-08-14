@@ -1178,6 +1178,10 @@ func TestComponentStockInOutAndHistory(t *testing.T) {
 	if !strings.Contains(body2, "history (3)") {
 		t.Errorf("history summary should show count 3 (add + in + out); body=%s", body2)
 	}
+	// Newest-first: the -3 (out, last) renders ABOVE the +5 (in).
+	if i, j := strings.Index(body2, ">-3<"), strings.Index(body2, ">+5<"); i >= j {
+		t.Errorf("history should render most-recent-first (-3 before +5); idx -3=%d +5=%d", i, j)
+	}
 	// Store truth: 2 + 5 - 3 = 4, three movements (initial add + in + out),
 	// and the part cache followed.
 	c, err := srv.components.Get(bin.ID, p.ID)

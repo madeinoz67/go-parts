@@ -50,6 +50,15 @@ func NewServer(store *parts.Store, fts *index.FTS, locStore *locations.Store, co
 		},
 		"formatTags": formatTags,
 		"formatKV":   formatKV,
+		// rev returns s newest-first — the movement history renders
+		// most-recent-on-top (store order is oldest-first append).
+		"rev": func(s []components.Movement) []components.Movement {
+			out := make([]components.Movement, len(s))
+			for i, m := range s {
+				out[len(s)-1-i] = m
+			}
+			return out
+		},
 	}).ParseFS(embedded, "templates/*.html"))
 	s := &Server{store: store, fts: fts, locations: locStore, components: compStore, tmpl: tmpl, mux: http.NewServeMux()}
 	s.routes()

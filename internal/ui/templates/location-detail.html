@@ -36,11 +36,12 @@
     </form>
     {{if .History}}
     {{/* Movement history (stored by AdjustQty since the redesign; Task 45 adds
-         the surface): timestamp · delta · reason, collapsed by default. */}}
+         the surface): timestamp · delta · reason, collapsed by default,
+         MOST-RECENT-FIRST (rev — store order is oldest-first append). */}}
     <details style="margin:2px 0 4px">
       <summary style="cursor:pointer;color:var(--text-faint);font-size:11px">history ({{len .History}})</summary>
       <div class="spec-rows">
-        {{range .History}}
+        {{range rev .History}}
         <div class="spec-row" style="font-size:11px">
           <span>{{.Timestamp.Format "2006-01-02 15:04"}}</span>
           <span>{{if lt .Delta 0}}<span style="color:var(--warn)">{{.Delta}}</span>{{else}}<span class="phos">+{{.Delta}}</span>{{end}}</span>
