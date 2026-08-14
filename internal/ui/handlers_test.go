@@ -883,15 +883,32 @@ func TestLocationDetailShowsContents(t *testing.T) {
 	}
 }
 
-// TestLocationCreate pins POST /ui/locations (create-single) → 303 redirect +
-// the location persisted.
+// TestLocationCreate pins POST /ui/locations (create-single) → 200 + the
+// loc-row-created fragment (Task 43: htmx, no full-page redirect). The fragment
+// prepends the new row into #loc-tbody and ships OOB swaps that open the fresh
+// bin's detail (#loc-detail) and refresh the tag sidebar (#loc-tag-nav),
+// mirroring the Parts create flow (handleCreate → row-created.html). The old
+// flow returned a 303 redirect.
 func TestLocationCreate(t *testing.T) {
 	srv := newTestServer(t)
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, postForm("POST", "/ui/locations", url.Values{"label": {"New Bin"}}.Encode()))
-	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("create = %d, want 303 redirect; body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("create = %d, want 200 (htmx fragment); body=%s", rr.Code, rr.Body.String())
 	}
+	body := rr.Body.String()
+	// The new row + its via-code render (the primary swap into #loc-tbody).
+	if !strings.Contains(body, "New Bin") {
+		t.Errorf("create fragment should contain the new row's label; body=%s", body)
+	}
+	// OOB detail open + sidebar refresh — mirrors Parts' row-created flow.
+	if !strings.Contains(body, `id="loc-detail"`) || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Errorf("create fragment should ship OOB #loc-detail + swap markers; body=%s", body)
+	}
+	if !strings.Contains(body, `id="loc-tag-nav"`) {
+		t.Errorf("create fragment should refresh the tag sidebar; body=%s", body)
+	}
+	// And the location was actually persisted.
 	found := false
 	for _, l := range srv.locations.List() {
 		if l.Label == "New Bin" {
@@ -900,6 +917,70 @@ func TestLocationCreate(t *testing.T) {
 	}
 	if !found {
 		t.Error("create did not persist the location")
+	}
+}
+
+// TestLocationCreateFormRenders pins the header "+ new" button's target
+// (Task 43): GET /ui/locations/new renders the create form into #loc-detail,
+// mirroring Parts' /ui/parts/new. The literal route must win over {id}.
+func TestLocationCreateFormRenders(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/locations/new", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /ui/locations/new = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{`hx-post="/ui/locations"`, `name="label"`, `name="tags"`, `name="notes"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("create form missing %q; body=%s", want, body)
+		}
+	}
+}
+
+// TestLocationsPageRendersTagSidebar pins the Storage shell's sidebar facet
+// (Task 43): handleLocationsPage must surface locationTagCounts through the
+// loc-tag-nav.html partial so the sidebar lists each location tag with its
+// count — mirroring Parts' tag sidebar. Without the LocTags field on the page
+// data + the partial invoke in locations.html, the sidebar stays empty.
+func TestLocationsPageRendersTagSidebar(t *testing.T) {
+	srv := newTestServer(t)
+	l := &locations.Location{Label: "Drawer", Tags: []string{"garage"}}
+	if err := srv.locations.Create(l); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/locations", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, `id="loc-tag-nav"`) || !strings.Contains(body, "garage") {
+		t.Errorf("Storage shell should render the tag sidebar with garage; body=%s", body)
+	}
+	// The header create button + search kbd hint are present (chrome parity).
+	if !strings.Contains(body, `hx-get="/ui/locations/new"`) || !strings.Contains(body, `class="search-kbd"`) {
+		t.Errorf("Storage shell missing the +new button or search-kbd hint; body=%s", body)
+	}
+	// The inline create form that used to sit above the table is gone.
+	if strings.Contains(body, `action="/ui/locations" method="post"`) {
+		t.Errorf("inline create form should be removed from the Storage shell; body=%s", body)
+	}
+}
+
+// TestLocationTagFilter pins the Storage sidebar facet's ?tag= filter (Task
+// 43): a tag query returns only locations carrying that tag, mirroring Parts'
+// tag sidebar. Without the tag branch in handleLocationsSearch the garage query
+// would leak the workbench row.
+func TestLocationTagFilter(t *testing.T) {
+	srv := newTestServer(t)
+	srv.locations.Create(&locations.Location{Label: "G1", Tags: []string{"garage"}})
+	srv.locations.Create(&locations.Location{Label: "W1", Tags: []string{"workbench"}})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/locations/search?tag=garage", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, "G1") {
+		t.Errorf("?tag=garage should show G1; body=%s", body)
+	}
+	if strings.Contains(body, "W1") {
+		t.Errorf("?tag=garage should not leak the workbench row; body=%s", body)
 	}
 }
 

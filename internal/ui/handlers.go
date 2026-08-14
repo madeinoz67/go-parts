@@ -647,6 +647,7 @@ func applyLocationSort(locs []*locations.Location, counts map[string]int, key, d
 // rows.html pattern. Reads sort/dir query params.
 func (s *Server) handleLocationsSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.ToLower(r.URL.Query().Get("q")) // live-search filter (label/via/tag)
+	tag := r.URL.Query().Get("tag")              // sidebar facet (exact tag match)
 	sortKey := r.URL.Query().Get("sort")         // "label" | "via" | "contents" | ""
 	sortDir := r.URL.Query().Get("dir")          // "asc" | "desc"
 	locs := s.locationOptions()
@@ -662,25 +663,41 @@ func (s *Server) handleLocationsSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		locs = filtered
 	}
+	// Filter by sidebar tag facet (exact). q and tag compose — a search-box
+	// keystroke omits tag, clearing the facet (mirrors the "all" sidebar entry).
+	if tag != "" {
+		filtered := locs[:0]
+		for _, l := range locs {
+			if slices.Contains(l.Tags, tag) {
+				filtered = append(filtered, l)
+			}
+		}
+		locs = filtered
+	}
 	counts := s.locationCounts()
 	applyLocationSort(locs, counts, sortKey, sortDir)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "locations-rows.html", map[string]any{
 		"Locations": locs,
 		"Counts":    counts,
+		"Tags":      s.locationTagCounts(),
+		"Active":    tag,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
 // handleLocationsPage renders the Storage tab: the location list (label · via ·
-// contents-count) + an empty detail panel + the create-single form. List rows
-// hx-get the detail fragment into #loc-detail on click (htmx).
+// contents-count), an empty detail panel, and the tag sidebar facet. The
+// create-single form is no longer inline above the table — it opens in the
+// detail panel via the header "+ new" button (handleLocationCreateForm). List
+// rows hx-get the detail fragment into #loc-detail on click (htmx).
 func (s *Server) handleLocationsPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "locations.html", map[string]any{
 		"Locations": s.locationOptions(),
 		"Counts":    s.locationCounts(),
+		"LocTags":   s.locationTagCounts(),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -741,9 +758,58 @@ func (s *Server) componentList(id string) []*components.Component {
 	return s.components.List(id)
 }
 
-// handleLocationCreate handles the create-single form (POST /ui/locations): a
-// plain form that POSTs then redirects to the page (full reload — robust, no
-// htmx partial). On error re-renders the page with a banner.
+// tagCount is a single tag → location-count row for the Storage sidebar facet
+// (mirrors parts.Store.TagCounts's shape for the Parts tag-nav). Freeform
+// location tags have no canonical categories, so the sidebar is a plain
+// tag+count list.
+type tagCount struct {
+	Tag   string
+	Count int
+}
+
+// locationTagCounts aggregates locations per tag (alphabetical, deterministic)
+// — the Storage sidebar facet, mirroring parts.Store.TagCounts for the Parts
+// tag-nav. Flat-locations: a location's tags are its organizational layer
+// (nesting was removed in the redesign), so the facet counts locations.
+func (s *Server) locationTagCounts() []tagCount {
+	counts := make(map[string]int)
+	for _, l := range s.locationOptions() {
+		for _, t := range l.Tags {
+			counts[t]++
+		}
+	}
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]tagCount, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, tagCount{Tag: k, Count: counts[k]})
+	}
+	return out
+}
+
+// handleLocationCreateForm renders the location-create.html fragment (the
+// Storage header "+ new" button's target — mirrors Parts' handleCreateForm at
+// /ui/parts/new). The form POSTs to /ui/locations (handleLocationCreate) and
+// renders into the detail panel, the same surface as row-select.
+func (s *Server) handleLocationCreateForm(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "location-create.html", map[string]any{}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleLocationCreate handles the create-single form (POST /ui/locations). The
+// form lives in the detail panel (loaded by the "+ new" header button); on
+// submit it renders the loc-row-created fragment — the new row prepended into
+// #loc-tbody (the form's hx-swap="afterbegin") + an OOB swap that opens the
+// fresh bin's detail (ready to stock) + an OOB tag-sidebar refresh. Mirrors the
+// Parts create UX (handleCreate → row-created.html); the former full-page
+// redirect is gone (Task 43 alignment). On error the create form is re-rendered
+// into #loc-detail with a banner via Hx-Retarget (the form's own target is
+// #loc-tbody).
 func (s *Server) handleLocationCreate(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -755,15 +821,25 @@ func (s *Server) handleLocationCreate(w http.ResponseWriter, r *http.Request) {
 		Notes: r.PostFormValue("notes"),
 	}
 	if err := s.locations.Create(l); err != nil {
+		w.Header().Set("Hx-Retarget", "#loc-detail")
+		w.Header().Set("Hx-Reswap", "innerHTML")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = s.tmpl.ExecuteTemplate(w, "locations.html", map[string]any{
-			"Locations": s.locationOptions(),
-			"Counts":    s.locationCounts(),
-			"Error":     err.Error(),
+		_ = s.tmpl.ExecuteTemplate(w, "location-create.html", map[string]any{
+			"Error": err.Error(),
 		})
 		return
 	}
-	http.Redirect(w, r, "/ui/locations", http.StatusSeeOther)
+	// Create populates ID/ViaCode/timestamps on l. Open the new bin's detail so
+	// the operator can immediately add components, and refresh the tag sidebar.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "loc-row-created.html", map[string]any{
+		"L":      l,
+		"D":      s.locationDetailData(l.ID, l, ""),
+		"Tags":   s.locationTagCounts(),
+		"Active": "",
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 // handleLocationEdit handles the edit form (POST /ui/locations/{id}): Get-then-

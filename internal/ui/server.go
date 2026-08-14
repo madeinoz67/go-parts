@@ -131,7 +131,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /ui/parts/bulk-tag", s.auth(s.handleBulkTag))       // bulk tag → refreshed tbody + OOB tag-nav (§7.2)
 	s.mux.HandleFunc("POST /ui/parts/{id}", s.auth(s.handleEdit))              // inline edit → updated detail (409 on stale version)
 	// Slice 5b — the Storage tab (locations management UI, in-process like the parts UI).
-	s.mux.HandleFunc("GET /ui/locations", s.auth(s.handleLocationsPage))          // the Storage page (list + detail + create form)
+	s.mux.HandleFunc("GET /ui/locations", s.auth(s.handleLocationsPage))          // the Storage page (list + detail + tag sidebar)
+	s.mux.HandleFunc("GET /ui/locations/new", s.auth(s.handleLocationCreateForm)) // create form (literal wins over {id}, mirrors /ui/parts/new)
 	s.mux.HandleFunc("GET /ui/locations/search", s.auth(s.handleLocationsSearch)) // sortable table-body fragment (mirrors /ui/parts/search)
 	s.mux.HandleFunc("GET /ui/locations/{id}", s.auth(s.handleLocationDetail))    // location detail fragment (htmx into #loc-detail)
 	s.mux.HandleFunc("POST /ui/locations", s.auth(s.handleLocationCreate))        // create-single → redirect to the page

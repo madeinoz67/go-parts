@@ -1,0 +1,18 @@
+{{define "location-create.html"}}
+<div class="panel-icon">▢</div>
+<h2 class="panel-title">new location</h2>
+<div class="part-sub">a flat bin — tag it with its physical context</div>
+{{if .Error}}<div class="conflict"><p>{{.Error}}</p></div>{{end}}
+{{/* hx-post targets #loc-tbody (afterbegin) so loc-row-created.html prepends the
+     new row; that fragment's OOB swaps open the new bin's detail (#loc-detail)
+     and refresh the tag sidebar (#loc-tag-nav). Mirrors Parts' create.html →
+     row-created.html flow (Task 43 alignment). */}}
+<form class="create" hx-post="/ui/locations" hx-target="#loc-tbody" hx-swap="afterbegin">
+  <div class="spec-rows">
+    <div class="spec-row"><span>Label</span><input type="text" name="label" placeholder="e.g. Bin A3" required style="flex:1"></div>
+    <div class="spec-row"><span>Tags</span><input type="text" name="tags" placeholder="comma-sep (garage, workbench)" style="flex:1"></div>
+    <div class="spec-row"><span>Notes</span><input type="text" name="notes" placeholder="notes" style="flex:1"></div>
+  </div>
+  <button class="btn btn-primary" type="submit" style="margin-top:10px;width:100%">create</button>
+</form>
+{{end}}
