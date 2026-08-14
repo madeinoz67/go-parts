@@ -140,14 +140,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /ui/parts/bulk-tag", s.auth(s.handleBulkTag))       // bulk tag → refreshed tbody + OOB tag-nav (§7.2)
 	s.mux.HandleFunc("POST /ui/parts/{id}", s.auth(s.handleEdit))              // inline edit → updated detail (409 on stale version)
 	// Slice 5b — the Storage tab (locations management UI, in-process like the parts UI).
-	s.mux.HandleFunc("GET /ui/locations", s.auth(s.handleLocationsPage))            // the Storage page (list + detail + tag sidebar)
-	s.mux.HandleFunc("GET /ui/locations/new", s.auth(s.handleLocationCreateForm))   // create form (literal wins over {id}, mirrors /ui/parts/new)
-	s.mux.HandleFunc("GET /ui/locations/bulk", s.auth(s.handleLocationBulkForm))    // bulk-create form (Task 44; literal wins over {id})
-	s.mux.HandleFunc("POST /ui/locations/bulk", s.auth(s.handleLocationBulkCreate)) // bulk create → refreshed tbody + OOB sidebar (Task 44)
-	s.mux.HandleFunc("GET /ui/locations/search", s.auth(s.handleLocationsSearch))   // sortable table-body fragment (mirrors /ui/parts/search)
-	s.mux.HandleFunc("GET /ui/locations/{id}", s.auth(s.handleLocationDetail))      // location detail fragment (htmx into #loc-detail)
-	s.mux.HandleFunc("POST /ui/locations", s.auth(s.handleLocationCreate))          // create-single → redirect to the page
-	s.mux.HandleFunc("POST /ui/locations/{id}", s.auth(s.handleLocationEdit))       // edit (Update) → redirect or banner
+	s.mux.HandleFunc("GET /ui/locations", s.auth(s.handleLocationsPage))                   // the Storage page (list + detail + tag sidebar)
+	s.mux.HandleFunc("GET /ui/locations/new", s.auth(s.handleLocationCreateForm))          // create form (literal wins over {id}, mirrors /ui/parts/new)
+	s.mux.HandleFunc("GET /ui/locations/bulk", s.auth(s.handleLocationBulkForm))           // bulk-create form (Task 44; literal wins over {id})
+	s.mux.HandleFunc("POST /ui/locations/bulk", s.auth(s.handleLocationBulkCreate))        // bulk create → refreshed tbody + OOB sidebar (Task 44)
+	s.mux.HandleFunc("POST /ui/locations/bulk-tag", s.auth(s.handleLocationBulkTag))       // bulk add/remove tag → refreshed tbody + OOB sidebar
+	s.mux.HandleFunc("POST /ui/locations/bulk-delete", s.auth(s.handleLocationBulkDelete)) // bulk delete (stocked bins refused) → refreshed tbody
+	s.mux.HandleFunc("GET /ui/locations/search", s.auth(s.handleLocationsSearch))          // sortable table-body fragment (mirrors /ui/parts/search)
+	s.mux.HandleFunc("GET /ui/locations/{id}", s.auth(s.handleLocationDetail))             // location detail fragment (htmx into #loc-detail)
+	s.mux.HandleFunc("POST /ui/locations", s.auth(s.handleLocationCreate))                 // create-single → redirect to the page
+	s.mux.HandleFunc("POST /ui/locations/{id}", s.auth(s.handleLocationEdit))              // edit (Update) → redirect or banner
 	// Flat-locations: component management UI (htmx into #loc-detail).
 	s.mux.HandleFunc("POST /ui/locations/{id}/components/add", s.auth(s.handleComponentAddUI))
 	s.mux.HandleFunc("POST /ui/locations/{id}/components/{partId}/adjust", s.auth(s.handleComponentAdjustUI))

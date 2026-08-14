@@ -1,10 +1,11 @@
 {{define "locations-rows.html"}}
 <tbody id="loc-tbody">
 {{if not .Locations}}
-  <tr class="empty"><td colspan="4" style="text-align:center;color:var(--text-faint);padding:18px">no locations yet — click + new</td></tr>
+  <tr class="empty"><td colspan="5" style="text-align:center;color:var(--text-faint);padding:18px">no locations yet — click + new</td></tr>
 {{else}}
 {{range .Locations}}
 <tr hx-get="/ui/locations/{{.ID}}" hx-target="#loc-detail" hx-swap="innerHTML">
+  <td class="checkbox-col"><input type="checkbox" class="row-checkbox" name="id" value="{{.ID}}" aria-label="select row" onchange="locUpdateBulkBar()"></td>
   <td>{{.Label}}</td>
   <td class="phos">{{.ViaCode}}</td>
   <td class="num">{{index $.Counts .ID}}</td>

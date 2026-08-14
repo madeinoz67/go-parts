@@ -678,11 +678,27 @@ func applyLocationSort(locs []*locations.Location, counts map[string]int, lastUs
 // handleLocationsSearch renders the locations-rows.html fragment (a sortable
 // <tbody> for the Storage table), mirroring the Parts shell's handleSearch +
 // rows.html pattern. Reads sort/dir query params.
+// handleLocationsSearch renders the locations-rows.html fragment (a sortable
+// <tbody> for the Storage table), mirroring the Parts shell's handleSearch +
+// rows.html pattern. Reads q/tag/sort/dir query params.
 func (s *Server) handleLocationsSearch(w http.ResponseWriter, r *http.Request) {
-	q := strings.ToLower(r.URL.Query().Get("q")) // live-search filter (label/via/tag)
-	tag := r.URL.Query().Get("tag")              // sidebar facet (exact tag match)
-	sortKey := r.URL.Query().Get("sort")         // "label" | "via" | "contents" | ""
-	sortDir := r.URL.Query().Get("dir")          // "asc" | "desc"
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "locations-rows.html", s.locationsView(
+		strings.ToLower(r.URL.Query().Get("q")),
+		r.URL.Query().Get("tag"),
+		r.URL.Query().Get("sort"),
+		r.URL.Query().Get("dir"),
+	)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// locationsView resolves the Storage table view — filters, one stats pass,
+// sort — as the locations-rows.html data map. The shared re-render path for
+// the search endpoint AND the bulk action handlers (a bulk action must
+// re-render the view the operator is looking at, mirroring filteredParts on
+// the Parts side).
+func (s *Server) locationsView(q, tag, sortKey, sortDir string) map[string]any {
 	locs := s.locationOptions()
 	// Filter by query: substring match on Label, ViaCode, or any Tag.
 	if q != "" {
@@ -709,16 +725,97 @@ func (s *Server) handleLocationsSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	counts, lastUsed := s.locationStats(locs)
 	applyLocationSort(locs, counts, lastUsed, sortKey, sortDir)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "locations-rows.html", map[string]any{
+	return map[string]any{
 		"Locations": locs,
 		"Counts":    counts,
 		"LastUsed":  lastUsed,
 		"Tags":      s.locations.TagCounts(),
 		"Active":    tag,
-	}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// handleLocationBulkTag: POST /ui/locations/bulk-tag — adds or removes one tag
+// (mode=add|remove, tag in loc_tag) on every selected location. Per-location
+// Get/mutate-tags/Update under the location's own lock; idempotent both ways
+// (re-adding an existing tag or removing an absent one is a no-op that still
+// counts ok, no Version bump). Re-renders the operator's current view
+// (q/tag/sort/dir from the POST body, injected client-side by
+// locations.html's htmx:configRequest) so the table + tag sidebar refresh
+// live. Mirrors the Parts handleBulkTag UX incl. the skip toast.
+func (s *Server) handleLocationBulkTag(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	tagFilter := r.PostFormValue("tag")                                      // hidden filter context
+	newTag := strings.ToLower(strings.TrimSpace(r.PostFormValue("loc_tag"))) // the select+input
+	remove := r.PostFormValue("mode") == "remove"
+	var ok, skip int
+	if newTag != "" {
+		for _, id := range r.PostForm["id"] {
+			l, err := s.locations.Get(id)
+			if err != nil {
+				skip++
+				continue
+			}
+			if remove {
+				tags := l.Tags[:0]
+				for _, t := range l.Tags {
+					if t != newTag {
+						tags = append(tags, t)
+					}
+				}
+				l.Tags = tags
+			} else if !slices.Contains(l.Tags, newTag) {
+				l.Tags = append(l.Tags, newTag)
+			}
+			if err := s.locations.Update(l, l.Version); err != nil {
+				slog.Warn("loc bulk-tag: skipped (concurrent edit)", "id", id, "error", err)
+				skip++
+			} else {
+				ok++
+			}
+		}
+	}
+	if skip > 0 {
+		w.Header().Set("HX-Trigger", fmt.Sprintf(`{"showToast":"Tagged %d, skipped %d (not found or concurrent edit)"}`, ok, skip))
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := s.locationsView(strings.ToLower(r.PostFormValue("q")), tagFilter, r.PostFormValue("sort"), r.PostFormValue("dir"))
+	_ = s.tmpl.ExecuteTemplate(w, "locations-rows.html", data)
+}
+
+// handleLocationBulkDelete: POST /ui/locations/bulk-delete — deletes every
+// selected location, REFUSING any bin that still holds components (the §5.1
+// composed has-stock guard: locations.Store cannot see the components
+// keyspace, so the check lives here — the same composition the REST delete
+// and CLI remove perform; a cross-surface link.DeleteLocation is the
+// architecture-backlog's dedup answer). Skips surface in the toast, not a
+// silent partial. Check-then-delete TOCTOU is v1-accepted single-operator,
+// same posture as the REST/CLI paths.
+func (s *Server) handleLocationBulkDelete(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var ok, skippedStocked, skip int
+	for _, id := range r.PostForm["id"] {
+		if s.componentList(id) != nil && len(s.componentList(id)) > 0 {
+			skippedStocked++
+			continue
+		}
+		if err := s.locations.Delete(id); err != nil {
+			skip++
+		} else {
+			ok++
+		}
+	}
+	if skippedStocked > 0 || skip > 0 {
+		w.Header().Set("HX-Trigger", fmt.Sprintf(`{"showToast":"Deleted %d, skipped %d stocked + %d not found"}`, ok, skippedStocked, skip))
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := s.locationsView(strings.ToLower(r.PostFormValue("q")), r.PostFormValue("tag"), r.PostFormValue("sort"), r.PostFormValue("dir"))
+	_ = s.tmpl.ExecuteTemplate(w, "locations-rows.html", data)
 }
 
 // handleLocationsPage renders the Storage tab: the location list (label · via ·

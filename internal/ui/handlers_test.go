@@ -1266,6 +1266,69 @@ func TestCopyLinkButton(t *testing.T) {
 	}
 }
 
+// TestLocationBulkTagAddRemove pins the Storage bulk-tag action: mode=add
+// applies the tag to every selected location (idempotent — re-add never
+// duplicates), mode=remove strips it. The response re-renders the tbody.
+func TestLocationBulkTagAddRemove(t *testing.T) {
+	srv := newTestServer(t)
+	a := uiCreateLocation(t, srv, "BTA")
+	b := uiCreateLocation(t, srv, "BTB")
+	body := "mode=add&loc_tag=SMD&id=" + a.ID + "&id=" + b.ID
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/bulk-tag", body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bulk-tag = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	for _, id := range []string{a.ID, b.ID} {
+		l, _ := srv.locations.Get(id)
+		if !slices.Contains(l.Tags, "smd") {
+			t.Errorf("location %s should carry 'smd': %v", id, l.Tags)
+		}
+	}
+	// Idempotent re-add: still exactly one 'smd'.
+	rr2 := httptest.NewRecorder()
+	srv.ServeHTTP(rr2, postForm("POST", "/ui/locations/bulk-tag", body))
+	l, _ := srv.locations.Get(a.ID)
+	if testCountStr(l.Tags, "smd") != 1 {
+		t.Errorf("re-add must not duplicate: %v", l.Tags)
+	}
+	// Remove.
+	rr3 := httptest.NewRecorder()
+	srv.ServeHTTP(rr3, postForm("POST", "/ui/locations/bulk-tag",
+		"mode=remove&loc_tag=smd&id="+a.ID+"&id="+b.ID))
+	l2, _ := srv.locations.Get(a.ID)
+	if slices.Contains(l2.Tags, "smd") {
+		t.Errorf("mode=remove should strip the tag: %v", l2.Tags)
+	}
+}
+
+// TestLocationBulkDeleteRefusesStocked pins the has-stock guard: a bin still
+// holding components is refused (skipped + toast), an empty bin is deleted.
+func TestLocationBulkDeleteRefusesStocked(t *testing.T) {
+	srv := newTestServer(t)
+	stocked := uiCreateLocation(t, srv, "StockedBin")
+	empty := uiCreateLocation(t, srv, "EmptyBin")
+	p := uiCreatePart(t, srv, "BD1")
+	if err := srv.components.Add(stocked.ID, p.ID, 3, nil); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/bulk-delete",
+		"id="+stocked.ID+"&id="+empty.ID))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bulk-delete = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("HX-Trigger"); !strings.Contains(got, "skipped 1 stocked") {
+		t.Errorf("stocked bin should be skipped with a toast; HX-Trigger=%q", got)
+	}
+	if _, err := srv.locations.Get(stocked.ID); err != nil {
+		t.Error("stocked bin must NOT be deleted")
+	}
+	if _, err := srv.locations.Get(empty.ID); err == nil {
+		t.Error("empty bin should be deleted")
+	}
+}
+
 // TestLocationEditVersionConflictReload pins §5.14 on the locations surface: a
 // stale expectedVersion → 409 + the reload prompt (NOT a banner). The banner
 // path would re-render with the canonical Version + the user's stale fields,

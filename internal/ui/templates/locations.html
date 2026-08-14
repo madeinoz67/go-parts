@@ -42,9 +42,11 @@
     <main class="main">
       {{if .Error}}<div class="conflict"><p>{{.Error}}</p></div>{{end}}
 
+      {{template "loc-bulk-bar.html" .}}
       <table class="parts">
         <thead>
           <tr>
+            <th class="checkbox-col"><input type="checkbox" class="row-checkbox" id="locSelectAll" aria-label="select all visible" onchange="locToggleSelectAll(this)"></th>
             <th role="columnheader"><a hx-get="/ui/locations/search?sort=label&dir=asc" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML">Label <span class="sort-ind">↕</span></a></th>
             <th role="columnheader"><a hx-get="/ui/locations/search?sort=via&dir=asc" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML">Via <span class="sort-ind">↕</span></a></th>
             <th role="columnheader"><a hx-get="/ui/locations/search?sort=contents&dir=desc" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML">Contents <span class="sort-ind">↕</span></a></th>
@@ -77,6 +79,7 @@
 document.addEventListener('keydown', e => {
   if (e.key === '/' && document.activeElement.id !== 'loc-search') { e.preventDefault(); document.getElementById('loc-search').focus(); }
   if (e.key === 'Escape') {
+    document.getElementById('locConfirmOverlay')?.classList.remove('active');
     const dp = document.getElementById('loc-detail');
     if (dp) dp.innerHTML = '<p class="hint">select a location</p>';
   }
@@ -85,6 +88,93 @@ document.addEventListener('keydown', e => {
     const newBtn = document.querySelector('[hx-get="/ui/locations/new"]');
     if (newBtn) htmx.trigger(newBtn, 'click');
   }
+});
+// --- Storage bulk actions (ported from the Parts shell §7.2 machinery) -----
+// Selection persists across a re-sort (same rows reordered) and clears on a
+// new search (different row set); the chips row swaps to the bulk bar while
+// anything is selected. View-state (q/sort/dir/tag) is tracked client-side
+// and injected into the bulk POSTs via htmx:configRequest so an action
+// re-renders the operator's current view — the server re-reads it from
+// r.PostForm (the hidden fields in loc-bulk-bar.html render empty here).
+let locSelected = new Set(), locLastQuery = "", locLastChecked = null;
+let locViewSort = '', locViewDir = '', locViewTag = '';
+function locUpdateBulkBar(){
+  const checked = document.querySelectorAll('#loc-tbody tr .row-checkbox[name=id]:checked');
+  locSelected = new Set([...checked].map(cb => cb.value));
+  const chips = document.getElementById('loc-chips-row'), bar = document.getElementById('locBulkBar');
+  if (checked.length > 0) { chips.style.display = 'none'; bar.classList.add('active'); }
+  else { chips.style.display = 'flex'; bar.classList.remove('active'); }
+  document.getElementById('locBulkCount').textContent = checked.length + ' selected';
+  const all = document.querySelectorAll('#loc-tbody tr .row-checkbox[name=id]');
+  document.getElementById('locSelectAll').checked = all.length > 0 && checked.length === all.length;
+}
+function locToggleSelectAll(src){
+  document.querySelectorAll('#loc-tbody tr .row-checkbox[name=id]').forEach(cb => cb.checked = src.checked);
+  locUpdateBulkBar();
+}
+function locClearSelection(){
+  document.querySelectorAll('.row-checkbox[name=id]').forEach(cb => cb.checked = false);
+  locUpdateBulkBar();
+}
+document.addEventListener('click', e => {
+  const cb = e.target.closest('#loc-tbody tr .row-checkbox[name=id]');
+  if (!cb) return;
+  if (e.shiftKey && locLastChecked) {
+    const boxes = [...document.querySelectorAll('#loc-tbody tr .row-checkbox[name=id]')];
+    const i = boxes.indexOf(cb), j = boxes.indexOf(locLastChecked);
+    boxes.slice(Math.min(i,j), Math.max(i,j)+1).forEach(b => b.checked = true);
+  }
+  locLastChecked = cb;
+  locUpdateBulkBar();
+});
+document.body.addEventListener('htmx:afterSwap', e => {
+  if (e.target.id !== 'loc-tbody') return;
+  locLastChecked = null;
+  const q = document.getElementById('loc-search').value;
+  if (q === locLastQuery) {
+    document.querySelectorAll('#loc-tbody tr .row-checkbox[name=id]').forEach(cb => {
+      if (locSelected.has(cb.value)) cb.checked = true;
+    });
+  } else { locSelected.clear(); locLastQuery = q; }
+  locUpdateBulkBar();
+});
+// Track sort/dir/tag from clicked view links (sort headers, sidebar facet).
+document.body.addEventListener('click', e => {
+  const a = e.target.closest('a[hx-get]');
+  if (!a) return;
+  const params = new URL(a.getAttribute('hx-get'), location.href).searchParams;
+  if (params.has('sort')) { locViewSort = params.get('sort') || ''; locViewDir = params.get('dir') || ''; }
+  if (a.closest('#loc-tag-nav') && params.has('tag')) { locViewTag = params.get('tag') || ''; }
+});
+document.body.addEventListener('htmx:configRequest', e => {
+  const elt = e.detail.elt;
+  if (!elt || !elt.closest('#locBulkDeleteForm, #locBulkTagForm')) return;
+  const p = e.detail.parameters;
+  if (!p['q']) p['q'] = (document.getElementById('loc-search') || {}).value || '';
+  if (!p['sort']) p['sort'] = locViewSort;
+  if (!p['dir']) p['dir'] = locViewDir;
+  if (!p['tag']) p['tag'] = locViewTag;
+});
+// Delete confirm (mirrors Parts' confirmOverlay).
+let locLastTrigger = null;
+function askLocDelete(){
+  const n = document.querySelectorAll('#loc-tbody tr .row-checkbox[name=id]:checked').length;
+  document.getElementById('locConfirmCount').textContent = n;
+  locLastTrigger = document.activeElement;
+  document.getElementById('locConfirmOverlay').classList.add('active');
+  document.querySelector('#locConfirmOverlay .btn-danger')?.focus();
+}
+function hideLocConfirm(){
+  document.getElementById('locConfirmOverlay').classList.remove('active');
+  if (locLastTrigger) { locLastTrigger.focus(); locLastTrigger = null; }
+}
+// Bulk-action skip feedback (toast) — mirrors the Parts shell's listener.
+document.body.addEventListener('showToast', e => {
+  const t = document.createElement('div');
+  t.textContent = e.detail;
+  t.style.cssText = 'position:fixed;top:16px;right:16px;max-width:380px;padding:12px 16px;background:#3b82f6;color:#fff;border-radius:6px;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.3);font-size:14px';
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .4s'; setTimeout(() => t.remove(), 400); }, 5000);
 });
 // Slice 6: a via-scan redirect lands on /ui/locations?loc={id}; auto-open it.
 (function(){ const l = new URLSearchParams(location.search).get('loc'); if (l) htmx.ajax('GET', '/ui/locations/'+l, {target:'#loc-detail'}); })();

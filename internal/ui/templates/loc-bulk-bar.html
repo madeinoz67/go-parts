@@ -1,0 +1,43 @@
+{{define "loc-bulk-bar.html"}}
+{{/* Storage bulk-action bar (mirrors Parts' bulk-bar.html, §7.2): hidden until
+     rows are selected; the chips row collapses to it. The tag form carries a
+     mode select (add/remove). Hidden view-state fields render EMPTY in the
+     shell — the browser injects live q/sort/dir/tag via htmx:configRequest
+     (locations.html), so a bulk action re-renders the operator's current view.
+     Delete requires the confirm overlay (stocked bins refuse server-side). */}}
+<div class="toolbar" id="loc-toolbar">
+  <div class="chips" id="loc-chips-row"></div>
+  <div class="bulk-bar" id="locBulkBar">
+    <span class="count" id="locBulkCount">0 selected</span>
+    <form hx-post="/ui/locations/bulk-delete" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML" hx-include="[name=id]" id="locBulkDeleteForm">
+      <input type="hidden" name="q" value=""><input type="hidden" name="tag" value="">
+      <input type="hidden" name="sort" value=""><input type="hidden" name="dir" value="">
+      <button type="button" class="btn-bulk btn-danger" onclick="askLocDelete()">delete</button>
+    </form>
+    <form hx-post="/ui/locations/bulk-tag" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML" hx-include="[name=id]" id="locBulkTagForm">
+      <input type="hidden" name="q" value=""><input type="hidden" name="tag" value="">
+      <input type="hidden" name="sort" value=""><input type="hidden" name="dir" value="">
+      {{/* mode rides the select; the new tag is name=loc_tag (the hidden
+           name=tag field carries the FILTER context, mirroring Parts'
+           tag/new_tag disambiguation). */}}
+      <select name="mode" style="width:auto">
+        <option value="add">add</option>
+        <option value="remove">remove</option>
+      </select>
+      <input name="loc_tag" placeholder="tag" required>
+      <button type="submit" class="btn-bulk">tag</button>
+    </form>
+    <button class="btn-bulk" onclick="locClearSelection()">clear</button>
+  </div>
+</div>
+
+<div class="confirm-overlay" id="locConfirmOverlay">
+  <div class="confirm-panel" role="dialog" aria-modal="true" aria-labelledby="locConfirmHeading">
+    <p id="locConfirmHeading">delete <span id="locConfirmCount">0</span> locations? stocked bins are refused; this can't be undone.</p>
+    <div class="confirm-actions">
+      <button class="btn" onclick="hideLocConfirm()">cancel</button>
+      <button class="btn btn-danger" onclick="document.getElementById('locBulkDeleteForm').requestSubmit()">delete</button>
+    </div>
+  </div>
+</div>
+{{end}}
