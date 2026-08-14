@@ -618,13 +618,15 @@ func (s *Server) handleBulkTag(w http.ResponseWriter, r *http.Request) {
 // locationCounts tallies components per location (map[locID]count) — the
 // contents-count column in the locations list. Flat-locations model: a
 // location's stock is its Component set, so the count comes from the components
-// keyspace, not a parts scan.
-func (s *Server) locationCounts() map[string]int {
+// keyspace, not a parts scan. Takes the caller's locations slice (their single
+// List() pass) so the request scans the locations keyspace once, not per
+// helper.
+func (s *Server) locationCounts(locs []*locations.Location) map[string]int {
 	counts := make(map[string]int)
 	if s.components == nil {
 		return counts
 	}
-	for _, loc := range s.locationOptions() {
+	for _, loc := range locs {
 		counts[loc.ID] = len(s.components.List(loc.ID))
 	}
 	return counts
@@ -674,13 +676,13 @@ func (s *Server) handleLocationsSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		locs = filtered
 	}
-	counts := s.locationCounts()
+	counts := s.locationCounts(locs)
 	applyLocationSort(locs, counts, sortKey, sortDir)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "locations-rows.html", map[string]any{
 		"Locations": locs,
 		"Counts":    counts,
-		"Tags":      s.locationTagCounts(),
+		"Tags":      s.locations.TagCounts(),
 		"Active":    tag,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -693,11 +695,15 @@ func (s *Server) handleLocationsSearch(w http.ResponseWriter, r *http.Request) {
 // detail panel via the header "+ new" button (handleLocationCreateForm). List
 // rows hx-get the detail fragment into #loc-detail on click (htmx).
 func (s *Server) handleLocationsPage(w http.ResponseWriter, r *http.Request) {
+	// One List() pass feeds the list, the contents counts, and the footer —
+	// the tag facet is a Store method (its own single scan, mirroring the
+	// Parts shell's handleSearch + store.TagCounts pairing).
+	locs := s.locationOptions()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "locations.html", map[string]any{
-		"Locations": s.locationOptions(),
-		"Counts":    s.locationCounts(),
-		"LocTags":   s.locationTagCounts(),
+		"Locations": locs,
+		"Counts":    s.locationCounts(locs),
+		"LocTags":   s.locations.TagCounts(),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -758,38 +764,6 @@ func (s *Server) componentList(id string) []*components.Component {
 	return s.components.List(id)
 }
 
-// tagCount is a single tag → location-count row for the Storage sidebar facet
-// (mirrors parts.Store.TagCounts's shape for the Parts tag-nav). Freeform
-// location tags have no canonical categories, so the sidebar is a plain
-// tag+count list.
-type tagCount struct {
-	Tag   string
-	Count int
-}
-
-// locationTagCounts aggregates locations per tag (alphabetical, deterministic)
-// — the Storage sidebar facet, mirroring parts.Store.TagCounts for the Parts
-// tag-nav. Flat-locations: a location's tags are its organizational layer
-// (nesting was removed in the redesign), so the facet counts locations.
-func (s *Server) locationTagCounts() []tagCount {
-	counts := make(map[string]int)
-	for _, l := range s.locationOptions() {
-		for _, t := range l.Tags {
-			counts[t]++
-		}
-	}
-	keys := make([]string, 0, len(counts))
-	for k := range counts {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]tagCount, 0, len(keys))
-	for _, k := range keys {
-		out = append(out, tagCount{Tag: k, Count: counts[k]})
-	}
-	return out
-}
-
 // handleLocationCreateForm renders the location-create.html fragment (the
 // Storage header "+ new" button's target — mirrors Parts' handleCreateForm at
 // /ui/parts/new). The form POSTs to /ui/locations (handleLocationCreate) and
@@ -835,7 +809,7 @@ func (s *Server) handleLocationCreate(w http.ResponseWriter, r *http.Request) {
 	if err := s.tmpl.ExecuteTemplate(w, "loc-row-created.html", map[string]any{
 		"L":      l,
 		"D":      s.locationDetailData(l.ID, l, ""),
-		"Tags":   s.locationTagCounts(),
+		"Tags":   s.locations.TagCounts(),
 		"Active": "",
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -194,6 +195,57 @@ func (s *Store) Count() int {
 		return 0
 	}
 	return n
+}
+
+// TagCount is one tag → location-count row for the Storage sidebar facet — the
+// locations mirror of parts.TagCount (same field names, so the tag-nav partial
+// renders either shape).
+type TagCount struct {
+	Tag   string
+	Count int
+}
+
+// TagCounts aggregates locations per tag via one prefix scan (skips
+// undecodable records, best-effort — same posture as parts.Store.TagCounts).
+// Tags are lowercased on save (normalizeTags), so no normalization happens
+// here — a Garage/garage split would be a bug in normalizeTags, not something
+// TagCounts defends against. Flat-locations: a location's tags are its
+// organizational layer (nesting was removed in the redesign), so the facet
+// counts locations, not components. Sorted count desc then tag asc — the
+// order the Storage sidebar renders. Nil-safe: a nil *Store (a test Server
+// wired without locations) returns nil, mirroring ui.locationOptions' guard.
+func (s *Store) TagCounts() []TagCount {
+	if s == nil {
+		return nil
+	}
+	var ws [8]byte
+	lower, upper := keys.LocationPrefixBound(ws)
+	it, err := s.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
+	if err != nil {
+		return nil
+	}
+	defer it.Close()
+	counts := make(map[string]int)
+	for it.First(); it.Valid(); it.Next() {
+		var l Location
+		if err := json.Unmarshal(it.Value(), &l); err != nil {
+			continue
+		}
+		for _, tg := range l.Tags {
+			counts[tg]++
+		}
+	}
+	out := make([]TagCount, 0, len(counts))
+	for tg, c := range counts {
+		out = append(out, TagCount{Tag: tg, Count: c})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Tag < out[j].Tag
+	})
+	return out
 }
 
 // ByVia resolves a Via code to its Location (via.Lookup → Get). A via-miss is

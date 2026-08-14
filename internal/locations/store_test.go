@@ -12,6 +12,29 @@ import (
 // newStore mirrors parts/store_test.go's helper: real Pebble + a shared via.Store.
 // locations.Store has no FTS, so unlike parts' helper it does not take an
 // index.NewFTS arg — the shape is uniform with parts' newStoreWithVia minus FTS.
+// TestTagCounts pins the Storage sidebar facet: TagCounts aggregates every
+// location's Tags and returns them sorted by count desc then tag asc — the
+// order the Storage sidebar renders. Mirrors parts.TestTagCounts (same
+// ordering contract, one prefix scan, best-effort skip-undecodable posture).
+func TestTagCounts(t *testing.T) {
+	store, _ := newStore(t)
+	store.Create(&Location{Label: "a", Tags: []string{"garage", "shelf"}})
+	store.Create(&Location{Label: "b", Tags: []string{"garage"}})
+	store.Create(&Location{Label: "c", Tags: []string{"shed"}})
+
+	got := store.TagCounts()
+	if len(got) != 3 {
+		t.Fatalf("TagCounts = %d entries, want 3: %+v", len(got), got)
+	}
+	// garage(2) first by count; then shed(1) and shelf(1) alpha asc.
+	if got[0].Tag != "garage" || got[0].Count != 2 {
+		t.Errorf("got[0] = %+v, want {garage 2}", got[0])
+	}
+	if got[1].Tag != "shed" || got[2].Tag != "shelf" {
+		t.Errorf("count-tie order should be alpha asc (shed before shelf): %+v", got)
+	}
+}
+
 func newStore(t *testing.T) (*Store, *via.Store) {
 	t.Helper()
 	db, err := pebble.Open(filepath.Join(t.TempDir(), "p"), &pebble.Options{})
