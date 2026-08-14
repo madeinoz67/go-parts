@@ -117,6 +117,7 @@ button,a,input,th[role="columnheader"],tr{transition:background-color 150ms ease
   margin-left:1px; vertical-align:-2px;
 }
 .header .search{ flex:1; max-width:560px; }
+.header .header-logo{ flex:none; width:22px; height:22px; display:inline-block; }
 .topnav{
   display:flex; gap:2px; padding:0 20px;
   border-bottom:1px solid var(--border); background:var(--bg);
