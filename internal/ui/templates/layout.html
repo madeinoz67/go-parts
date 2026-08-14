@@ -43,10 +43,10 @@
         <thead>
           <tr>
             <th class="checkbox-col"><input type="checkbox" class="row-checkbox" id="selectAll" aria-label="select all visible" onchange="toggleSelectAll(this)"></th>
-            <th role="columnheader"><a hx-get="/ui/parts/search?sort=mpn&dir=asc" hx-target="#parts-tbody" hx-include="#search">MPN <span class="sort-ind">↕</span></a></th>
+            <th role="columnheader"><a hx-get="/ui/parts/search?sort=mpn&dir=asc" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" hx-include="#search">MPN <span class="sort-ind">↕</span></a></th>
             <th>Description</th>
-            <th role="columnheader"><a hx-get="/ui/parts/search?sort=footprint&dir=asc" hx-target="#parts-tbody" hx-include="#search">Package <span class="sort-ind">↕</span></a></th>
-            <th role="columnheader"><a hx-get="/ui/parts/search?sort=qty&dir=asc" hx-target="#parts-tbody" hx-include="#search">Qty <span class="sort-ind">↕</span></a></th>
+            <th role="columnheader"><a hx-get="/ui/parts/search?sort=footprint&dir=asc" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" hx-include="#search">Package <span class="sort-ind">↕</span></a></th>
+            <th role="columnheader"><a hx-get="/ui/parts/search?sort=qty&dir=asc" hx-target="#parts-tbody" hx-select="#parts-tbody" hx-swap="outerHTML" hx-include="#search">Qty <span class="sort-ind">↕</span></a></th>
             <th>Status</th>
           </tr>
         </thead>
