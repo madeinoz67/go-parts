@@ -67,7 +67,7 @@
   <footer class="statusbar">
     <span class="seg mode">-- STORAGE --</span>
     <span class="sep">|</span>
-    <span class="seg rec"><span class="num">{{len .Locations}} locations</span></span>
+    <span class="seg rec"><span class="num">{{.ActiveCount}} locations</span></span>
     <span class="seg ver" style="margin-left:auto">v2.1 · dev</span>
   </footer>
 </div>
@@ -143,14 +143,20 @@ document.body.addEventListener('click', e => {
   const a = e.target.closest('a[hx-get]');
   if (!a) return;
   const params = new URL(a.getAttribute('hx-get'), location.href).searchParams;
-  if (params.has('sort')) { locViewSort = params.get('sort') || ''; locViewDir = params.get('dir') || ''; }
+  if (params.has('sort')) { locViewSort = params.get('sort') || ''; locViewDir = params.get('dir') || ''; locViewTag = ''; locViewArchived = false; }
   if (a.closest('#loc-tag-nav') && params.has('tag')) { locViewTag = params.get('tag') || ''; }
   // The archived facet sets/clears the archived view flag ("all" clears it).
   if (a.closest('#loc-tag-nav')) { locViewArchived = params.has('archived'); }
 });
+// A search-box keystroke renders the plain active view (q-only request) —
+// sync the tracked state so the next bulk action injects what the operator
+// sees, not a stale facet (adversary finding 4).
+document.body.addEventListener('htmx:beforeRequest', e => {
+  if (e.detail.elt && e.detail.elt.id === 'loc-search') { locViewTag = ''; locViewArchived = false; }
+});
 document.body.addEventListener('htmx:configRequest', e => {
   const elt = e.detail.elt;
-  if (!elt || !elt.closest('#locBulkDeleteForm, #locBulkTagForm')) return;
+  if (!elt || !elt.closest('#locBulkDeleteForm, #locBulkTagForm, #locBulkArchiveForm, [hx-post*="/archive"]')) return;
   const p = e.detail.parameters;
   if (!p['q']) p['q'] = (document.getElementById('loc-search') || {}).value || '';
   if (!p['sort']) p['sort'] = locViewSort;

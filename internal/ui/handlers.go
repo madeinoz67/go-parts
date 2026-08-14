@@ -854,12 +854,27 @@ func (s *Server) handleLocationArchiveToggle(w http.ResponseWriter, r *http.Requ
 	}
 	l.Archived = !l.Archived
 	if err := s.locations.Update(l, l.Version); err != nil {
+		// §5.14 rejection: retarget the error into #loc-detail — the toggle
+		// form's own target is #loc-tbody with hx-select, so a bare detail
+		// fragment there white-outs the whole table and hides the rejection
+		// (adversary finding 1). Render the CANONICAL record, never the
+		// mutated-but-unpersisted l (it would mislabel the toggle button).
+		cur, gErr := s.locations.Get(id)
+		if gErr != nil {
+			cur = l // store unreadable; best effort with what we hold
+		}
+		w.Header().Set("Hx-Retarget", "#loc-detail")
+		w.Header().Set("Hx-Reswap", "innerHTML")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, l, err.Error()))
+		_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, cur, err.Error()))
 		return
 	}
+	// Rebuild the view the operator is actually in (adversary finding 3): the
+	// archived/q/tag/sort/dir params ride the same client-side configRequest
+	// injection as the bulk forms (the toggle form is covered by the
+	// [hx-post*="/archive"] selector arm).
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	data := s.locationsView(strings.ToLower(r.PostFormValue("q")), r.PostFormValue("tag"), r.PostFormValue("sort"), r.PostFormValue("dir"), false)
+	data := s.locationsView(strings.ToLower(r.PostFormValue("q")), r.PostFormValue("tag"), r.PostFormValue("sort"), r.PostFormValue("dir"), r.PostFormValue("archived") == "1")
 	data["D"] = s.locationDetailData(id, l, "")
 	_ = s.tmpl.ExecuteTemplate(w, "loc-archive-swap.html", data)
 }
@@ -923,6 +938,7 @@ func (s *Server) handleLocationsPage(w http.ResponseWriter, r *http.Request) {
 		"LastUsed":      lastUsed,
 		"LocTags":       s.locations.TagCounts(),
 		"ArchivedCount": archivedCount,
+		"ActiveCount":   len(locs) - archivedCount, // footer matches the default view (adversary note 5)
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

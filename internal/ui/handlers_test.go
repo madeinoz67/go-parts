@@ -1381,6 +1381,82 @@ func TestLocationArchiveFlow(t *testing.T) {
 	}
 }
 
+// TestArchiveToggleConflictRetargets pins adversary finding 1: on the §5.14
+// conflict path the toggle must NOT answer a bare detail fragment into the
+// form's #loc-tbody/hx-select target (which white-outs the table and hides
+// the rejection) — it retargets into #loc-detail and renders the CANONICAL
+// record (button label reflects stored truth, not the lost mutation).
+func TestArchiveToggleConflictRetargets(t *testing.T) {
+	srv := newTestServer(t)
+	// The toggle re-Gets fresh, so a stale-version conflict needs a REAL
+	// concurrent pair (both Get v1; one Update wins, the loser takes the
+	// §5.14 path) — the same interleaving the adversary raced. Loop trials
+	// until a conflict response lands; every conflict observed must be
+	// retargeted into #loc-detail (never a bare fragment into #loc-tbody,
+	// which white-outs the table) and render the canonical state.
+	for trial := 0; trial < 50; trial++ {
+		a := uiCreateLocation(t, srv, "ConflictBin")
+		r1, r2 := httptest.NewRecorder(), httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() { srv.ServeHTTP(r2, postForm("POST", "/ui/locations/"+a.ID+"/archive", "")); close(done) }()
+		srv.ServeHTTP(r1, postForm("POST", "/ui/locations/"+a.ID+"/archive", ""))
+		<-done
+		for _, rr := range []*httptest.ResponseRecorder{r1, r2} {
+			if got := rr.Header().Get("Hx-Retarget"); got == "" {
+				continue // the winner (or a no-conflict trial) — check the other
+			} else if got != "#loc-detail" {
+				t.Fatalf("Hx-Retarget = %q, want #loc-detail (a bare fragment into #loc-tbody white-outs the table)", got)
+			}
+			body := rr.Body.String()
+			if !strings.Contains(body, "version conflict") {
+				t.Errorf("conflict should surface the rejection in the panel; body=%s", body)
+			}
+			// The winner flipped Archived exactly once; the loser's render must
+			// show the canonical stored state, whichever direction that is.
+			got, _ := srv.locations.Get(a.ID)
+			want := ">archive<"
+			if got.Archived {
+				want = ">unarchive<"
+			}
+			if !strings.Contains(body, want) {
+				t.Errorf("button label must reflect the canonical state (%q); body=%s", want, body)
+			}
+			return // conflict path proven
+		}
+	}
+	t.Fatal("50 concurrent trials produced no §5.14 conflict — race window closed; test can't exercise the path")
+}
+
+// TestArchiveToggleHonorsViewParams pins adversary finding 3: the toggle
+// rebuilds the view the operator is in — posting archived=1 keeps the
+// archived facet view rather than evicting them to the active list.
+func TestArchiveToggleHonorsViewParams(t *testing.T) {
+	srv := newTestServer(t)
+	a := uiCreateLocation(t, srv, "TogA")
+	b := uiCreateLocation(t, srv, "TogB")
+	srv.locations.Update(func() *locations.Location { l, _ := srv.locations.Get(a.ID); l.Archived = true; return l }(), 1)
+	_ = b
+	// Archive B too (via the store), then unarchive A from the archived view.
+	lb, _ := srv.locations.Get(b.ID)
+	lb.Archived = true
+	srv.locations.Update(lb, lb.Version)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/"+a.ID+"/archive", "archived=1"))
+	body := rr.Body.String()
+	// The archived view still shows B; the operator was not evicted to the
+	// active list (which contains no bins once both were archived... A is now
+	// active again, so the ACTIVE view would show A — assert B present and
+	// the response is the archived facet by checking A is ABSENT from rows).
+	if !strings.Contains(body, "<td>TogB<") {
+		t.Errorf("archived view should still list TogB as a row; body=%s", body)
+	}
+	// Row-scoped: the OOB #loc-detail legitimately renders TogA's panel title
+	// after the toggle — only its TABLE ROW must be gone.
+	if strings.Contains(body, "<td>TogA<") {
+		t.Errorf("unarchived TogA must leave the archived view's rows; body=%s", body)
+	}
+}
+
 // TestLocationEditVersionConflictReload pins §5.14 on the locations surface: a
 // stale expectedVersion → 409 + the reload prompt (NOT a banner). The banner
 // path would re-render with the canonical Version + the user's stale fields,
