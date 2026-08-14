@@ -8,4 +8,8 @@
   <td>{{template "status-badge.html" (dict "P" .P)}}</td>
 </tr>
 <section class="detail" id="detail-panel" hx-swap-oob="true"><p class="hint">select a part</p></section>
+{{/* OOB tag-sidebar refresh — a part created with a new tag updates the facet
+     without a manual reload (the create path's Tags/Active come from the
+     handler). */}}
+<aside class="sidebar" id="tag-nav" hx-swap-oob="true">{{template "tag-nav.html" (dict "Tags" .Tags "Active" .Active)}}</aside>
 {{end}}

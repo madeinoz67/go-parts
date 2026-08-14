@@ -227,6 +227,47 @@ func newTestServerRecorder(t *testing.T, srv *Server, req *http.Request) *httpte
 	return rr
 }
 
+// TestEditRefreshesTagSidebar pins the parts side of "tags are not refreshed
+// if a tag is changed — page needs a manual refresh": handleEdit's success
+// response must ship an OOB #tag-nav swap alongside the updated detail, so a
+// tag change lands in the sidebar live (same class as the Storage edit fix).
+func TestEditRefreshesTagSidebar(t *testing.T) {
+	srv := newTestServer(t)
+	p := uiCreatePart(t, srv, "TAGEDIT1")
+	body := "version=" + fmt.Sprintf("%d", p.Version) + "&tags=freshtag"
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p.ID, body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("edit = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	b := rr.Body.String()
+	if !strings.Contains(b, `id="tag-nav"`) || !strings.Contains(b, `hx-swap-oob="true"`) {
+		t.Errorf("edit success should ship an OOB #tag-nav refresh; body=%s", b)
+	}
+	if !strings.Contains(b, "freshtag") {
+		t.Errorf("refreshed sidebar should list the new tag; body=%s", b)
+	}
+}
+
+// TestCreateRefreshesTagSidebar — the create path (row-created.html) ships the
+// same OOB tag-nav refresh, so a part created with a new tag updates the facet
+// without a manual reload.
+func TestCreateRefreshesTagSidebar(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts", "mpn=NEWTAG1&part_type=local&tags=newtag1"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("create = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	b := rr.Body.String()
+	if !strings.Contains(b, `id="tag-nav"`) || !strings.Contains(b, `hx-swap-oob="true"`) {
+		t.Errorf("create success should ship an OOB #tag-nav refresh; body=%s", b)
+	}
+	if !strings.Contains(b, "newtag1") {
+		t.Errorf("refreshed sidebar should list the new tag; body=%s", b)
+	}
+}
+
 func TestCreateFormRenders(t *testing.T) {
 	srv := newTestServer(t)
 	rr := httptest.NewRecorder()
@@ -1010,5 +1051,45 @@ func TestLocationEditVersionConflictReload(t *testing.T) {
 	got, _ := srv.locations.Get(a.ID)
 	if got.Label == "VC-overwrite" {
 		t.Error("the stale version-conflict edit was applied (blind overwrite — §5.14 violation)")
+	}
+}
+
+// TestLocationEditWithComponents is the reported bug (2026-08-14): editing a
+// location that holds components — e.g. adding a tag — hit handleLocationEdit's
+// hand-built template data, which omitted PartLookup; location-detail.html's
+// `index $.PartLookup .PartID` then failed the whole render with "index of
+// untyped nil" and the raw error text replaced the detail panel. The edit path
+// must build its data via locationDetailData (PartLookup + PartsList included),
+// and the success response must ship an OOB #loc-tag-nav swap so a tag change
+// refreshes the sidebar without a manual reload.
+func TestLocationEditWithComponents(t *testing.T) {
+	srv := newTestServer(t)
+	bin := uiCreateLocation(t, srv, "EditBin")
+	p := uiCreatePart(t, srv, "EDITMPN1")
+	if err := srv.components.Add(bin.ID, p.ID, 5, nil); err != nil {
+		t.Fatalf("components.Add: %v", err)
+	}
+	body := url.Values{"version": {"1"}, "label": {"EditBin"}, "tags": {"garage,workbench"}}.Encode()
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/"+bin.ID, body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("edit = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	b := rr.Body.String()
+	// The component renders with its MPN — PartLookup resolved (was: 500 +
+	// "index of untyped nil" replacing the panel).
+	if !strings.Contains(b, "EDITMPN1") {
+		t.Errorf("edited detail should resolve the component's MPN; body=%s", b)
+	}
+	// The add-component picker is present — PartsList included.
+	if !strings.Contains(b, `name="part_id"`) {
+		t.Errorf("edited detail should carry the add-component picker; body=%s", b)
+	}
+	// OOB sidebar refresh — the tag change lands without a manual reload.
+	if !strings.Contains(b, `id="loc-tag-nav"`) || !strings.Contains(b, `hx-swap-oob="true"`) {
+		t.Errorf("edit success should ship an OOB #loc-tag-nav refresh; body=%s", b)
+	}
+	if !strings.Contains(b, "garage") {
+		t.Errorf("refreshed sidebar should list the new tag; body=%s", b)
 	}
 }

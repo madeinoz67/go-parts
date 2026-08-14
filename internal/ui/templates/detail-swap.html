@@ -1,0 +1,9 @@
+{{define "detail-swap.html"}}
+{{/* Edit-success wrapper for the Parts detail: the detail is the PRIMARY swap
+     (the edit form targets #detail-panel innerHTML), and the OOB aside
+     refreshes the tag sidebar so a tag change lands without a manual reload.
+     Data: the detail.html map + the two facet keys (Tags, Active). htmx pulls
+     hx-swap-oob elements out of the response before the primary swap. */}}
+{{template "detail.html" .}}
+<aside class="sidebar" id="tag-nav" hx-swap-oob="true">{{template "tag-nav.html" (dict "Tags" .Tags "Active" .Active)}}</aside>
+{{end}}

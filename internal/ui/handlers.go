@@ -401,7 +401,12 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	// like-for-like and CSS (.detail, .detail.open) keeps applying. This clears
 	// the panel on BOTH create paths: the normal create form (which lives in
 	// #detail-panel) and the confirm-footprint prompt (also in #detail-panel).
-	if err := s.tmpl.ExecuteTemplate(w, "row-created.html", map[string]any{"P": p, "Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints())}); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "row-created.html", map[string]any{
+		"P":          p,
+		"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
+		"Tags":       s.store.TagCounts(), // drives row-created's OOB tag-nav refresh
+		"Active":     "",
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -472,11 +477,16 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// Success → the updated detail (primary swap into #detail-panel) wrapped
+	// with an OOB #tag-nav swap so a tag change refreshes the sidebar live —
+	// no manual reload (same class as the Storage edit fix).
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{
+	if err := s.tmpl.ExecuteTemplate(w, "detail-swap.html", map[string]any{
 		"P":          cur,
 		"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
 		"Locations":  s.locationOptions(),
+		"Tags":       s.store.TagCounts(),
+		"Active":     "",
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -850,23 +860,24 @@ func (s *Server) handleLocationEdit(w http.ResponseWriter, r *http.Request) {
 			_ = s.tmpl.ExecuteTemplate(w, "conflict.html", map[string]any{"Reload": "/ui/locations/" + id, "Target": "#loc-detail"})
 			return
 		}
+		// Non-conflict store error → re-render the detail with a banner. MUST
+		// go through locationDetailData: location-detail.html indexes
+		// $.PartLookup per component, and a hand-built map without it fails
+		// the whole render ("index of untyped nil") on any location that holds
+		// components — the 2026-08-14 reported bug.
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", map[string]any{
-			"L":         cur,
-			"Contents":  s.componentList(id),
-			"Locations": s.locationOptions(),
-			"Error":     err.Error(),
-		})
+		_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, cur, err.Error()))
 		return
 	}
-	// Success → re-render the updated detail (htmx swaps it into #loc-detail,
-	// matching the parts edit UX).
+	// Success → re-render the updated detail (htmx swaps it into #loc-detail)
+	// via locationDetailData (PartLookup + PartsList included), wrapped with an
+	// OOB #loc-tag-nav swap so a tag change refreshes the sidebar live — no
+	// manual reload.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if tErr := s.tmpl.ExecuteTemplate(w, "location-detail.html", map[string]any{
-		"L":         cur,
-		"Contents":  s.componentList(id),
-		"Locations": s.locationOptions(),
-	}); tErr != nil {
+	data := s.locationDetailData(id, cur, "")
+	data["Tags"] = s.locations.TagCounts()
+	data["Active"] = ""
+	if tErr := s.tmpl.ExecuteTemplate(w, "loc-detail-swap.html", data); tErr != nil {
 		http.Error(w, tErr.Error(), http.StatusInternalServerError)
 	}
 }
