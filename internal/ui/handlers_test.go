@@ -1193,6 +1193,48 @@ func TestComponentStockInOutAndHistory(t *testing.T) {
 	}
 }
 
+// TestLocationsLastUsedColumn pins the derived last-used column: a location
+// with movements renders its most-recent Movement.Timestamp (expected value
+// computed from the store's own History, so the test is deterministic), a
+// never-used location renders "-", and the sortable header is present.
+func TestLocationsLastUsedColumn(t *testing.T) {
+	srv := newTestServer(t)
+	used := uiCreateLocation(t, srv, "UsedBin")
+	idle := uiCreateLocation(t, srv, "IdleBin")
+	p := uiCreatePart(t, srv, "LUP1")
+	if err := srv.components.Add(used.ID, p.ID, 7, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Expected timestamp straight from the store: the newest movement at "used".
+	c, err := srv.components.Get(used.ID, p.ID)
+	if err != nil || len(c.History) == 0 {
+		t.Fatalf("component history missing: %+v err=%v", c, err)
+	}
+	want := c.History[len(c.History)-1].Timestamp.Format("Jan 02 15:04")
+
+	// The data rows come from the search fragment; the thead (header + sort
+	// link) lives only in the shell — fetch both.
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/locations/search", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, want) {
+		t.Errorf("used bin should render its latest movement time %q; body=%s", want, body)
+	}
+	if !strings.Contains(body, ">-<") {
+		t.Errorf("never-used bin should render '-'; body=%s", body)
+	}
+	_ = idle // its row is the "-" assertion above (the only movement-free bin)
+	shellRR := httptest.NewRecorder()
+	srv.ServeHTTP(shellRR, httptest.NewRequest("GET", "/ui/locations", nil))
+	shell := shellRR.Body.String()
+	if !strings.Contains(shell, ">Last used") {
+		t.Errorf("shell table missing the Last used header; shell=%s", shell)
+	}
+	if !strings.Contains(shell, "sort=used") {
+		t.Errorf("Last used column should be sortable via sort=used; shell=%s", shell)
+	}
+}
+
 // TestLocationEditVersionConflictReload pins §5.14 on the locations surface: a
 // stale expectedVersion → 409 + the reload prompt (NOT a banner). The banner
 // path would re-render with the canonical Version + the user's stale fields,

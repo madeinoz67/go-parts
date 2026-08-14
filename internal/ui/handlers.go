@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/madeinoz67/go-parts/internal/components"
 	"github.com/madeinoz67/go-parts/internal/locations"
@@ -625,25 +626,37 @@ func (s *Server) handleBulkTag(w http.ResponseWriter, r *http.Request) {
 
 // --- Slice 5b: the Storage tab (locations management UI) ------------------
 
-// locationCounts tallies components per location (map[locID]count) — the
-// contents-count column in the locations list. Flat-locations model: a
-// location's stock is its Component set, so the count comes from the components
-// keyspace, not a parts scan. Takes the caller's locations slice (their single
-// List() pass) so the request scans the locations keyspace once, not per
-// helper.
-func (s *Server) locationCounts(locs []*locations.Location) map[string]int {
-	counts := make(map[string]int)
+// locationStats tallies per-location activity in ONE components pass: counts
+// (map[locID]component count — the contents column) and lastUsed
+// (map[locID]most-recent Movement.Timestamp — the "last used" column; zero
+// time = no movements yet). DERIVED, schema-free: no Location field, no
+// cross-store write on stock moves (§5.1) — the timestamp comes from the
+// components' own History, so every stock in/out updates it for free. Takes
+// the caller's locations slice (their single List() pass).
+func (s *Server) locationStats(locs []*locations.Location) (counts map[string]int, lastUsed map[string]time.Time) {
+	counts = make(map[string]int)
+	lastUsed = make(map[string]time.Time)
 	if s.components == nil {
-		return counts
+		return counts, lastUsed
 	}
 	for _, loc := range locs {
-		counts[loc.ID] = len(s.components.List(loc.ID))
+		comps := s.components.List(loc.ID)
+		counts[loc.ID] = len(comps)
+		for _, c := range comps {
+			for _, m := range c.History {
+				if m.Timestamp.After(lastUsed[loc.ID]) {
+					lastUsed[loc.ID] = m.Timestamp
+				}
+			}
+		}
 	}
-	return counts
+	return counts, lastUsed
 }
 
 // applyLocationSort re-orders locs in place by the requested key/direction.
-func applyLocationSort(locs []*locations.Location, counts map[string]int, key, dir string) {
+// "used" sorts by last stock-movement time (zero times — never used — sort
+// oldest under asc).
+func applyLocationSort(locs []*locations.Location, counts map[string]int, lastUsed map[string]time.Time, key, dir string) {
 	switch key {
 	case "label":
 		sort.Slice(locs, func(i, j int) bool { return less(locs[i].Label, locs[j].Label, dir) })
@@ -651,6 +664,14 @@ func applyLocationSort(locs []*locations.Location, counts map[string]int, key, d
 		sort.Slice(locs, func(i, j int) bool { return less(locs[i].ViaCode, locs[j].ViaCode, dir) })
 	case "contents":
 		sort.Slice(locs, func(i, j int) bool { return lessInt(counts[locs[i].ID], counts[locs[j].ID], dir) })
+	case "used":
+		sort.Slice(locs, func(i, j int) bool {
+			a, b := lastUsed[locs[i].ID], lastUsed[locs[j].ID]
+			if dir == "desc" {
+				return a.After(b)
+			}
+			return a.Before(b)
+		})
 	}
 }
 
@@ -686,12 +707,13 @@ func (s *Server) handleLocationsSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		locs = filtered
 	}
-	counts := s.locationCounts(locs)
-	applyLocationSort(locs, counts, sortKey, sortDir)
+	counts, lastUsed := s.locationStats(locs)
+	applyLocationSort(locs, counts, lastUsed, sortKey, sortDir)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "locations-rows.html", map[string]any{
 		"Locations": locs,
 		"Counts":    counts,
+		"LastUsed":  lastUsed,
 		"Tags":      s.locations.TagCounts(),
 		"Active":    tag,
 	}); err != nil {
@@ -709,10 +731,12 @@ func (s *Server) handleLocationsPage(w http.ResponseWriter, r *http.Request) {
 	// the tag facet is a Store method (its own single scan, mirroring the
 	// Parts shell's handleSearch + store.TagCounts pairing).
 	locs := s.locationOptions()
+	counts, lastUsed := s.locationStats(locs)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "locations.html", map[string]any{
 		"Locations": locs,
-		"Counts":    s.locationCounts(locs),
+		"Counts":    counts,
+		"LastUsed":  lastUsed,
 		"LocTags":   s.locations.TagCounts(),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -851,10 +875,12 @@ func (s *Server) handleLocationBulkCreate(w http.ResponseWriter, r *http.Request
 	})
 	// Refreshed view (tbody + OOB sidebar) + the panel reset to a count notice.
 	locs := s.locationOptions()
+	counts, lastUsed := s.locationStats(locs)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data := map[string]any{
 		"Locations": locs,
-		"Counts":    s.locationCounts(locs),
+		"Counts":    counts,
+		"LastUsed":  lastUsed,
 		"Tags":      s.locations.TagCounts(),
 		"Active":    "",
 		"Created":   len(created),

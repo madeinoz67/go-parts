@@ -1,13 +1,16 @@
 {{define "locations-rows.html"}}
 <tbody id="loc-tbody">
 {{if not .Locations}}
-  <tr class="empty"><td colspan="3" style="text-align:center;color:var(--text-faint);padding:18px">no locations yet — click + new</td></tr>
+  <tr class="empty"><td colspan="4" style="text-align:center;color:var(--text-faint);padding:18px">no locations yet — click + new</td></tr>
 {{else}}
 {{range .Locations}}
 <tr hx-get="/ui/locations/{{.ID}}" hx-target="#loc-detail" hx-swap="innerHTML">
   <td>{{.Label}}</td>
   <td class="phos">{{.ViaCode}}</td>
   <td class="num">{{index $.Counts .ID}}</td>
+  {{/* Last used = most-recent Movement.Timestamp across this location's
+       components (derived, schema-free; zero time = "-"). */}}
+  <td class="muted">{{$t := index $.LastUsed .ID}}{{if $t.IsZero}}-{{else}}{{$t.Format "Jan 02 15:04"}}{{end}}</td>
 </tr>
 {{end}}
 {{end}}
