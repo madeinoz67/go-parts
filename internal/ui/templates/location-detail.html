@@ -6,7 +6,7 @@
 {{if .Error}}<div class="conflict"><p>{{.Error}}</p></div>{{end}}
 
 <div class="spec-rows">
-  <div class="spec-row"><span>Via</span><span class="phos">{{.L.ViaCode}}</span></div>
+  <div class="spec-row"><span>Via</span><span class="phos">{{.L.ViaCode}} <button class="btn" type="button" onclick="copyVia(this,'{{.L.ViaCode}}')" style="padding:2px 8px;font-size:10px" title="copy shareable link">⧉ link</button></span></div>
   <div class="spec-row"><span>Contents</span><span>{{len .Contents}} component(s)</span></div>
 </div>
 

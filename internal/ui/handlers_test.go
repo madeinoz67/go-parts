@@ -1235,6 +1235,33 @@ func TestLocationsLastUsedColumn(t *testing.T) {
 	}
 }
 
+// TestCopyLinkButton pins the copy-URL affordance in both detail panels: each
+// renders a copyVia button carrying the entity's via-code (the JS itself is
+// shell-side; this pins the wiring — button + code reach the browser).
+func TestCopyLinkButton(t *testing.T) {
+	srv := newTestServer(t)
+	p := uiCreatePart(t, srv, "COPY1")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+p.ID, nil))
+	if body := rr.Body.String(); !strings.Contains(body, "copyVia(this,'"+p.ViaCode+"')") {
+		t.Errorf("part detail should carry a copyVia button with the via-code; body=%s", body)
+	}
+	bin := uiCreateLocation(t, srv, "CopyBin")
+	rr2 := httptest.NewRecorder()
+	srv.ServeHTTP(rr2, httptest.NewRequest("GET", "/ui/locations/"+bin.ID, nil))
+	if body := rr2.Body.String(); !strings.Contains(body, "copyVia(this,'"+bin.ViaCode+"')") {
+		t.Errorf("location detail should carry a copyVia button with the via-code; body=%s", body)
+	}
+	// Both shells define the function.
+	for _, path := range []string{"/ui/", "/ui/locations"} {
+		shellRR := httptest.NewRecorder()
+		srv.ServeHTTP(shellRR, httptest.NewRequest("GET", path, nil))
+		if s := shellRR.Body.String(); !strings.Contains(s, "function copyVia") {
+			t.Errorf("shell %s should define copyVia", path)
+		}
+	}
+}
+
 // TestLocationEditVersionConflictReload pins §5.14 on the locations surface: a
 // stale expectedVersion → 409 + the reload prompt (NOT a banner). The banner
 // path would re-render with the canonical Version + the user's stale fields,

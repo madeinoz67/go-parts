@@ -87,6 +87,22 @@ document.addEventListener('keydown', e => {
 });
 // Slice 6: a via-scan redirect lands on /ui/locations?loc={id}; auto-open it.
 (function(){ const l = new URLSearchParams(location.search).get('loc'); if (l) htmx.ajax('GET', '/ui/locations/'+l, {target:'#loc-detail'}); })();
+// Copy the entity's shareable deep link ({origin}/via/{code}) — the via
+// resolver redirects a browser to the right tab for either entity type.
+function copyVia(btn, code){
+  const url = location.origin + '/via/' + code;
+  const done = () => { const t = btn.textContent; btn.textContent = 'copied'; setTimeout(() => { btn.textContent = t; }, 1200); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(done, () => fallbackCopy(url, done));
+  } else { fallbackCopy(url, done); }
+}
+function fallbackCopy(text, done){
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); } catch (e) {}
+  ta.remove();
+}
 </script>
 </body>
 </html>
