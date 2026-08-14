@@ -108,6 +108,17 @@ func RegisterMigrations(r *Runner) {
 		Description: "Archive: Location gains additive Archived bool (no-op; re-arms refuse-newer)",
 		Up:          func(db *pebble.DB) error { return nil },
 	})
+	// v5 (Part identity uniqueness): Part gains the additive LocalNumber field
+	// and the new 0x14 identity index keyspace (MPN + LocalNumber uniqueness).
+	// Same refuse-newer rationale as v2/v3/v4 for the field; the index entries
+	// themselves are backfilled by parts.NewStore (idempotent first-writer-
+	// wins, deterministic ULID order) — an old binary ignores unknown keyspace
+	// bytes entirely, so the index needs no migration-step protection.
+	r.Register(Migration{
+		Version:     5,
+		Description: "Part identity: additive LocalNumber field + 0x14 ident index (backfill at Store open; re-arms refuse-newer)",
+		Up:          func(db *pebble.DB) error { return nil },
+	})
 }
 
 // MaxRegisteredVersion returns the highest Version RegisterMigrations would

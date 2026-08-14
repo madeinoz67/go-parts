@@ -52,17 +52,23 @@ const stripeShards = 64
 // before Create's tail calls write, which then takes fts.mu. Neither the FTS
 // nor the via index ever calls back into parts, so there is no cycle.
 type Store struct {
-	db    *pebble.DB
-	fts   *index.FTS
-	via   *via.Store
-	locks [stripeShards]sync.Mutex
+	db      *pebble.DB
+	fts     *index.FTS
+	via     *via.Store
+	identMu sync.Mutex // serializes the 0x14 identity index's check-then-write (see ident.go)
+	locks   [stripeShards]sync.Mutex
 }
 
 // NewStore returns a Part store over db whose writes keep fts in sync and
 // whose via codes are reserved in the shared via index. The striped-lock pool
 // is zero-initialized (unlocked) — NewStore does not need to prime it.
+// NewStore also backfills the 0x14 identity index (idempotent; see
+// backfillIdentIndex) so a pre-v5 store gains MPN/LocalNumber uniqueness
+// entries deterministically on first open.
 func NewStore(db *pebble.DB, fts *index.FTS, viaStore *via.Store) *Store {
-	return &Store{db: db, fts: fts, via: viaStore}
+	s := &Store{db: db, fts: fts, via: viaStore}
+	s.backfillIdentIndex()
+	return s
 }
 
 // lockFor returns the mutex governing operations on id. All Store ops that
@@ -115,6 +121,21 @@ func (s *Store) Create(p *Part) error {
 	p.UpdatedBy = p.CreatedBy
 	p.CreatedAt, p.UpdatedAt = now, now
 	p.Version = 1
+	// Identity uniqueness (schema v5): reserve MPN + non-empty LocalNumber in
+	// the 0x14 index BEFORE the write, with full compensation on any failure —
+	// same discipline as the via reservation (a failed create never burns the
+	// operator's chosen number).
+	p.MPN = trimIdent(p.MPN)
+	p.LocalNumber = trimIdent(p.LocalNumber)
+	if err := s.reserveIdent(keys.IdentMPN, p.MPN, p.ID); err != nil {
+		_ = s.via.Release(p.ViaCode)
+		return err
+	}
+	if err := s.reserveIdent(keys.IdentLocal, p.LocalNumber, p.ID); err != nil {
+		s.releaseIdent(keys.IdentMPN, p.MPN, p.ID)
+		_ = s.via.Release(p.ViaCode)
+		return err
+	}
 	// Compensate the via reservation if the write fails. By this point
 	// via.Reserve has already recorded code→{type,id}; a write failure means
 	// the part is NOT stored, so without a Release the reserved code would be
@@ -123,8 +144,11 @@ func (s *Store) Create(p *Part) error {
 	// burned (via.ErrCollision forever — Delete requires the part to exist, so
 	// nothing else would ever Release it). Release is best-effort: a Release
 	// failure leaves a dangling index entry (random codes block nothing in
-	// practice), which is strictly better than the burned-code outcome.
+	// practice), which is strictly better than the burned-code outcome. The
+	// identity reservations get the same compensation.
 	if err := s.write(p); err != nil {
+		s.releaseIdent(keys.IdentMPN, p.MPN, p.ID)
+		s.releaseIdent(keys.IdentLocal, p.LocalNumber, p.ID)
 		_ = s.via.Release(p.ViaCode)
 		return err
 	}
@@ -205,7 +229,32 @@ func (s *Store) Update(p *Part, expectedVersion int) error {
 	if p.UpdatedBy == "" {
 		p.UpdatedBy = "local"
 	}
-	return s.write(p)
+	// Identity uniqueness on edit (schema v5): MPN/LocalNumber ARE editable.
+	// Reserve the new values before writing (a taken value rejects loudly with
+	// no partial state — nothing has been written yet), release the old values
+	// after a successful write, and on write failure compensate by releasing
+	// the NEW reservations (the record keeps the old values; the new ones must
+	// not stay pinned to a part that does not carry them).
+	p.MPN = trimIdent(p.MPN)
+	p.LocalNumber = trimIdent(p.LocalNumber)
+	if err := s.reserveIdent(keys.IdentMPN, p.MPN, p.ID); err != nil {
+		return err
+	}
+	if err := s.reserveIdent(keys.IdentLocal, p.LocalNumber, p.ID); err != nil {
+		return err
+	}
+	if err := s.write(p); err != nil {
+		s.releaseIdent(keys.IdentMPN, p.MPN, p.ID)
+		s.releaseIdent(keys.IdentLocal, p.LocalNumber, p.ID)
+		return err
+	}
+	if cur.MPN != p.MPN {
+		s.releaseIdent(keys.IdentMPN, cur.MPN, p.ID)
+	}
+	if cur.LocalNumber != p.LocalNumber {
+		s.releaseIdent(keys.IdentLocal, cur.LocalNumber, p.ID)
+	}
+	return nil
 }
 
 // Delete removes a part record and its FTS entry. Idempotent at the FTS layer;
@@ -238,6 +287,10 @@ func (s *Store) Delete(id string) error {
 	// leaves a dangling index entry → Lookup returns this id → Get misses → 404.
 	// Codes are random, so a dangling entry blocks nothing in practice.
 	_ = s.via.Release(cur.ViaCode)
+	// Release the identity index entries (schema v5) so the deleted part's
+	// MPN/LocalNumber become reusable.
+	s.releaseIdent(keys.IdentMPN, cur.MPN, cur.ID)
+	s.releaseIdent(keys.IdentLocal, cur.LocalNumber, cur.ID)
 	return nil
 }
 

@@ -29,6 +29,7 @@ import (
 // refuse-newer for older binaries).
 type Part struct {
 	ID             string
+	LocalNumber    string // operator's own stock-catalog number (schema v5); unique when non-empty, exempt when empty
 	MPN            string
 	Manufacturer   string
 	Category       string

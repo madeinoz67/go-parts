@@ -27,6 +27,7 @@ an unregistered or colliding prefix as a **blocking** finding.
 | `categories` | category / subcategory (plain-string taxonomy facet, not an enum) | §5.1, §6.2 | — | planned |
 | `locations` | Location records (nested storage, `via_code`) | §6.1, §5.17 | `0x11` | **allocated** |
 | `components` | Component records (Part-at-Location junction): `0x13 \| ws(8) \| LocationID(26) \| PartID(26)` | §6.1 | `0x13` | **allocated** |
+| `ident` | Part-identity uniqueness index (`kind(M\|L) \| ws(8) \| value → partID`); MPN + LocalNumber | §6.1 | `0x14` | **allocated** |
 | `suppliers` | Supplier records + part-number mapping conventions | §6.1 | — | planned |
 | `projects/boms` | Project + BOM (`part_refs[]`) | §6.1 | — | planned |
 | `datasheets` | datasheet ref (local path, or go-rag vault doc-id when that gateway is on) | §5.1, §5.6 | — | planned |
@@ -56,9 +57,9 @@ keyspace is still blocking. The three `search_index` prefixes are imported verba
 
 ## Free / reserved
 
-Allocated: `0x05`, `0x06`, `0x07` (FTS), `0x10` (parts), `0x11` (locations), `0x12` (via), `0x13` (components), `0xF0` (meta).
+Allocated: `0x05`, `0x06`, `0x07` (FTS), `0x10` (parts), `0x11` (locations), `0x12` (via), `0x13` (components), `0x14` (ident), `0xF0` (meta).
 
-Free ranges: `0x00-0x04`, `0x08-0x0F`, `0x14-0xEF`, `0xF1-0xFF`. A new prefix picks a free
+Free ranges: `0x00-0x04`, `0x08-0x0F`, `0x15-0xEF`, `0xF1-0xFF`. A new prefix picks a free
 byte, not one in use. (`0xF1-0xFF` is free — the `meta` keyspace is `0xF0` only, sub-keyed
 by payload after the single prefix, so the top nybble above `0xF0` is not reserved.)
 

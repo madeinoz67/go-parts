@@ -1,6 +1,8 @@
 package parts
 
 import (
+	"fmt"
+
 	"errors"
 	"path/filepath"
 	"strings"
@@ -132,12 +134,123 @@ func TestCountScansKeyspace(t *testing.T) {
 		t.Fatalf("empty store Count = %d, want 0", n)
 	}
 	for i := 0; i < 3; i++ {
-		if err := s.Create(&Part{MPN: "C", PartType: "local"}); err != nil {
+		// Distinct MPNs — uniqueness (schema v5) rejects a repeated MPN.
+		if err := s.Create(&Part{MPN: fmt.Sprintf("C%d", i), PartType: "local"}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if n := s.Count(); n != 3 {
 		t.Fatalf("after 3 Creates Count = %d, want 3", n)
+	}
+}
+
+// --- Part identity uniqueness (schema v5, 0x14 index) -----------------------
+
+// TestCreateDuplicateMPNRejected pins the principal-directed contract: a
+// second part with an already-pinned MPN is rejected with ErrDuplicateMPN
+// and NOTHING is written (no orphaned index entry, Count unchanged).
+func TestCreateDuplicateMPNRejected(t *testing.T) {
+	s := newStore(t)
+	if err := s.Create(&Part{MPN: "RC0805FR-0710KL", PartType: "local"}); err != nil {
+		t.Fatal(err)
+	}
+	err := s.Create(&Part{MPN: "RC0805FR-0710KL", PartType: "local"})
+	if !errors.Is(err, ErrDuplicateMPN) {
+		t.Fatalf("dup MPN = %v, want ErrDuplicateMPN", err)
+	}
+	if n := s.Count(); n != 1 {
+		t.Errorf("rejected create must write nothing; Count=%d want 1", n)
+	}
+	// The failed create must not burn the operator's NEXT choice either.
+	if err := s.Create(&Part{MPN: "RC0805FR-0710KL2", PartType: "local"}); err != nil {
+		t.Errorf("create after rejection failed: %v", err)
+	}
+}
+
+// TestCreateDuplicateLocalNumberRejected: LocalNumber uniqueness applies to
+// non-empty values; EMPTY is exempt (pre-backfill parts carry none).
+func TestCreateDuplicateLocalNumberRejected(t *testing.T) {
+	s := newStore(t)
+	if err := s.Create(&Part{MPN: "A1", LocalNumber: "R001", PartType: "local"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(&Part{MPN: "A2", LocalNumber: "R001", PartType: "local"}); !errors.Is(err, ErrDuplicateLocalNumber) {
+		t.Fatalf("dup LocalNumber = %v, want ErrDuplicateLocalNumber", err)
+	}
+	// Empty is exempt — two parts with no local number coexist.
+	if err := s.Create(&Part{MPN: "A3", PartType: "local"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(&Part{MPN: "A4", PartType: "local"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestUpdateMPNRenameReReserves pins the edit path: renaming MPN re-reserves
+// the new value, releases the old (reusable by a later create), and a rename
+// onto a pinned value rejects with no partial state.
+func TestUpdateMPNRenameReReserves(t *testing.T) {
+	s := newStore(t)
+	a := &Part{MPN: "OLD", PartType: "local"}
+	s.Create(a)
+	b := &Part{MPN: "TAKEN", PartType: "local"}
+	s.Create(b)
+
+	// Rename a → NEW frees OLD.
+	a.MPN = "NEW"
+	if err := s.Update(a, a.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(&Part{MPN: "OLD", PartType: "local"}); err != nil {
+		t.Errorf("released OLD should be reusable: %v", err)
+	}
+	// Renaming onto a pinned value rejects; the record is unchanged.
+	a.MPN = "TAKEN"
+	if err := s.Update(a, a.Version); !errors.Is(err, ErrDuplicateMPN) {
+		t.Fatalf("rename onto taken MPN = %v, want ErrDuplicateMPN", err)
+	}
+	got, _ := s.Get(a.ID)
+	if got.MPN != "NEW" {
+		t.Errorf("rejected rename must not write; MPN=%q want NEW", got.MPN)
+	}
+}
+
+// TestDeleteReleasesIdent: deleting a part releases its MPN + LocalNumber for
+// reuse.
+func TestDeleteReleasesIdent(t *testing.T) {
+	s := newStore(t)
+	p := &Part{MPN: "GONE", LocalNumber: "L009", PartType: "local"}
+	s.Create(p)
+	if err := s.Delete(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(&Part{MPN: "GONE", LocalNumber: "L009", PartType: "local"}); err != nil {
+		t.Errorf("released identities should be reusable: %v", err)
+	}
+}
+
+// TestConcurrentSameMPNOneWinner: N concurrent creates of one MPN — exactly
+// one wins (the identMu check-then-write guard), the rest reject cleanly.
+func TestConcurrentSameMPNOneWinner(t *testing.T) {
+	s := newStore(t)
+	const n = 16
+	errs := make(chan error, n)
+	for range n {
+		go func() { errs <- s.Create(&Part{MPN: "RACE", PartType: "local"}) }()
+	}
+	ok := 0
+	for range n {
+		if err := <-errs; err == nil {
+			ok++
+		} else if !errors.Is(err, ErrDuplicateMPN) {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("exactly one winner expected, got %d", ok)
+	}
+	if c := s.Count(); c != 1 {
+		t.Errorf("Count=%d, want 1", c)
 	}
 }
 

@@ -9,6 +9,7 @@ const (
 	metaPrefix           byte = 0xF0
 	viaPrefix            byte = 0x12 // via-code index (code string → {type,id}); §5.17
 	componentPrefix      byte = 0x13 // Component records (Part-at-Location junction); §6.1
+	identPrefix          byte = 0x14 // part-identity uniqueness index (kind|ws|value → partID); MPN + LocalNumber
 	ftsPostingPrefix     byte = 0x05 // verbatim from go-rag
 	ftsIndexedPrefix     byte = 0x07 // verbatim from go-rag
 	ftsGlobalStatsPrefix byte = 0x06 // verbatim from go-rag
@@ -38,6 +39,35 @@ func viaKey(ws [8]byte, code string) []byte {
 
 // ViaKey is the exported alias for viaKey, for internal/via.
 func ViaKey(ws [8]byte, code string) []byte { return viaKey(ws, code) }
+
+// IdentKind is the sub-kind byte distinguishing which part-identity value an
+// 0x14 index entry pins: MPN or LocalNumber. One prefix, two kinds — a future
+// identity kind adds a byte, not a keyspace.
+type IdentKind byte
+
+const (
+	IdentMPN   IdentKind = 'M'
+	IdentLocal IdentKind = 'L'
+)
+
+// IdentIndexKey returns the part-identity uniqueness-index key:
+// kind(1) | ws(8) | value. Mirrors viaKey's shape (a value index pointing at
+// the owning part's ID), with the kind byte where via has its prefix.
+func IdentIndexKey(ws [8]byte, kind IdentKind, value string) []byte {
+	k := make([]byte, 0, 1+8+len(value))
+	k = append(k, byte(kind))
+	k = append(k, ws[:]...)
+	return append(k, value...)
+}
+
+// IdentPrefixBound returns the [lower, upper) range covering every 0x14
+// identity-index entry, for prefix scans/tests. 0x14+1 = 0x15, free (same
+// < 0xFF caveat as PartsPrefixBound).
+func IdentPrefixBound(ws [8]byte) (lower, upper []byte) {
+	lower = scopedBytes(identPrefix, ws)
+	upper = scopedBytes(identPrefix+1, ws)
+	return lower, upper
+}
 
 // ViaPrefixBound returns the [lower, upper) range covering every via-code
 // index entry, for prefix scans/tests. viaPrefix+1 relies on viaPrefix (0x12)
