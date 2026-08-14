@@ -1264,6 +1264,14 @@ func TestCopyLinkButton(t *testing.T) {
 			t.Errorf("shell %s should define copyVia", path)
 		}
 	}
+	// Short ID: the PartsBox-style ULID slice (chars 2-10) renders in both
+	// detail panels.
+	if body := rr.Body.String(); !strings.Contains(body, p.ID[2:10]) {
+		t.Errorf("part detail should render its short ID %q; body=%s", p.ID[2:10], body)
+	}
+	if body := rr2.Body.String(); !strings.Contains(body, bin.ID[2:10]) {
+		t.Errorf("location detail should render its short ID %q; body=%s", bin.ID[2:10], body)
+	}
 }
 
 // TestLocationBulkTagAddRemove pins the Storage bulk-tag action: mode=add

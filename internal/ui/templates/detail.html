@@ -11,6 +11,7 @@
   <div class="spec-row"><span>{{$k}}</span><span>{{$v}}</span></div>
   {{end}}
   <div class="spec-row"><span>Via</span><span class="phos">{{.P.ViaCode}} <button class="btn" type="button" onclick="copyVia(this,'{{.P.ViaCode}}')" style="padding:2px 8px;font-size:10px" title="copy shareable link">⧉ link</button></span></div>
+  <div class="spec-row"><span>Short ID</span><span class="phos">{{slice .P.ID 2 10}}</span></div>
   <div class="spec-row"><span>On hand</span><span class="qty-value">{{.P.QtyOnHand}}</span></div>
 </div>
 
