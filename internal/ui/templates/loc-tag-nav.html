@@ -5,10 +5,17 @@
      clears the tag filter (Active="" → highlighted); a q-search also clears it
      (handleLocationsSearch sends tag="" when the sidebar isn't the trigger). */}}
 <div class="eyebrow">Tags</div>
-<a class="cat-item{{if not $.Active}} active{{end}}"
+<a class="cat-item{{if and (not $.Active) (not $.ArchivedActive)}} active{{end}}"
    hx-get="/ui/locations/search" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML"
    hx-push-url="true">
    <span class="cat-fallback"></span>all <span class="count"></span>
+</a>
+{{/* Archive facet: retired bins are hidden from the default view; this shows
+     ONLY them (unarchive via the detail toggle). Corpus-wide count badge. */}}
+<a class="cat-item{{if $.ArchivedActive}} active{{end}}"
+   hx-get="/ui/locations/search?archived=1" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML"
+   hx-push-url="true">
+   <span class="cat-fallback"></span>archived {{if $.ArchivedCount}}<span class="count">{{$.ArchivedCount}}</span>{{end}}
 </a>
 {{if not .Tags}}
   <div class="cat-item" style="opacity:0.5;cursor:default"><span class="cat-fallback"></span>none yet</div>

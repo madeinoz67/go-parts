@@ -1329,6 +1329,58 @@ func TestLocationBulkDeleteRefusesStocked(t *testing.T) {
 	}
 }
 
+// TestLocationArchiveFlow pins the v4 soft-retire surface end-to-end: the
+// default view hides archived bins, ?archived=1 shows ONLY them with the
+// sidebar facet + count, the detail toggle round-trips (button relabels),
+// and bulk-archive retires every selected bin (idempotent).
+func TestLocationArchiveFlow(t *testing.T) {
+	srv := newTestServer(t)
+	a := uiCreateLocation(t, srv, "ArchA")
+	b := uiCreateLocation(t, srv, "ArchB")
+	uiCreateLocation(t, srv, "ArchKeep") // stays in the active view; asserted by label
+
+	// Bulk-archive A + B.
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/bulk-archive",
+		"id="+a.ID+"&id="+b.ID))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bulk-archive = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	// Active view: only keep remains; sidebar facet carries the count.
+	if strings.Contains(body, ">ArchA<") || strings.Contains(body, ">ArchB<") {
+		t.Errorf("archived bins must leave the default view; body=%s", body)
+	}
+	if !strings.Contains(body, ">ArchKeep<") {
+		t.Errorf("active bin should remain; body=%s", body)
+	}
+	if !strings.Contains(body, "archived") || !strings.Contains(body, ">2<") {
+		t.Errorf("sidebar should carry the archived facet with count 2; body=%s", body)
+	}
+
+	// Detail toggle: unarchive A (button relabels).
+	rr2 := httptest.NewRecorder()
+	srv.ServeHTTP(rr2, postForm("POST", "/ui/locations/"+a.ID+"/archive", ""))
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("archive toggle = %d; body=%s", rr2.Code, rr2.Body.String())
+	}
+	got, _ := srv.locations.Get(a.ID)
+	if got.Archived {
+		t.Error("toggle should have unarchived A")
+	}
+	if !strings.Contains(rr2.Body.String(), ">archive<") {
+		t.Errorf("unarchived detail should relabel the button to 'archive'; body=%s", rr2.Body.String())
+	}
+
+	// Archived view shows only B.
+	rr3 := httptest.NewRecorder()
+	srv.ServeHTTP(rr3, httptest.NewRequest("GET", "/ui/locations/search?archived=1", nil))
+	body3 := rr3.Body.String()
+	if !strings.Contains(body3, ">ArchB<") || strings.Contains(body3, ">ArchKeep<") {
+		t.Errorf("?archived=1 should show ONLY archived bins; body=%s", body3)
+	}
+}
+
 // TestLocationEditVersionConflictReload pins §5.14 on the locations surface: a
 // stale expectedVersion → 409 + the reload prompt (NOT a banner). The banner
 // path would re-render with the canonical Version + the user's stale fields,

@@ -27,6 +27,11 @@
       <input name="loc_tag" placeholder="tag" required>
       <button type="submit" class="btn-bulk">tag</button>
     </form>
+    <form hx-post="/ui/locations/bulk-archive" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML" hx-include="[name=id]" id="locBulkArchiveForm">
+      <input type="hidden" name="q" value=""><input type="hidden" name="tag" value="">
+      <input type="hidden" name="sort" value=""><input type="hidden" name="dir" value="">
+      <button type="submit" class="btn-bulk">archive</button>
+    </form>
     <button class="btn-bulk" onclick="locClearSelection()">clear</button>
   </div>
 </div>

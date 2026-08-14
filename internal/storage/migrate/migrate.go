@@ -98,6 +98,16 @@ func RegisterMigrations(r *Runner) {
 		Description: "Flat Locations redesign: Location loses ParentID/SinglePartOnly (gains Tags); Part loses DefaultLocationID/Mandatory; new components keyspace 0x13 (no-op; re-arms refuse-newer)",
 		Up:          func(db *pebble.DB) error { return nil },
 	})
+	// v4 (Archive): Location gains the additive Archived bool. Same refuse-newer
+	// rationale as v2/v3 — a pre-archive binary (LatestVersion 3) would decode
+	// old records cleanly, pass cur==latest==3 with no refusal, and silently
+	// re-drop Archived on the next writeback (un-archiving every retired bin).
+	// No-op Up: the field is additive; only the version marker moves.
+	r.Register(Migration{
+		Version:     4,
+		Description: "Archive: Location gains additive Archived bool (no-op; re-arms refuse-newer)",
+		Up:          func(db *pebble.DB) error { return nil },
+	})
 }
 
 // MaxRegisteredVersion returns the highest Version RegisterMigrations would

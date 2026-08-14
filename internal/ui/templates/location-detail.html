@@ -84,4 +84,12 @@
 <form action="/locations/{{.L.ID}}/label" method="post" target="_blank" style="margin-top:8px">
   <button class="btn" type="submit" style="width:100%">print label</button>
 </form>
+
+{{/* Soft-retire toggle (schema v4): archived bins leave the default view
+     (see the sidebar's "archived" facet) and everything is reversible —
+     components are never touched. The response refreshes the tbody (the bin
+     moves lists) + re-renders this panel (button relabels). */}}
+<form hx-post="/ui/locations/{{.L.ID}}/archive" hx-target="#loc-tbody" hx-select="#loc-tbody" hx-swap="outerHTML" style="margin-top:8px">
+  <button class="btn{{if .L.Archived}} btn-primary{{end}}" type="submit" style="width:100%">{{if .L.Archived}}unarchive{{else}}archive{{end}}</button>
+</form>
 {{end}}

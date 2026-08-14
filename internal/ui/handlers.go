@@ -688,18 +688,28 @@ func (s *Server) handleLocationsSearch(w http.ResponseWriter, r *http.Request) {
 		r.URL.Query().Get("tag"),
 		r.URL.Query().Get("sort"),
 		r.URL.Query().Get("dir"),
+		r.URL.Query().Get("archived") == "1",
 	)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-// locationsView resolves the Storage table view — filters, one stats pass,
-// sort — as the locations-rows.html data map. The shared re-render path for
-// the search endpoint AND the bulk action handlers (a bulk action must
-// re-render the view the operator is looking at, mirroring filteredParts on
-// the Parts side).
-func (s *Server) locationsView(q, tag, sortKey, sortDir string) map[string]any {
+// locationsView resolves the Storage table view — filters (q, tag, the
+// archive facet), one stats pass, sort — as the locations-rows.html data
+// map. The shared re-render path for the search endpoint AND the bulk
+// action handlers (a bulk action must re-render the view the operator is
+// looking at, mirroring filteredParts on the Parts side). archived=true is
+// the "view retired bins" facet: the DEFAULT view hides Archived locations,
+// the facet view shows ONLY them (restorable via the detail toggle).
+// ArchivedCount is corpus-wide (pre-filter) — the sidebar facet's badge.
+func (s *Server) locationsView(q, tag, sortKey, sortDir string, archived bool) map[string]any {
 	locs := s.locationOptions()
+	archivedCount := 0
+	for _, l := range locs {
+		if l.Archived {
+			archivedCount++
+		}
+	}
 	// Filter by query: substring match on Label, ViaCode, or any Tag.
 	if q != "" {
 		filtered := locs[:0]
@@ -723,14 +733,25 @@ func (s *Server) locationsView(q, tag, sortKey, sortDir string) map[string]any {
 		}
 		locs = filtered
 	}
+	// Archive facet: default view hides retired bins; archived=true shows
+	// only them. Applied last so q/tag compose with either mode.
+	filtered := locs[:0]
+	for _, l := range locs {
+		if l.Archived == archived {
+			filtered = append(filtered, l)
+		}
+	}
+	locs = filtered
 	counts, lastUsed := s.locationStats(locs)
 	applyLocationSort(locs, counts, lastUsed, sortKey, sortDir)
 	return map[string]any{
-		"Locations": locs,
-		"Counts":    counts,
-		"LastUsed":  lastUsed,
-		"Tags":      s.locations.TagCounts(),
-		"Active":    tag,
+		"Locations":     locs,
+		"Counts":        counts,
+		"LastUsed":      lastUsed,
+		"Tags":          s.locations.TagCounts(),
+		"Active":        tag,
+		"Archived":      archived,
+		"ArchivedCount": archivedCount,
 	}
 }
 
@@ -781,7 +802,7 @@ func (s *Server) handleLocationBulkTag(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("HX-Trigger", fmt.Sprintf(`{"showToast":"Tagged %d, skipped %d (not found or concurrent edit)"}`, ok, skip))
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	data := s.locationsView(strings.ToLower(r.PostFormValue("q")), tagFilter, r.PostFormValue("sort"), r.PostFormValue("dir"))
+	data := s.locationsView(strings.ToLower(r.PostFormValue("q")), tagFilter, r.PostFormValue("sort"), r.PostFormValue("dir"), r.PostFormValue("archived") == "1")
 	_ = s.tmpl.ExecuteTemplate(w, "locations-rows.html", data)
 }
 
@@ -814,7 +835,67 @@ func (s *Server) handleLocationBulkDelete(w http.ResponseWriter, r *http.Request
 		w.Header().Set("HX-Trigger", fmt.Sprintf(`{"showToast":"Deleted %d, skipped %d stocked + %d not found"}`, ok, skippedStocked, skip))
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	data := s.locationsView(strings.ToLower(r.PostFormValue("q")), r.PostFormValue("tag"), r.PostFormValue("sort"), r.PostFormValue("dir"))
+	data := s.locationsView(strings.ToLower(r.PostFormValue("q")), r.PostFormValue("tag"), r.PostFormValue("sort"), r.PostFormValue("dir"), r.PostFormValue("archived") == "1")
+	_ = s.tmpl.ExecuteTemplate(w, "locations-rows.html", data)
+}
+
+// handleLocationArchiveToggle: POST /ui/locations/{id}/archive — flips
+// Archived (soft-retire, schema v4; reversible, components untouched — never
+// a delete). Responds with loc-archive-swap: the refreshed tbody (the bin
+// moves between the default and archived views) + the re-rendered detail
+// panel (the toggle button relabels). Archiving a stocked bin is allowed —
+// reversible by design, unlike delete.
+func (s *Server) handleLocationArchiveToggle(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	l, err := s.locations.Get(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	l.Archived = !l.Archived
+	if err := s.locations.Update(l, l.Version); err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, l, err.Error()))
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := s.locationsView(strings.ToLower(r.PostFormValue("q")), r.PostFormValue("tag"), r.PostFormValue("sort"), r.PostFormValue("dir"), false)
+	data["D"] = s.locationDetailData(id, l, "")
+	_ = s.tmpl.ExecuteTemplate(w, "loc-archive-swap.html", data)
+}
+
+// handleLocationBulkArchive: POST /ui/locations/bulk-archive — sets Archived
+// on every selected location (idempotent; unarchive is the detail toggle in
+// the archived view). Re-renders the operator's current view.
+func (s *Server) handleLocationBulkArchive(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var ok, skip int
+	for _, id := range r.PostForm["id"] {
+		l, err := s.locations.Get(id)
+		if err != nil {
+			skip++
+			continue
+		}
+		if l.Archived {
+			ok++ // idempotent no-op
+			continue
+		}
+		l.Archived = true
+		if err := s.locations.Update(l, l.Version); err != nil {
+			slog.Warn("loc bulk-archive: skipped (concurrent edit)", "id", id, "error", err)
+			skip++
+		} else {
+			ok++
+		}
+	}
+	if skip > 0 {
+		w.Header().Set("HX-Trigger", fmt.Sprintf(`{"showToast":"Archived %d, skipped %d (not found or concurrent edit)"}`, ok, skip))
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := s.locationsView(strings.ToLower(r.PostFormValue("q")), r.PostFormValue("tag"), r.PostFormValue("sort"), r.PostFormValue("dir"), r.PostFormValue("archived") == "1")
 	_ = s.tmpl.ExecuteTemplate(w, "locations-rows.html", data)
 }
 
@@ -828,13 +909,20 @@ func (s *Server) handleLocationsPage(w http.ResponseWriter, r *http.Request) {
 	// the tag facet is a Store method (its own single scan, mirroring the
 	// Parts shell's handleSearch + store.TagCounts pairing).
 	locs := s.locationOptions()
+	archivedCount := 0
+	for _, l := range locs {
+		if l.Archived {
+			archivedCount++
+		}
+	}
 	counts, lastUsed := s.locationStats(locs)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "locations.html", map[string]any{
-		"Locations": locs,
-		"Counts":    counts,
-		"LastUsed":  lastUsed,
-		"LocTags":   s.locations.TagCounts(),
+		"Locations":     locs,
+		"Counts":        counts,
+		"LastUsed":      lastUsed,
+		"LocTags":       s.locations.TagCounts(),
+		"ArchivedCount": archivedCount,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -972,15 +1060,23 @@ func (s *Server) handleLocationBulkCreate(w http.ResponseWriter, r *http.Request
 	})
 	// Refreshed view (tbody + OOB sidebar) + the panel reset to a count notice.
 	locs := s.locationOptions()
+	archivedCount := 0
+	for _, l := range locs {
+		if l.Archived {
+			archivedCount++
+		}
+	}
 	counts, lastUsed := s.locationStats(locs)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data := map[string]any{
-		"Locations": locs,
-		"Counts":    counts,
-		"LastUsed":  lastUsed,
-		"Tags":      s.locations.TagCounts(),
-		"Active":    "",
-		"Created":   len(created),
+		"Locations":     locs,
+		"Counts":        counts,
+		"LastUsed":      lastUsed,
+		"Tags":          s.locations.TagCounts(),
+		"Active":        "",
+		"Archived":      false,
+		"ArchivedCount": archivedCount,
+		"Created":       len(created),
 	}
 	if cErr != nil {
 		data["Partial"] = true

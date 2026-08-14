@@ -36,7 +36,7 @@
 
   <div class="body-grid">
     <aside class="sidebar" id="loc-tag-nav">
-      {{template "loc-tag-nav.html" (dict "Tags" .LocTags "Active" "")}}
+      {{template "loc-tag-nav.html" (dict "Tags" .LocTags "Active" "" "ArchivedActive" false "ArchivedCount" .ArchivedCount)}}
     </aside>
 
     <main class="main">
@@ -97,7 +97,7 @@ document.addEventListener('keydown', e => {
 // re-renders the operator's current view — the server re-reads it from
 // r.PostForm (the hidden fields in loc-bulk-bar.html render empty here).
 let locSelected = new Set(), locLastQuery = "", locLastChecked = null;
-let locViewSort = '', locViewDir = '', locViewTag = '';
+let locViewSort = '', locViewDir = '', locViewTag = '', locViewArchived = false;
 function locUpdateBulkBar(){
   const checked = document.querySelectorAll('#loc-tbody tr .row-checkbox[name=id]:checked');
   locSelected = new Set([...checked].map(cb => cb.value));
@@ -145,6 +145,8 @@ document.body.addEventListener('click', e => {
   const params = new URL(a.getAttribute('hx-get'), location.href).searchParams;
   if (params.has('sort')) { locViewSort = params.get('sort') || ''; locViewDir = params.get('dir') || ''; }
   if (a.closest('#loc-tag-nav') && params.has('tag')) { locViewTag = params.get('tag') || ''; }
+  // The archived facet sets/clears the archived view flag ("all" clears it).
+  if (a.closest('#loc-tag-nav')) { locViewArchived = params.has('archived'); }
 });
 document.body.addEventListener('htmx:configRequest', e => {
   const elt = e.detail.elt;
@@ -154,6 +156,7 @@ document.body.addEventListener('htmx:configRequest', e => {
   if (!p['sort']) p['sort'] = locViewSort;
   if (!p['dir']) p['dir'] = locViewDir;
   if (!p['tag']) p['tag'] = locViewTag;
+  if (!p['archived']) p['archived'] = locViewArchived ? '1' : '';
 });
 // Delete confirm (mirrors Parts' confirmOverlay).
 let locLastTrigger = null;

@@ -21,6 +21,7 @@ type Location struct {
 	Tags           []string // physical context: "garage", "workbench" — replaces ParentID (flat model)
 	CreationMethod string   // "single" | "row" | "grid" | "3d_grid" — reference metadata (creation-only)
 	Notes          string
+	Archived       bool   // soft-retire (schema v4): hidden from the default Storage view, restorable — never deletes components
 	CreatedBy      string // nullable, "local" in v1 (§5.8)
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
