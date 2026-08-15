@@ -18,13 +18,15 @@ import (
 func newDedupeReportCmd(dataDir *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "dedupe-report",
-		Short: "List duplicate MPN / local-number values (read-only)",
-		Long: `List duplicate MPN / local-number values (read-only).
+		Short: "List duplicate MPN / local-number values",
+		Long: `List duplicate MPN / local-number values.
 
-Scans every part record and groups collisions by value, printing the value
-and the ids of every part carrying it. Never mutates anything; fix a
-collision by editing the losing part's MPN or local number (the store
-re-reserves identities on Update).`,
+Scans every part record and groups collisions by (whitespace-trimmed)
+value, printing the value and the ids of every part carrying it. The
+RECORDS are never modified, but opening the store runs the normal open
+path (schema migration + the idempotent identity-index backfill) — this is
+not a read-only open. Fix a collision by editing the losing part's MPN or
+local number (the store re-reserves identities on Update).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ps, _, _, _, cleanup, err := openStores(*dataDir)
 			if err != nil {
@@ -34,11 +36,14 @@ re-reserves identities on Update).`,
 			groups := [2]map[string][]string{{}, {}}
 			kinds := [2]string{"MPN", "local number"}
 			for _, p := range ps.List() {
-				if p.MPN != "" {
-					groups[0][p.MPN] = append(groups[0][p.MPN], p.ID)
+				// Group on TRIMMED values, matching the write path's
+				// normalization — a legacy " PAD-1 " and a new "PAD-1" are the
+				// same identity (adversary finding 6).
+				if mpn := strings.TrimSpace(p.MPN); mpn != "" {
+					groups[0][mpn] = append(groups[0][mpn], p.ID)
 				}
-				if p.LocalNumber != "" {
-					groups[1][p.LocalNumber] = append(groups[1][p.LocalNumber], p.ID)
+				if ln := strings.TrimSpace(p.LocalNumber); ln != "" {
+					groups[1][ln] = append(groups[1][ln], p.ID)
 				}
 			}
 			dupes := 0

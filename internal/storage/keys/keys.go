@@ -51,10 +51,13 @@ const (
 )
 
 // IdentIndexKey returns the part-identity uniqueness-index key:
-// kind(1) | ws(8) | value. Mirrors viaKey's shape (a value index pointing at
-// the owning part's ID), with the kind byte where via has its prefix.
+// identPrefix(0x14) | kind(1) | ws(8) | value. The PREFIX byte is
+// load-bearing (adversary finding 1, 2026-08-15): without it the kind byte
+// ('M'=0x4D / 'L'=0x4C) becomes the top-level byte and the pins live on
+// unregistered bytes outside IdentPrefixBound and the registry.
 func IdentIndexKey(ws [8]byte, kind IdentKind, value string) []byte {
-	k := make([]byte, 0, 1+8+len(value))
+	k := make([]byte, 0, 2+8+len(value))
+	k = append(k, identPrefix)
 	k = append(k, byte(kind))
 	k = append(k, ws[:]...)
 	return append(k, value...)

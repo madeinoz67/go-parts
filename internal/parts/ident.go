@@ -87,9 +87,26 @@ func (s *Store) releaseIdent(kind keys.IdentKind, value, id string) {
 // dedupe report tool, repaired by the operator editing the loser's MPN
 // (Update re-reserves correctly).
 func (s *Store) backfillIdentIndex() {
+	// Adversary finding 1 remediation: the da878df..278bfe4 interim key shape
+	// omitted the 0x14 prefix, so pins landed at raw 0x4C/0x4D. Purge that
+	// stray range once (idempotent — deleting absent keys is a no-op) before
+	// re-pinning everything under the corrected shape. The range was never
+	// registered to anyone else and only this build's binaries ever wrote it.
+	s.identMu.Lock()
+	if it, err := s.db.NewIter(&pebble.IterOptions{
+		LowerBound: []byte{0x4C}, UpperBound: []byte{0x4F},
+	}); err == nil {
+		for it.First(); it.Valid(); it.Next() {
+			_ = s.db.Delete(it.Key(), pebble.Sync)
+		}
+		it.Close()
+	}
+	s.identMu.Unlock()
+	// Adversary finding 6: pin TRIMMED values, matching Create/Update's write
+	// normalization — a legacy " PAD-1 " must collide with a new "PAD-1".
 	for _, p := range s.List() {
-		_ = s.reserveIdent(keys.IdentMPN, p.MPN, p.ID)
-		_ = s.reserveIdent(keys.IdentLocal, p.LocalNumber, p.ID)
+		_ = s.reserveIdent(keys.IdentMPN, trimIdent(p.MPN), p.ID)
+		_ = s.reserveIdent(keys.IdentLocal, trimIdent(p.LocalNumber), p.ID)
 	}
 }
 

@@ -277,6 +277,32 @@ func TestEditUpdatesRowInPlace(t *testing.T) {
 	}
 }
 
+// TestEditDuplicateMPNBanner (adversary finding 4): renaming onto a taken MPN
+// in the edit form re-renders the detail with the operator's submitted values
+// + a dup banner — NOT the generic "edited elsewhere — reload" conflict
+// fragment, which misdiagnosed the failure and discarded the edit on reload.
+func TestEditDuplicateMPNBanner(t *testing.T) {
+	srv := newTestServer(t)
+	a := uiCreatePart(t, srv, "EDUPA")
+	b := uiCreatePart(t, srv, "EDUPB")
+	body := "version=" + fmt.Sprintf("%d", b.Version) + "&mpn=" + a.MPN
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+b.ID, body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("dup edit = %d, want 200 (htmx does not swap error statuses); body=%s", rr.Code, rr.Body.String())
+	}
+	bd := rr.Body.String()
+	if !strings.Contains(bd, "duplicate mpn") {
+		t.Errorf("detail should carry the dup banner; body=%s", bd)
+	}
+	if !strings.Contains(bd, `value="`+a.MPN+`"`) {
+		t.Errorf("the operator's submitted MPN should be preserved in the form; body=%s", bd)
+	}
+	if strings.Contains(bd, "edited elsewhere") {
+		t.Errorf("a duplicate is NOT a concurrent edit — wrong fragment; body=%s", bd)
+	}
+}
+
 // TestSearchByLocalNumber pins "must be searchable": a part's local number is
 // FTS-indexed (BODY weight), so the live search box finds it.
 func TestSearchByLocalNumber(t *testing.T) {

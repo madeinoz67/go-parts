@@ -241,11 +241,26 @@ func (s *Store) Update(p *Part, expectedVersion int) error {
 		return err
 	}
 	if err := s.reserveIdent(keys.IdentLocal, p.LocalNumber, p.ID); err != nil {
+		// Adversary finding 2: compensate the MPN reservation that already
+		// succeeded, or the value stays pinned to a record still carrying its
+		// OLD MPN — a permanent burn nothing ever releases (Delete releases
+		// only the record's current values). Mirror Create's twin-case tree.
+		if cur.MPN != p.MPN {
+			s.releaseIdent(keys.IdentMPN, p.MPN, p.ID)
+		}
 		return err
 	}
 	if err := s.write(p); err != nil {
-		s.releaseIdent(keys.IdentMPN, p.MPN, p.ID)
-		s.releaseIdent(keys.IdentLocal, p.LocalNumber, p.ID)
+		// Adversary finding 3: release only the CHANGED values (the same guard
+		// the success path uses). An unchanged value's reserve was an
+		// idempotent no-op on the part's OWN existing pin — releasing it here
+		// would delete that legitimate pin and open a duplicate hole.
+		if cur.MPN != p.MPN {
+			s.releaseIdent(keys.IdentMPN, p.MPN, p.ID)
+		}
+		if cur.LocalNumber != p.LocalNumber {
+			s.releaseIdent(keys.IdentLocal, p.LocalNumber, p.ID)
+		}
 		return err
 	}
 	if cur.MPN != p.MPN {

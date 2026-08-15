@@ -10,6 +10,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/madeinoz67/go-parts/internal/index"
+	"github.com/madeinoz67/go-parts/internal/storage/keys"
 	"github.com/madeinoz67/go-parts/internal/via"
 )
 
@@ -226,6 +227,60 @@ func TestDeleteReleasesIdent(t *testing.T) {
 	}
 	if err := s.Create(&Part{MPN: "GONE", LocalNumber: "L009", PartType: "local"}); err != nil {
 		t.Errorf("released identities should be reusable: %v", err)
+	}
+}
+
+// TestIdentKeysInsideRegisteredPrefix (adversary finding 1): a part's identity
+// pins MUST live inside the registered 0x14 range. The interim key shape
+// omitted the prefix byte, writing pins at raw 0x4C/0x4D — invisible to
+// IdentPrefixBound and outside the registry; this test makes that shape
+// impossible to reintroduce silently.
+func TestIdentKeysInsideRegisteredPrefix(t *testing.T) {
+	s := newStore(t)
+	if err := s.Create(&Part{MPN: "INK1", LocalNumber: "INKL", PartType: "local"}); err != nil {
+		t.Fatal(err)
+	}
+	var ws [8]byte
+	lower, upper := keys.IdentPrefixBound(ws)
+	it, err := s.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for it.First(); it.Valid(); it.Next() {
+		n++
+	}
+	it.Close()
+	if n != 2 {
+		t.Fatalf("ident pins inside the 0x14 range = %d, want 2 (M+L)", n)
+	}
+	// The stray interim range [0x4C,0x4F) must be empty (backfill purges it).
+	it2, _ := s.db.NewIter(&pebble.IterOptions{LowerBound: []byte{0x4C}, UpperBound: []byte{0x4F}})
+	stray := 0
+	for it2.First(); it2.Valid(); it2.Next() {
+		stray++
+	}
+	it2.Close()
+	if stray != 0 {
+		t.Fatalf("stray pins outside the registered prefix = %d, want 0", stray)
+	}
+}
+
+// TestUpdateSecondReserveFailureCompensatesFirst (adversary finding 2): when
+// the LocalNumber reserve fails, the already-successful MPN reservation must
+// be released — otherwise the value is pinned to a record still carrying its
+// OLD MPN, and nothing ever releases it (a permanent burn).
+func TestUpdateSecondReserveFailureCompensatesFirst(t *testing.T) {
+	s := newStore(t)
+	p := &Part{MPN: "AAA", LocalNumber: "L1", PartType: "local"}
+	s.Create(p)
+	s.Create(&Part{MPN: "Q1", LocalNumber: "L9", PartType: "local"})
+	p.MPN, p.LocalNumber = "BBB", "L9" // L9 taken → second reserve fails
+	if err := s.Update(p, p.Version); !errors.Is(err, ErrDuplicateLocalNumber) {
+		t.Fatalf("want ErrDuplicateLocalNumber, got %v", err)
+	}
+	if err := s.Create(&Part{MPN: "BBB", PartType: "local"}); err != nil {
+		t.Errorf("MPN reservation leaked — BBB permanently burned: %v", err)
 	}
 }
 

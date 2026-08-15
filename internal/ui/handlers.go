@@ -487,6 +487,21 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(v, "%d", &cur.PackageQty)
 	}
 	if err := s.store.Update(cur, expected); err != nil {
+		// Identity uniqueness (schema v5): a taken MPN/local number re-renders
+		// the detail with the operator's SUBMITTED values + a banner (adversary
+		// finding 4: the generic 409 "edited elsewhere — reload" fragment
+		// misdiagnosed a duplicate as a concurrent edit and discarded the
+		// edit on reload). 200 — htmx does not swap error-status responses.
+		if errors.Is(err, parts.ErrDuplicateMPN) || errors.Is(err, parts.ErrDuplicateLocalNumber) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_ = s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{
+				"P":          cur, // the operator's submitted values — the form re-fills
+				"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
+				"Locations":  s.locationOptions(),
+				"Error":      err.Error(),
+			})
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusConflict)
 		if tErr := s.tmpl.ExecuteTemplate(w, "conflict.html", map[string]any{"Reload": "/ui/parts/" + id}); tErr != nil {
