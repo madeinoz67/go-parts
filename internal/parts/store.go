@@ -505,6 +505,7 @@ func (s *Store) writePartsKey(p *Part) error {
 func (p *Part) indexText() map[string]string {
 	f := map[string]string{
 		"mpn":          p.MPN,
+		"local_number": p.LocalNumber, // searchable (BODY weight: the operator's own catalog number)
 		"manufacturer": p.Manufacturer,
 		"via_code":     p.ViaCode,
 		"description":  p.Description,

@@ -249,6 +249,46 @@ func TestEditRefreshesTagSidebar(t *testing.T) {
 	}
 }
 
+// TestEditUpdatesRowInPlace pins the principal-reported fix: editing a part
+// (e.g. its local number) must instantly update its TABLE row — the edit
+// response ships the updated row as an OOB swap keyed by the row id, so no
+// manual refresh or search keystroke is needed.
+func TestEditUpdatesRowInPlace(t *testing.T) {
+	srv := newTestServer(t)
+	p := uiCreatePart(t, srv, "ROWED1")
+	srv.store.Update(func() *parts.Part { q, _ := srv.store.Get(p.ID); q.LocalNumber = "R-100"; return q }(), p.Version)
+	body := "version=2&local_number=R-200&mpn=ROWED1"
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts/"+p.ID, body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("edit = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	b := rr.Body.String()
+	if !strings.Contains(b, `id="row-`+p.ID+`"`) || !strings.Contains(b, `hx-swap-oob="true"`) {
+		t.Errorf("edit response should ship an OOB row refresh; body=%s", b)
+	}
+	if !strings.Contains(b, ">R-200<") {
+		t.Errorf("the OOB row should carry the NEW local number; body=%s", b)
+	}
+}
+
+// TestSearchByLocalNumber pins "must be searchable": a part's local number is
+// FTS-indexed (BODY weight), so the live search box finds it.
+func TestSearchByLocalNumber(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "SRCH1", LocalNumber: "ZQ-77", PartType: "local"})
+	srv.store.Create(&parts.Part{MPN: "SRCH2", PartType: "local"})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search?q=ZQ-77", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, ">SRCH1<") {
+		t.Errorf("search by local number should find the part; body=%s", body)
+	}
+	if strings.Contains(body, ">SRCH2<") {
+		t.Errorf("search should not leak the other part; body=%s", body)
+	}
+}
+
 // TestCreateRefreshesTagSidebar — the create path (row-created.html) ships the
 // same OOB tag-nav refresh, so a part created with a new tag updates the facet
 // without a manual reload.
