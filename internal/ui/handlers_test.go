@@ -264,8 +264,13 @@ func TestEditUpdatesRowInPlace(t *testing.T) {
 		t.Fatalf("edit = %d; body=%s", rr.Code, rr.Body.String())
 	}
 	b := rr.Body.String()
-	if !strings.Contains(b, `id="row-`+p.ID+`"`) || !strings.Contains(b, `hx-swap-oob="true"`) {
-		t.Errorf("edit response should ship an OOB row refresh; body=%s", b)
+	// The <table> wrapper is load-bearing: without it the browser's div-context
+	// parser destroys the bare top-level <tr> (foster parenting) and the OOB
+	// swap never fires — the 2026-08-15 principal-reported "not working".
+	// (Whitespace between the tags is template-newline noise; assert presence,
+	// not adjacency.)
+	if !strings.Contains(b, "<table>") || !strings.Contains(b, `id="row-`+p.ID+`" hx-swap-oob="true"`) {
+		t.Errorf("OOB row must ship inside a table wrapper (div-context parse safety); body=%s", b)
 	}
 	if !strings.Contains(b, ">R-200<") {
 		t.Errorf("the OOB row should carry the NEW local number; body=%s", b)

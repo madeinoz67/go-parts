@@ -8,6 +8,13 @@
 {{/* The edited part's row, refreshed in place (OOB, keyed by id=row-{id}) —
      an edit (local number, MPN, description…) must show instantly in the
      table, no manual reload. Rendered only when the caller passes P. */}}
-{{if .P}}{{template "row.html" (dict "P" .P "OOB" true)}}{{end}}
+{{/* Wrapped in a <table>: the edit form targets #detail-panel (a section), so
+     htmx parses this response in DIV context, where a bare top-level <tr> is
+     destroyed by foster-parenting (the 2026-08-10 htmx gotcha, inverted —
+     create works only because ITS form targets the tbody). The wrapper is
+     parsing scaffolding: it makes the parser treat the tr as table content so
+     the id + hx-swap-oob survive; htmx then OOB-swaps the tr by id and
+     discards the wrapper. */}}
+{{if .P}}<table>{{template "row.html" (dict "P" .P "OOB" true)}}</table>{{end}}
 <aside class="sidebar" id="tag-nav" hx-swap-oob="true">{{template "tag-nav.html" (dict "Tags" .Tags "Active" .Active)}}</aside>
 {{end}}
