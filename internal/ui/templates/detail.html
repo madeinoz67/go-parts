@@ -26,6 +26,8 @@
   {{if .Error}}<div class="conflict"><p>{{.Error}}</p></div>{{end}}
   <input type="hidden" name="version" value="{{.P.Version}}">
   <div class="spec-rows">
+    <div class="spec-row"><span>Local #</span><input type="text" name="local_number" value="{{.P.LocalNumber}}" placeholder="your stock number" style="flex:1"></div>
+    <div class="spec-row"><span>MPN</span><input type="text" name="mpn" value="{{.P.MPN}}" placeholder="manufacturer part number" style="flex:1"></div>
     <div class="spec-row"><span>Description</span><input type="text" name="description" value="{{.P.Description}}" style="flex:1"></div>
     <div class="spec-row"><span>Manufacturer</span><input type="text" name="manufacturer" value="{{.P.Manufacturer}}" style="flex:1"></div>
     <div class="spec-row"><span>Footprint</span><input type="text" name="footprint" value="{{.P.Footprint}}" list="footprints-list" style="flex:1"></div>

@@ -139,6 +139,10 @@ func TestStats(t *testing.T) {
 	}
 	// Add one part, count should reflect it.
 	post(srv, "/parts", `{"MPN":"S1","PartType":"local"}`)
+	// Schema v5: a second part with the same MPN is a 409 conflict.
+	if rr := post(srv, "/parts", `{"MPN":"S1","PartType":"local"}`); rr.Code != http.StatusConflict {
+		t.Fatalf("duplicate MPN create = %d, want 409", rr.Code)
+	}
 	rr = get(srv, "/stats")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("stats after create = %d, want 200", rr.Code)

@@ -374,6 +374,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	p := &parts.Part{
 		MPN:           r.PostFormValue("mpn"),
+		LocalNumber:   r.PostFormValue("local_number"),
 		Description:   r.PostFormValue("description"),
 		PartType:      r.PostFormValue("part_type"),
 		Manufacturer:  r.PostFormValue("manufacturer"),
@@ -391,6 +392,21 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(v, "%d", &p.PackageQty)
 	}
 	if err := s.store.Create(p); err != nil {
+		// Identity uniqueness (schema v5): a taken MPN/local number re-renders
+		// the create form in the panel with a banner (the form's own target is
+		// #parts-tbody — the white-out class the archive adversary flagged;
+		// retarget error fragments into the panel, always).
+		if errors.Is(err, parts.ErrDuplicateMPN) || errors.Is(err, parts.ErrDuplicateLocalNumber) {
+			w.Header().Set("Hx-Retarget", "#detail-panel")
+			w.Header().Set("Hx-Reswap", "innerHTML")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_ = s.tmpl.ExecuteTemplate(w, "create.html", map[string]any{
+				"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
+				"Locations":  s.locationOptions(),
+				"Error":      err.Error(),
+			})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -457,6 +473,8 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 	if v := r.PostFormValue("footprint"); v != "" {
 		cur.Footprint = v
 	}
+	cur.LocalNumber = strings.TrimSpace(r.PostFormValue("local_number")) // schema v5: operator's stock number, unique when non-empty
+	cur.MPN = strings.TrimSpace(r.PostFormValue("mpn"))                  // editable since v5 (the edit form carries it; re-reserves in Update)
 	cur.Manufacturer = r.PostFormValue("manufacturer")
 	cur.UnitOfMeasure = r.PostFormValue("unit_of_measure")
 	cur.Tags = parseTags(r.PostFormValue("tags"))
@@ -1320,6 +1338,8 @@ func (s *Server) renderLocationDetailError(w http.ResponseWriter, r *http.Reques
 // preserved).
 func applySort(pts []*parts.Part, key, dir string) {
 	switch key {
+	case "local":
+		sort.Slice(pts, func(i, j int) bool { return less(pts[i].LocalNumber, pts[j].LocalNumber, dir) })
 	case "mpn":
 		sort.Slice(pts, func(i, j int) bool { return less(pts[i].MPN, pts[j].MPN, dir) })
 	case "footprint":

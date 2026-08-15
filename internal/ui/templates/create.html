@@ -1,6 +1,7 @@
 {{define "create.html"}}
 <form class="create" hx-post="/ui/parts" hx-target="#parts-tbody" hx-swap="afterbegin">
   {{if .Error}}<div class="conflict"><p>{{.Error}}</p></div>{{end}}
+  <input name="local_number" placeholder="local # (unique)">
   <input name="mpn" placeholder="MPN" required>
   <input name="description" placeholder="description">
   <select name="part_type">

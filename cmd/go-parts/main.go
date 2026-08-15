@@ -43,9 +43,10 @@ func main() {
 	root.AddCommand(newStopCmd(&dataDir))
 	root.AddCommand(newStatusCmd(&dataDir))
 	root.AddCommand(newLocationsCmd(&dataDir))
-	root.AddCommand(newViaCmd(&dataDir))     // Slice 4: generic Via resolver (§5.17)
-	root.AddCommand(newReindexCmd(&dataDir)) // RedTeam: FTS reindex recovery
-	root.AddCommand(newFixQtyCmd(&dataDir))  // Flat-locations: QtyOnHand re-derive
+	root.AddCommand(newViaCmd(&dataDir))          // Slice 4: generic Via resolver (§5.17)
+	root.AddCommand(newReindexCmd(&dataDir))      // RedTeam: FTS reindex recovery
+	root.AddCommand(newDedupeReportCmd(&dataDir)) // identity uniqueness: collision report (read-only)
+	root.AddCommand(newFixQtyCmd(&dataDir))       // Flat-locations: QtyOnHand re-derive
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

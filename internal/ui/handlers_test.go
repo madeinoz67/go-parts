@@ -1025,6 +1025,55 @@ func TestLocationTagFilter(t *testing.T) {
 	}
 }
 
+// TestCreateDuplicateMPNBanner pins the schema-v5 UI surface: creating a part
+// with an already-pinned MPN re-renders the create form in #detail-panel with
+// a banner (Hx-Retarget — the form's own target is #parts-tbody) and writes
+// nothing.
+func TestCreateDuplicateMPNBanner(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "DUPM1", PartType: "local"})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts", "mpn=DUPM1&part_type=local"))
+	if got := rr.Header().Get("Hx-Retarget"); got != "#detail-panel" {
+		t.Fatalf("Hx-Retarget = %q, want #detail-panel", got)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "duplicate mpn") {
+		t.Errorf("banner should name the duplicate; body=%s", body)
+	}
+	if !strings.Contains(body, `name="mpn"`) {
+		t.Errorf("the create form should re-render; body=%s", body)
+	}
+	if n := srv.store.Count(); n != 1 {
+		t.Errorf("rejected create must write nothing; Count=%d want 1", n)
+	}
+}
+
+// TestLocalNumberFirstColumn pins the principal-directed layout: LocalNumber
+// is the first data column (row fragment + shell header) and renders on rows.
+func TestLocalNumberFirstColumn(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store.Create(&parts.Part{MPN: "LOC1", LocalNumber: "R-001", PartType: "local"})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/search", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, ">R-001<") {
+		t.Errorf("row should render the local number; body=%s", body)
+	}
+	// (The column HEADER lives in the shell — asserted on the shell fetch
+	// below; the search endpoint returns only the tbody fragment.)
+	if i, j := strings.Index(body, ">R-001<"), strings.Index(body, ">LOC1<"); i > j {
+		t.Errorf("local number must precede MPN in the row; local=%d mpn=%d", i, j)
+	}
+	// Shell header: Local # before MPN.
+	shellRR := httptest.NewRecorder()
+	srv.ServeHTTP(shellRR, httptest.NewRequest("GET", "/ui/", nil))
+	shell := shellRR.Body.String()
+	if i, j := strings.Index(shell, ">Local #"), strings.Index(shell, ">MPN <"); i > j {
+		t.Errorf("header: Local # must precede MPN; local=%d mpn=%d", i, j)
+	}
+}
+
 // TestLocationBulkFormRenders pins the "+ bulk" header button's target (Task
 // 44): GET /ui/locations/bulk renders the bulk-create form with the method
 // selector, prefix, and the sanity cap. The literal route must win over {id}.

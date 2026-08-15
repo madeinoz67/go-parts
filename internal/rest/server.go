@@ -186,6 +186,12 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	p.CreatedAt = time.Time{}
 	p.UpdatedAt = time.Time{}
 	if err := s.store.Create(&p); err != nil {
+		// Identity uniqueness (schema v5): a taken MPN/LocalNumber is a
+		// conflict, not a server fault.
+		if errors.Is(err, parts.ErrDuplicateMPN) || errors.Is(err, parts.ErrDuplicateLocalNumber) {
+			http.Error(w, "create: "+err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, "create: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -264,11 +270,16 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.Update(loaded, expectedVersion); err != nil {
 		// Update calls Get under the striped lock, so a part deleted between
 		// our outer Get and Update surfaces here as parts.ErrNotFound → 404.
-		// The remaining case is a version conflict (the expectedVersion no
-		// longer matches the in-lock stored version) — the §5.14 race window
-		// optimistic concurrency exists for → 409.
+		// Identity uniqueness (schema v5): a taken MPN/LocalNumber → 409 with
+		// its own message; the remaining case is a version conflict (the
+		// expectedVersion no longer matches the in-lock stored version) — the
+		// §5.14 race window optimistic concurrency exists for → 409.
 		if errors.Is(err, parts.ErrNotFound) {
 			http.NotFound(w, r)
+			return
+		}
+		if errors.Is(err, parts.ErrDuplicateMPN) || errors.Is(err, parts.ErrDuplicateLocalNumber) {
+			http.Error(w, "duplicate identity: "+err.Error(), http.StatusConflict)
 			return
 		}
 		http.Error(w, "version conflict: "+err.Error(), http.StatusConflict)
@@ -289,6 +300,7 @@ func applyPatch(dst *parts.Part, raw map[string]json.RawMessage) error {
 	}
 	fs := []pf{
 		{"MPN", func() error { return patchStr(raw, "MPN", &dst.MPN) }},
+		{"LocalNumber", func() error { return patchStr(raw, "LocalNumber", &dst.LocalNumber) }},
 		{"Manufacturer", func() error { return patchStr(raw, "Manufacturer", &dst.Manufacturer) }},
 		{"Category", func() error { return patchStr(raw, "Category", &dst.Category) }},
 		{"Subcategory", func() error { return patchStr(raw, "Subcategory", &dst.Subcategory) }},
