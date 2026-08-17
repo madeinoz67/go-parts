@@ -1,0 +1,7 @@
+{{define "part-expansion.html"}}
+{{/* Inline detail expansion (2026-08-17 redesign, unit 1): inserted AFTER the
+     clicked row (hx-swap="afterend") — full table width, colspan covers all
+     seven Parts columns. Content is the unchanged detail.html panel body.
+     The shell's beforeRequest guard keeps at most one .exp-row open. */}}
+<tr class="exp-row"><td colspan="7">{{template "detail.html" .}}</td></tr>
+{{end}}

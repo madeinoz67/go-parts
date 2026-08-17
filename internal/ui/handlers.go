@@ -304,6 +304,30 @@ func (s *Server) filteredParts(q, tag string, low bool, sortKey, sortDir string)
 	return pts
 }
 
+// handlePartExpansion renders the part-expansion.html wrapper — the inline
+// detail row inserted after the clicked row (2026-08-17 redesign, unit 1).
+// Same data as handleDetail; only the wrapper differs.
+func (s *Server) handlePartExpansion(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, err := s.store.Get(id)
+	if err != nil {
+		if errors.Is(err, parts.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "part-expansion.html", map[string]any{
+		"P":          p,
+		"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
+		"Locations":  s.locationOptions(),
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 // handleDetail renders the detail.html fragment for a single part (the row-
 // select → detail-panel flow wired into rows.html: each <tr> carries
 // hx-get="/ui/parts/{id}" hx-target="#detail-panel"). Calls store.Get
@@ -973,6 +997,25 @@ func (s *Server) handleLocationsPage(w http.ResponseWriter, r *http.Request) {
 		"ArchivedCount": archivedCount,
 		"ActiveCount":   len(locs) - archivedCount, // footer matches the default view (adversary note 5)
 	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleLocationExpansion renders the loc-expansion.html wrapper — the
+// inline detail row inserted after the clicked row (2026-08-17 redesign).
+func (s *Server) handleLocationExpansion(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	l, err := s.locations.Get(id)
+	if err != nil {
+		if errors.Is(err, locations.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "loc-expansion.html", s.locationDetailData(id, l, "")); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

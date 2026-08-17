@@ -1,0 +1,6 @@
+{{define "loc-expansion.html"}}
+{{/* Inline location detail expansion (2026-08-17 redesign, unit 1): inserted
+     AFTER the clicked row; colspan covers the five Storage columns. Content
+     is the unchanged location-detail.html panel body. */}}
+<tr class="exp-row"><td colspan="5">{{template "location-detail.html" .}}</td></tr>
+{{end}}

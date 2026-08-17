@@ -303,6 +303,51 @@ func TestEditDuplicateMPNBanner(t *testing.T) {
 	}
 }
 
+// TestPartExpansionRow pins unit 1 of the inline-detail redesign: GET
+// /ui/parts/{id}/exp renders the .exp-row wrapper (tr > td[colspan=7] >
+// detail body) — the wrapper SHAPE is load-bearing (the 84b3a99 table-parse
+// lesson); pixels are the operator's to verify.
+func TestPartExpansionRow(t *testing.T) {
+	srv := newTestServer(t)
+	p := uiCreatePart(t, srv, "EXPP1")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+p.ID+"/exp", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("exp = %d", rr.Code)
+	}
+	b := rr.Body.String()
+	if !strings.Contains(b, `<tr class="exp-row"><td colspan="7">`) {
+		t.Errorf("expansion wrapper shape wrong; body=%s", b)
+	}
+	if !strings.Contains(b, "EXPP1") {
+		t.Errorf("detail body should render inside the wrapper; body=%s", b)
+	}
+	// The row trigger itself points at the exp route with afterend.
+	sr := httptest.NewRecorder()
+	srv.ServeHTTP(sr, httptest.NewRequest("GET", "/ui/parts/search", nil))
+	if !strings.Contains(sr.Body.String(), `/ui/parts/`+p.ID+`/exp" hx-swap="afterend"`) {
+		t.Errorf("row trigger should target the exp route afterend; body=%s", sr.Body.String())
+	}
+}
+
+// TestLocationExpansionRow — the Storage twin of TestPartExpansionRow.
+func TestLocationExpansionRow(t *testing.T) {
+	srv := newTestServer(t)
+	bin := uiCreateLocation(t, srv, "EXPLoc")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/locations/"+bin.ID+"/exp", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("exp = %d", rr.Code)
+	}
+	b := rr.Body.String()
+	if !strings.Contains(b, `<tr class="exp-row"><td colspan="5">`) {
+		t.Errorf("expansion wrapper shape wrong; body=%s", b)
+	}
+	if !strings.Contains(b, "EXPLoc") {
+		t.Errorf("detail body should render inside the wrapper; body=%s", b)
+	}
+}
+
 // TestSearchByLocalNumber pins "must be searchable": a part's local number is
 // FTS-indexed (BODY weight), so the live search box finds it.
 func TestSearchByLocalNumber(t *testing.T) {

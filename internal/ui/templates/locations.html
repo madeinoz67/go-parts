@@ -185,8 +185,26 @@ document.body.addEventListener('showToast', e => {
   document.body.appendChild(t);
   setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .4s'; setTimeout(() => t.remove(), 400); }, 5000);
 });
-// Slice 6: a via-scan redirect lands on /ui/locations?loc={id}; auto-open it.
-(function(){ const l = new URLSearchParams(location.search).get('loc'); if (l) htmx.ajax('GET', '/ui/locations/'+l, {target:'#loc-detail'}); })();
+// Inline detail expansion (2026-08-17 redesign): one .exp-row at a time,
+// re-click toggles closed, Escape closes (mirrors the Parts shell).
+document.body.addEventListener('htmx:beforeRequest', e => {
+  const elt = e.detail.elt;
+  if (!(elt instanceof HTMLTableRowElement) || !elt.getAttribute('hx-get') || !elt.getAttribute('hx-get').endsWith('/exp')) return;
+  const open = document.querySelector('#loc-tbody .exp-row');
+  if (open) {
+    const wasMine = open.previousElementSibling === elt;
+    open.remove();
+    if (wasMine) { e.detail.preventDefault(); }
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.querySelectorAll('#loc-tbody .exp-row').forEach(r => r.remove());
+});
+// Slice 6: a via-scan redirect lands on /ui/locations?loc={id}; expand inline.
+(function(){
+  const l = new URLSearchParams(location.search).get('loc');
+  if (l) htmx.ajax('GET', '/ui/locations/'+l+'/exp', {target:document.getElementById('loc-row-'+l) || document.querySelector('#loc-tbody'), swap:'afterend'});
+})();
 // Copy the entity's shareable deep link ({origin}/via/{code}) — the via
 // resolver redirects a browser to the right tab for either entity type.
 function copyVia(btn, code){

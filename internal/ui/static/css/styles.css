@@ -118,6 +118,10 @@ button,a,input,th[role="columnheader"],tr{transition:background-color 150ms ease
 }
 .header .search{ flex:1; max-width:560px; }
 .header .header-logo{ flex:none; width:22px; height:22px; display:inline-block; }
+
+/* Inline detail expansion row (2026-08-17 redesign): full-width detail below
+ * the clicked row — copper inset left rule echoing .selected, surface bg. */
+tr.exp-row > td{ background:var(--surface); padding:12px 18px; box-shadow:inset 3px 0 0 var(--copper); border-bottom:1px solid var(--border); }
 .topnav{
   display:flex; gap:2px; padding:0 20px;
   border-bottom:1px solid var(--border); background:var(--bg);

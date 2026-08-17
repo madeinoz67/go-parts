@@ -72,8 +72,27 @@
   </footer>
 </div>
 <script>
-// Slice 6: a via-scan redirect lands on /ui/?part={id}; auto-open the detail.
-(function(){ const p = new URLSearchParams(location.search).get('part'); if (p) htmx.ajax('GET', '/ui/parts/'+p, {target:'#detail-panel'}); })();
+// Inline detail expansion (2026-08-17 redesign): at most ONE .exp-row open —
+// a row-triggered expansion first removes the open one; re-clicking the same
+// row cancels the request (toggle closed). Escape closes.
+document.body.addEventListener('htmx:beforeRequest', e => {
+  const elt = e.detail.elt;
+  if (!(elt instanceof HTMLTableRowElement) || !elt.getAttribute('hx-get') || !elt.getAttribute('hx-get').endsWith('/exp')) return;
+  const open = document.querySelector('tbody .exp-row');
+  if (open) {
+    const wasMine = open.previousElementSibling === elt;
+    open.remove();
+    if (wasMine) { e.detail.preventDefault(); }
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.querySelectorAll('tbody .exp-row').forEach(r => r.remove());
+});
+// Slice 6: a via-scan redirect lands on /ui/?part={id}; expand it inline.
+(function(){
+  const p = new URLSearchParams(location.search).get('part');
+  if (p) htmx.ajax('GET', '/ui/parts/'+p+'/exp', {target:document.getElementById('row-'+p) || document.querySelector('tbody'), swap:'afterend'});
+})();
 document.addEventListener('keydown', e => {
   if (e.key === '/' && document.activeElement.id !== 'search') { e.preventDefault(); document.getElementById('search').focus(); }
   if (e.key === 'Escape') {

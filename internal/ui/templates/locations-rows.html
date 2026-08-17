@@ -4,7 +4,7 @@
   <tr class="empty"><td colspan="5" style="text-align:center;color:var(--text-faint);padding:18px">no locations yet — click + new</td></tr>
 {{else}}
 {{range .Locations}}
-<tr hx-get="/ui/locations/{{.ID}}" hx-target="#loc-detail" hx-swap="innerHTML">
+<tr id="loc-row-{{.ID}}" hx-get="/ui/locations/{{.ID}}/exp" hx-swap="afterend">
   <td class="checkbox-col"><input type="checkbox" class="row-checkbox" name="id" value="{{.ID}}" aria-label="select row" onchange="locUpdateBulkBar()"></td>
   <td>{{.Label}}</td>
   <td class="phos">{{.ViaCode}}</td>
