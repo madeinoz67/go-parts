@@ -194,7 +194,7 @@ document.body.addEventListener('htmx:beforeRequest', e => {
   if (open) {
     const wasMine = open.previousElementSibling === elt;
     open.remove();
-    if (wasMine) { e.detail.preventDefault(); }
+    if (wasMine) { e.preventDefault(); } // the event method — htmx cancels the request
   }
 });
 document.addEventListener('keydown', e => {
