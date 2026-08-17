@@ -965,4 +965,4 @@ GET    /purchases                  (?part_id= or ?vendor= — cost history)
 
 ## 11. Open Questions
 
-1. **KiCAD plugin protocol** — when the plugin is actually built, does it end up using RPC or REST? KiCAD's Python-based plugin environment can consume either comfortably, so this is a build-time choice rather than an architectural one.
+1. **KiCAD plugin protocol — RESOLVED 2026-08-17: RPC.** Principal directive ("use the faster one, which will be RPC"): the Phase 4 KiCAD plugin consumes the RPC wire protocol over REST. Build-time consideration: the plugin runs inside KiCAD's bundled Python, so grpcio + protobuf wheels for that exact interpreter must be installable; if that ever proves too heavy, REST remains an equivalent fallback (§5.2 — both surfaces share one core).
