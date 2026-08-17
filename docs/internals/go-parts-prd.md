@@ -1,7 +1,7 @@
 # PRD: go-parts — Standalone Electronics Parts Database
 
 **Author:** Stephen Eaton
-**Status:** Draft v5.4 (added embedded footprint seed list §5.22 — fixes the cold-start autocomplete gap, footprint-specific since it has a real bounded standard vocabulary unlike tags/manufacturer; still just suggestions, no enum)
+**Status:** Draft v6.0 (aligned to shipped `develop`, 2026-08-17: §6.1 rewritten to the flat-storage model — Location Tags/Archived, the Component stock junction, Part LocalNumber/Category/Subcategory, default-location removed; §5.7/§5.14/§5.21/§5.23/§5.24 updated to match; §10 phase statuses + shipped-outside-ladder arc note added. Supersedes v5.4's pre-pivot nested model.)
 **Date:** 2026-08-07
 **License:** MIT
 
@@ -72,7 +72,7 @@ Follows the same low-friction philosophy as **go-rag** and **MuninnDB**: one bin
 | **Website** | Embedded static web UI — HTMX fragment routes (§5.23) calling the same core logic as REST, not the JSON endpoints directly |
 | **TUI** | Terminal UI — `go-parts tui` subcommand of the same binary, a REST client for the command line (§5.11), not a fifth server-side protocol |
 
-**RPC scope (resolved):** RPC is built as a real wire-level protocol from the start, not just in-process Go function calls — a future KiCAD plugin (typically a Python process, external to the go-parts binary) rules out an in-process-only design. Both RPC and REST are kept as viable surfaces for that plugin; which one it actually uses is decided when the plugin is built (§10 Phase 4), not now.
+**RPC scope (resolved):** RPC is built as a real wire-level protocol from the start, not just in-process Go function calls — a future KiCAD plugin (typically a Python process, external to the go-parts binary) rules out an in-process-only design. Both RPC and REST remain surfaces the plugin could use; which one it actually uses is now decided — **RPC** (§11, resolved 2026-08-17).
 
 ### 5.3 Deployment
 - Single binary + Docker image (fits your UnRaid/Portainer/Nginx Proxy Manager stack)
@@ -185,7 +185,7 @@ PartsBox.io is a mature, purpose-built reference for exactly this problem space 
 
 **Storage philosophy (adopted directly):** don't organize storage by part category — resistors together, capacitors together, and so on. That creates constant reorganization work and doesn't scale. Parts go wherever physically fits; search and location lookup do the finding. Location creation follows PartsBox's four methods, detailed in §7.1: Single, Row (1D), Grid (2D), 3D Grid (3D) — covers everything from one drawer to a compartmented SMD box, starting basic and expanding as the collection grows.
 
-**No dedicated `category`/`subcategory` fields — resolved, reversing an earlier draft of this doc.** PartsBox doesn't use a rigid category tree either, and says so plainly: *"instead of a static category tree, you use searches or smart folders to find parts with a given tag set"* — because a single-value category forces every part into exactly one bucket, while tags let a part be `resistor` and `SMD` and `audio` simultaneously. go-parts already has `tags[]` on Part (§6.1) doing exactly this job; a separate `category` field would just be redundant schema duplicating what tags already do, not a second useful thing. Removed.
+**`category`/`subcategory` — the v5.4 resolution was overtaken by events (2026-08-17 alignment).** This section originally removed both fields on a tags-only argument (PartsBox: *"instead of a static category tree, you use searches or smart folders to find parts with a given tag set"* — one bucket per part vs. tags letting a part be `resistor` and `SMD` and `audio` simultaneously). The shipped Part struct nevertheless carries both — they landed with the UI mockup-alignment work after this resolution was written. The doc records what's on disk: both fields exist (`internal/parts/part.go`), the sidebar remains a live tag list rather than a category tree, and collapsing them back to tags-only would be a data migration, not an edit.
 
 **The sidebar becomes a live tag list, not a fixed category list — same visual shape, different source.** v1: the sidebar shows every tag actually in use across the catalog, with counts, built the same dynamic way §6.2 already builds filterable spec keys — no new mechanism, and it's a **search/filter facet, not a storage organization scheme** (worth being explicit, since the two are easy to conflate — see the storage philosophy above). **Saved/shared filter presets** — PartsBox's fuller "smart folders," multi-condition, nameable, optionally shared — are real value beyond a flat tag list, but that's more machinery than a live tag count needs; deferred to Phase 6 (§7.3) alongside the other PartsBox-inspired depth, rather than gating basic tag browsing on building the fuller feature first.
 
@@ -200,7 +200,7 @@ PartsBox.io is a mature, purpose-built reference for exactly this problem space 
 - **Rename/merge for the cases the above three don't catch.** `PATCH /tags/{tag}` renames it everywhere it's used; merging tag A into B is the same underlying operation — every part tagged A becomes tagged B, A stops existing. This isn't new machinery, it's the bulk-update mechanism from §7.2 targeted at "every part with this tag" instead of a manual selection.
 - **Phase 8 (§5.8): tagging stays open to any member** — it's ordinary day-to-day work, same as adding a part. **Rename/merge is admin-only**, since it's a catalog-wide change affecting everyone's view, not a personal edit — matches the existing two-tier split rather than inventing a third permission level for this one case.
 
-**Default storage location per part (adopted):** a part can have a "home" location, optionally marked mandatory so stock can only be added there. Cheap to build now, meaningfully reduces drift as inventory grows.
+**Default storage location per part (superseded by the flat-storage pivot, 2026-08-11):** shipped reality inverted this — stock lives on the Component junction (§6.1): a part is stocked at N locations, each with its own quantity and movement history, and drift is handled by adjustment reasons rather than a mandatory home location. The v5.4 `default_location_id`/`default_location_mandatory` fields were removed from Part.
 
 **Deliberately not adopted:** multi-tenant organizations/company switching, RBAC roles, audit trail, multi-currency (ECB-rate) conversion, PDF exports. Those solve team/enterprise/regulatory problems go-parts doesn't have — see §3 Non-Goals.
 
@@ -421,7 +421,7 @@ The gap: §5.8 already establishes that go-parts handles multiple simultaneous c
 
 **Where this actually happens:** everything goes through one process — Pebble is only ever opened by the single `go-parts start` process (§5.11 already relies on this for the TUI). So this isn't a distributed-systems problem; it's ordinary in-process concurrent request handling, and it needs two different mechanisms depending on the kind of write.
 
-**Stock adjustments — no version needed, because the operation is commutative.** `adjust_stock(id, delta, reason)` is a delta, not a replace — two concurrent `-1` adjustments should always net to `-2` regardless of ordering. v1 serializes this with an in-process lock keyed per part ID (a striped lock pool, not one global lock), so a read-modify-write pair can't interleave with another and lose an update. No client-side retry, no conflict to handle — it just always composes correctly. (Pebble's `Merge` operator could do this at the storage layer instead of an app-level lock — worth it only if lock contention ever actually shows up, which is unlikely at homelab/makerspace scale; not needed now.)
+**Stock adjustments — no version needed, because the operation is commutative.** As shipped (flat-storage pivot), a delta lands on a Component — the part-at-location junction (§6.1) — as a Movement entry with a required reason; Component.Quantity is the commutative sum of its History, and the part's aggregate on-hand is re-derived from its components (`recomputePartQty`). Two concurrent `-1` movements always net to `-2` regardless of ordering. Writes are serialized with an in-process striped lock pool, so a read-modify-write pair can't interleave with another and lose an update. No client-side retry, no conflict to handle — it just always composes correctly. (Pebble's `Merge` operator could do this at the storage layer instead of an app-level lock — worth it only if lock contention ever actually shows up, which is unlikely at homelab/makerspace scale; not needed now.)
 
 **Full-record edits — optimistic concurrency via a `version` field.** Editing description/specs/tags/etc. (`PATCH /parts/{id}`, `upsert_part`) is a replace, not a delta, so it needs the client to prove it edited from the current state. Every Part carries a `version` (integer, incremented on every write). A write must include the version it read; if the stored version has since moved, the write is rejected rather than silently overwriting a concurrent edit — the client re-fetches and retries.
 
@@ -656,7 +656,7 @@ MuninnDB's own web UI (port 8476 — "decay charts, relationship graphs, live ac
 - **No routine success toasts.** A saved edit just shows as saved — the field or panel reflects the new state directly. Toasts are reserved for confirming a destructive action actually completed, or a real error — not chatter on every field edit. Matches the style guide's motion principle: minimal, disciplined, no decorative feedback loops.
 - **Validation is inline, at the field, in `--warn`.** Not a summary block stacked at the top of a form — errors sit next to the specific field that has one, using the same warn color already defined for low-stock badges, so "something needs attention" reads consistently everywhere in the app.
 - **A small, fixed set of keyboard shortcuts, not an exhaustive list — expand only when there's a real reason to.** `/` for search (already built). Adding now: `Esc` closes the open panel/modal, `n` opens the new-part form. That's the whole set for now; more get added only when a specific workflow actually needs one, matching the "start basic, expand as needed" principle already used for locations (§7.1).
-- **Nested locations get a breadcrumb — a real gap, since `parent_location_id` (§6.1) supports arbitrary nesting (Workshop → Cabinet → Drawer → Bin) but nothing said how anyone sees that trail.** Appears on a Location's own view whenever it has a parent: muted (`--text-faint`) segments for each ancestor, the current location in full `--text`, each parent segment a link that navigates up. A top-level location with no parent just shows its plain label — no single-segment breadcrumb clutter for the common flat case. This matters most on exactly the surface most likely to land someone mid-hierarchy with no other context: the Via mobile landing page (§5.24) — scanning a bin's label and seeing only "Bin 3-A1" with no indication it's inside Drawer 3, Cabinet A, Workshop leaves no way to tell whether you scanned the right thing or navigate to the parent if you actually wanted the whole drawer. Out of scope for the TUI (§5.11) for now, consistent with its "not full feature parity" scope — location browsing isn't in the TUI's v1 feature set at all yet.
+- **Location context is tag-based, not hierarchical (flat-storage pivot, 2026-08-11).** The v5.4 breadcrumb design (Workshop → Cabinet → Drawer → Bin over `parent_location_id`) was superseded when nesting was removed: locations are flat bins whose organizational layer is `Tags` — physical context like "garage", "workbench", "shed", and a bin can carry several. A Location's view shows its tags as the context trail instead of ancestors; the Via mobile landing page (§5.24) shows the bin's label plus its tags. Out of scope for the TUI (§5.11) as before.
 
 ### 5.22 Data Entry Conventions
 
@@ -693,7 +693,7 @@ MuninnDB's own web UI (port 8476 — "decay charts, relationship graphs, live ac
 **The already-established UI conventions (§5.21/§5.22) map onto this cleanly, which is worth noting rather than assuming.** They were written around polling and fragment-swap thinking already, not a client-side state framework:
 - Live search (§7.2) → `hx-trigger="keyup changed delay:300ms"`, swapping the table body fragment
 - Sortable columns → `hx-get` on the header, same swap
-- Detail panel on row click → `hx-get` targeting the panel, `hx-swap="innerHTML"`
+- Row click opens detail inline (redesign in flight, 2026-08-17: an expansion row beneath the clicked row, full table width — replaces the v1 right detail panel; `hx-get` targeting the row's expansion slot, e.g. the shipped `/exp` fragment routes)
 - Status line for long-running jobs (§5.21) → HTMX's built-in polling (`hx-trigger="every 2s"`) against the same `GET /jobs` the CLI already polls (§5.10) — this one lines up particularly well, since the status-line convention was already designed around polling before HTMX was decided
 - Quantity stepper (§5.22) → posts the delta, swaps just the on-hand count in place
 - Conflict banner (§5.21) → the fragment response on a version conflict includes the banner, swapped in above the untouched form
@@ -709,7 +709,7 @@ The gap: §5.17 defined the Via resolver (`GET /via/{code}`) but never addressed
 **The label needs to know its own externally-reachable address — not the same as the internal bind address.** §5.18 established go-parts is Docker-internal by default, not published. A phone scanning a label is on the home WiFi, not the Docker network, so the QR code has to encode whatever address is actually reachable from there (an NPM-fronted hostname, or a LAN IP). That's a separate config value, `public_base_url`, used only when generating labels (§5.17's `POST /locations/{id}/label`) — with nothing set, label generation falls back to whatever address the request came in on, so it still works on the local network before anyone thinks to configure it explicitly.
 
 **What loads on scan is a minimal landing page, not the full app shell.** Dropping someone into the three-column desktop layout (top nav, sidebar, detail panel) mid-task, standing at a shelf, is the wrong experience even though the responsive floor (style guide §4) technically handles a narrow viewport. A scanned Via loads a single-column, task-focused view instead:
-- **Location Via** — the location's label as the header (with a breadcrumb above it if nested — §5.21), a list of what's stored there (MPN, description, phosphor-colored quantity), each row tappable straight into its quantity stepper
+- **Location Via** — the location's label as the header plus its tags as context (§5.21, flat model), a list of what's stored there (MPN, description, phosphor-colored quantity), each row tappable straight into its quantity stepper
 - **Part Via** — that part's detail directly (specs, location, quantity), stepper front and center — this is exactly the local-part-with-no-vendor-barcode case §5.17 called out, and the moment someone's standing there wanting to adjust stock, not browse
 - A minimal top bar (wordmark + a "full app" link), not the six-item top nav from §5.7 — that's overkill for a task meant to take five seconds
 
@@ -746,29 +746,29 @@ The gap: §5.21 already covers "no matches for x," but a brand-new install with 
 
 ### 6.1 v1 Data Model
 
-**Part**
-- `id`, `mpn`, `manufacturer`
-- `part_type` (`linked` | `local`) — linked = has an MPN and gets vendor-enriched; local = generic/no-name/custom, name-only (adopted from PartsBox's part-type model; `meta` and `sub_assembly` types arrive in §6.3)
-- `via_code` (unique, indexed — go-parts' own scannable identity, distinct from any vendor barcode — see §5.17)
-- `description`, `specs` (flexible key/value — resistance, tolerance, voltage, etc.)
-- `footprint/package` (0805, SOT-23, THT, ...)
-- `unit_of_measure` (optional — pieces by default; length/area/mass/volume/time when set) + `package_quantity` (how much of the part, in its unit, one vendor package contains — adopted from PartsBox, matters the moment a part is wire, paste, or anything sold by length/weight rather than piece count)
-- `datasheet_storage` (`local` | `go-rag-vault`), `datasheet_ref` (local path or go-rag doc id)
-- `image_refs[]` (original + thumbnail per image, with source provenance — see §5.16)
-- `quantity_on_hand`, `reorder_threshold` (both interpreted in the part's unit)
-- `default_location_id`, `default_location_mandatory` (bool) — adopted from PartsBox; cheap to build now, keeps inventory from drifting as it grows
-- `supplier_links[]` (Mouser/DigiKey/LCSC part #, price, last_seen_price)
-- `kicad_symbol_ref`, `kicad_footprint_ref`
-- `tags[]`, `custom_fields` (flexible key/value, indexed for search/filter — adopted from PartsBox)
-- `enrichment_source[]` (e.g. `["vendor:lcsc", "model:claude-sonnet-5"]` — provenance for §5.4/§5.9 enrichment)
-- `enrichment_status` (`pending`|`processing`|`done`|`failed`|`skipped` — background job state from §5.10)
-- `created_by`, `updated_by` (nullable, defaults to `local` in v1 — see §5.8)
-- `created_at`, `updated_at`
-- `version` (integer, incremented on every write — optimistic concurrency for full-record edits, see §5.14; stock adjustments don't use this)
+**Part** (as shipped — `internal/parts/part.go`; JSON keys are the PascalCase Go field names)
+- `ID`, `LocalNumber` (the operator's own stock-catalog number, distinct from the manufacturer's MPN — the PartsBox-style own-stock-number concept; schema v5; unique when non-empty, exempt when empty; first column in the Parts table)
+- `MPN` (unique when non-empty — local parts with no MPN are exempt; enforced on Create/Update), `Manufacturer`
+- `Category`, `Subcategory` (shipped on the struct via the UI mockup-alignment work — see §5.7's re-reversal note)
+- `PartType` (`linked` | `local`) — linked = has an MPN and gets vendor-enriched; local = generic/no-name/custom, name-only (adopted from PartsBox's part-type model; `meta` and `sub_assembly` types arrive in §6.3)
+- `ViaCode` (unique, indexed — go-parts' own scannable identity, distinct from any vendor barcode — §5.17)
+- `Description`, `Specs` (flexible key/value — resistance, tolerance, voltage, etc.)
+- `Footprint` (0805, SOT-23, THT, ...)
+- `UnitOfMeasure` (optional — pieces by default; length/area/mass/volume/time when set) + `PackageQty` (how much of the part, in its unit, one vendor package contains — adopted from PartsBox, matters the moment a part is wire, paste, or anything sold by length/weight rather than piece count)
+- `QtyOnHand` (derived — the sum of the part's Component quantities, maintained via `recomputePartQty`; never hand-set), `ReorderPoint` (in the part's unit)
+- `DatasheetStore` (`local` | `go-rag-vault`), `DatasheetRef` (local path or go-rag doc id)
+- `Tags`, `CustomFields` (flexible key/value, indexed for search/filter — adopted from PartsBox)
+- `CreatedBy`, `UpdatedBy` (nullable, defaults to `local` in v1 — §5.8)
+- `CreatedAt`, `UpdatedAt`
+- `Version` (integer, incremented on every write — optimistic concurrency for full-record edits, §5.14; stock adjustments don't use this)
+- *(future — Phase 2/3, not yet shipped)* `image_refs[]` (§5.16), `supplier_links[]`, `kicad_symbol_ref`/`kicad_footprint_ref`, `enrichment_source[]` + `enrichment_status` (§5.4/§5.9/§5.10)
+- *(removed in the flat-storage pivot, 2026-08-11)* `default_location_id`/`default_location_mandatory` — storage location is a per-Component fact, not a part attribute; `quantity_on_hand` stopped being directly editable for the same reason (see Component below)
 
-**Location** — `id`, `label` ("Bin A3", "Drawer 12"), `via_code` (unique, indexed — see §5.17), `parent_location_id` (nested storage), `creation_method` (`single`|`row`|`grid`|`3d_grid`, recorded for reference), `single_part_only` (bool), `notes`, `created_by` (nullable)
+**Location** (as shipped — `internal/locations/location.go`; flat model, 2026-08-11 pivot) — `ID`, `Label` ("Bin A3", "Drawer 12"), `ViaCode` (unique, indexed — §5.17), `Tags` (the organizational layer replacing nesting — physical context like "garage", "workbench", "shed"; a bin can carry several), `CreationMethod` (`single`|`row`|`grid`|`3d_grid` — reference metadata for how it was bulk-created, not a structural constraint), `Notes`, `Archived` (soft-retire, schema v4 — hidden from the default Storage view, restorable, never deletes components), `CreatedBy` (nullable), `CreatedAt`/`UpdatedAt`, `Version` (§5.14 discipline). *(removed in the pivot)* `parent_location_id`, `single_part_only` — no tree, no cycle-guard, no per-bin part restriction.
 
-**Project / BOM** — `id`, `name`, `part_refs[]` w/ quantities, linked KiCAD project path (optional), `created_by` (nullable)
+**Component** (as shipped — `internal/components/component.go`; the part-at-location junction the flat-storage pivot introduced, keyspace 0x13) — `LocationID` + `PartID` (the composite key — one Component per part per location), `Quantity` (the commutative sum of every Movement in History; callers never set it independently), `Tags`, `History` (a movement log — each entry is a `Movement { Timestamp, Delta, Reason }`; stock in is a positive delta, out is negative, and the stock in/out UI requires a reason), `CreatedAt`/`UpdatedAt`, `Version`. This is where stock lives now: adjusting stock appends a Movement, Quantity is re-derived, and Part-level `QtyOnHand` is recomputed from the part's Components.
+
+**Project / BOM** — `id`, `name`, `part_refs[]` w/ quantities, linked KiCAD project path (optional), `created_by` (nullable) *(future — not yet shipped)*
 
 **Supplier** — `id`, `name`, `base_url`, part-number mapping conventions
 
@@ -832,7 +832,7 @@ These arrive in Phase 6+ (§10) — deliberately not v1 scope, so the "start usi
 - Datasheet ingestion: attach PDF → local disk by default, or go-rag vault when that gateway is enabled (see §5.6); text extracted for search either way
 - Unit-of-measure support (pieces by default; length/area/mass/volume/time when set) with package quantity for ordering
 - Custom fields — flexible, indexed, filterable, per part
-- Default storage location per part, optionally mandatory
+- Stock-at-location via the Component junction (§6.1): a part is stocked at any number of locations, each with its own quantity and movement history
 - **Location creation — start basic, expand as needed (matches PartsBox's four methods exactly):**
   - **Single** — one location, one name (e.g. `junk-box`). Zero planning required — this is the day-one default, fits "start using it straight away."
   - **Row (1D)** — a linear sequence from a prefix + range: prefix `box`, range `1`–`5` → `box1`, `box2`, `box3`, `box4`, `box5`
@@ -952,14 +952,19 @@ GET    /purchases                  (?part_id= or ?vendor= — cost history)
 
 ## 10. Phased Rollout
 
-- **Phase 1** — Pebble store, part CRUD, BM25 search, REST API, minimal web UI, `go-parts start`/`stop`/`status` daemon lifecycle (§5.12 conventions apply from here on), `schema_version` marker + migration runner (§5.13) — must exist before any real data does
-- **Phase 2** — MCP server, barcode/label support, low-stock alerts, vendor plugin interface + LCSC/Mouser/DigiKey plugins (compiled-in), background job queue (§5.10) powering periodic vendor refresh, TUI (§5.11) covering search/browse/stock-adjust/low-stock over REST, image upload + vendor-fetched thumbnails (§5.16)
+- **Phase 1** — Pebble store, part CRUD, BM25 search, REST API, minimal web UI, `go-parts start`/`stop`/`status` daemon lifecycle (§5.12 conventions apply from here on), `schema_version` marker + migration runner (§5.13) — must exist before any real data does — **✅ shipped** (walking skeleton + web UI slices, 2026-08-07)
+- **Phase 2** — MCP server, barcode/label support, low-stock alerts, vendor plugin interface + LCSC/Mouser/DigiKey plugins (compiled-in), background job queue (§5.10) powering periodic vendor refresh, TUI (§5.11) covering search/browse/stock-adjust/low-stock over REST, image upload + vendor-fetched thumbnails (§5.16) — *partially shipped: Via codes, QR label generation, and the `/via` resolver landed with the locations arc; the rest open*
 - **Phase 3** — Vector/semantic search, datasheet text extraction, BOM import/export, KiCAD integration, optional configurable AI enrichment model (§5.9, off by default) — embedding and enrichment jobs run through the Phase 2 background queue so bulk imports stay fast
 - **Phase 4** — RPC layer formalized as wire-level protocol (CLI + future KiCAD plugin consumer), project/BOM linking, substitutes engine
 - **Phase 5** — go-rag gateway (embedded or remote indexing), MuninnDB gateway (event push + recall query)
 - **Phase 6** — PartsBox-inspired depth: substitutes model (meta-parts, part substitutes, BOM substitutes), single-stage builds, shopping lists + purchase/cost tracking (§6.3), vendor rule groups, live low-stock/valuation reports
 - **Phase 7 (stretch)** — optional lot control toggle, multi-stage builds + kitting (pick list / build worksheet), per-device serial-number tracking
 - **Phase 8 (future, makerspace trigger)** — multi-user: real auth via Pocket-ID/TinyAuth SSO (replacing the no-op middleware from §5.8), admin/member permission tiers, live web UI updates (WebSocket/SSE)
+
+**Shipped outside the phase ladder** (principal-directed, 2026-08-10 → 2026-08-17):
+- **Locations & flat storage** — Via-index spine, Location entity + the four bulk-creation methods, then the 2026-08-11 flat pivot: tags replace nesting, the Component junction carries stock per location with movement history, bulk actions (tag/delete/archive) on parts and locations, Archive soft-retire (schema v4)
+- **Part identity** — MPN unique-when-set, `LocalNumber` unique-when-set and first column (schema v5), Via short-ID display + copy-URL affordance
+- **Inline detail redesign** — expansion rows beneath the clicked row replace the right detail panel (design 2026-08-17, in flight on `develop`)
 
 ---
 
