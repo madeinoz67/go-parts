@@ -134,7 +134,6 @@ func (s *Server) routes() {
 	// Fragment handlers.
 	s.mux.HandleFunc("GET /ui/parts/search", s.auth(s.handleSearch))           // live-filter + sort + initial-load
 	s.mux.HandleFunc("GET /ui/parts/new", s.auth(s.handleCreateForm))          // create form (literal wins over {id})
-	s.mux.HandleFunc("GET /ui/parts/{id}", s.auth(s.handleDetail))             // detail fragment (form surface)
 	s.mux.HandleFunc("GET /ui/parts/{id}/exp", s.auth(s.handlePartExpansion))  // inline expansion row (row click)
 	s.mux.HandleFunc("POST /ui/parts", s.auth(s.handleCreate))                 // create → new-row fragment
 	s.mux.HandleFunc("POST /ui/parts/bulk-delete", s.auth(s.handleBulkDelete)) // bulk delete → refreshed tbody + OOB tag-nav (§7.2, hx-include name=id)
@@ -150,7 +149,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /ui/locations/bulk-archive", s.auth(s.handleLocationBulkArchive))   // bulk soft-retire → refreshed tbody
 	s.mux.HandleFunc("POST /ui/locations/{id}/archive", s.auth(s.handleLocationArchiveToggle)) // detail toggle: archive/unarchive
 	s.mux.HandleFunc("GET /ui/locations/search", s.auth(s.handleLocationsSearch))              // sortable table-body fragment (mirrors /ui/parts/search)
-	s.mux.HandleFunc("GET /ui/locations/{id}", s.auth(s.handleLocationDetail))                 // location detail fragment (form surface)
 	s.mux.HandleFunc("GET /ui/locations/{id}/exp", s.auth(s.handleLocationExpansion))          // inline expansion row (row click)
 	s.mux.HandleFunc("POST /ui/locations", s.auth(s.handleLocationCreate))                     // create-single → redirect to the page
 	s.mux.HandleFunc("POST /ui/locations/{id}", s.auth(s.handleLocationEdit))                  // edit (Update) → redirect or banner

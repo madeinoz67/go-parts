@@ -1,6 +1,6 @@
 // Package locations is go-parts' Location entity layer (PRD §6.1): the
 // physical-storage Location model + a CRUD store over Pebble. Locations model
-// bins/drawers/shelves/boxes (nested), are addressed by a Via code (§5.17), and
+// bins/drawers/shelves/boxes (flat — tagged, not nested), are addressed by a Via code (§5.17), and
 // are navigated/scanned — they are NOT full-text-indexed (no FTS, unlike parts).
 package locations
 

@@ -330,33 +330,6 @@ func (s *Server) handlePartExpansion(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleDetail renders the detail.html fragment for a single part (the row-
-// select → detail-panel flow wired into rows.html: each <tr> carries
-// hx-get="/ui/parts/{id}" hx-target="#detail-panel"). Calls store.Get
-// IN-PROCESS (PRD §5.2 — the web UI is a 5th surface over the core, never over
-// REST). parts.ErrNotFound maps to HTTP 404; any other storage error degrades
-// loudly to 500 rather than rendering a partial record.
-func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	p, err := s.store.Get(id)
-	if err != nil {
-		if errors.Is(err, parts.ErrNotFound) {
-			http.NotFound(w, r)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{
-		"P":          p,
-		"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
-		"Locations":  s.locationOptions(),
-	}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handleCreateForm renders the create.html form fragment (the "+ new" nav
 // button's target). The form POSTs to /ui/parts (handleCreate). Renders into
 // the detail panel — same target as row-select, so the create form and the
@@ -1024,29 +997,8 @@ func (s *Server) handleLocationExpansion(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// handleLocationDetail renders the location-detail.html fragment (htmx into
-// #loc-detail on row click): the fields, CONTENTS (components.List —
-// scan-to-find, the point of opening a bin), an edit form, and a print-label
-// button. locations.ErrNotFound → 404.
-func (s *Server) handleLocationDetail(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	l, err := s.locations.Get(id)
-	if err != nil {
-		if errors.Is(err, locations.ErrNotFound) {
-			http.NotFound(w, r)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, l, "")); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // locationDetailData builds the template data for the location detail fragment
-// (shared by the detail handler + the component management handlers). Includes
+// (shared by the expansion handler + the component management handlers). Includes
 // a PartLookup map (component PartID → *Part for MPN display) + a PartsList
 // (for the add-component picker).
 func (s *Server) locationDetailData(id string, l *locations.Location, errMsg string) map[string]any {

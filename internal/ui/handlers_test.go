@@ -141,7 +141,7 @@ func TestDetailKnownPart(t *testing.T) {
 	p := &parts.Part{MPN: "C0805C104J5", Description: "100nF cap", PartType: "linked", Category: "capacitors", QtyOnHand: 42}
 	srv.store.Create(p)
 	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+p.ID, nil))
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+p.ID+"/exp", nil))
 	body := rr.Body.String()
 	for _, want := range []string{"C0805C104J5", "100nF cap", "42"} {
 		if !strings.Contains(body, want) {
@@ -153,9 +153,26 @@ func TestDetailKnownPart(t *testing.T) {
 func TestDetailUnknownIs404(t *testing.T) {
 	srv := newTestServer(t)
 	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/nope", nil))
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/nope/exp", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("unknown part = %d, want 404", rr.Code)
+	}
+}
+
+// TestBareDetailRoutesRetired pins the 2026-08-17 inline-detail cleanup: the
+// bare GET detail fragments (pre-redesign panel targets) are gone — the
+// expansion routes (/exp) are the only GET detail surface. With the specific
+// patterns removed, the GET /ui/ shell catch-all answers instead (same as any
+// unknown UI path), serving the app shell — never a detail fragment.
+func TestBareDetailRoutesRetired(t *testing.T) {
+	srv := newTestServer(t)
+	for _, path := range []string{"/ui/parts/someid", "/ui/locations/someid"} {
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, httptest.NewRequest("GET", path, nil))
+		body := rr.Body.String()
+		if rr.Code != http.StatusOK || !strings.Contains(body, "/ui/static/js/htmx.min.js") {
+			t.Errorf("GET %s = %d, want 200 serving the app shell", path, rr.Code)
+		}
 	}
 }
 
@@ -830,7 +847,7 @@ func TestDetailRendersSpecRows(t *testing.T) {
 		Tags: []string{"resistor"}, Specs: map[string]string{"resistance": "10k", "power": "1/8W"}, QtyOnHand: 42}
 	srv.store.Create(p)
 	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+p.ID, nil))
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+p.ID+"/exp", nil))
 	body := rr.Body.String()
 	for _, want := range []string{"DT1", "Yageo", "0805", "resistance", "10k", "qty-value", "42"} {
 		if !strings.Contains(body, want) {
@@ -852,7 +869,7 @@ func TestDetailSubLineNoLeadingSeparator(t *testing.T) {
 	empty := &parts.Part{MPN: "SUB1", PartType: "local", Tags: []string{"x"}, Footprint: "0805"}
 	srv.store.Create(empty)
 	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+empty.ID, nil))
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+empty.ID+"/exp", nil))
 	body := rr.Body.String()
 	if !strings.Contains(body, "x · 0805") {
 		t.Errorf("empty-manufacturer sub-line should render 'x · 0805'; body=%s", body)
@@ -865,7 +882,7 @@ func TestDetailSubLineNoLeadingSeparator(t *testing.T) {
 		Tags: []string{"resistor"}, Footprint: "0805"}
 	srv.store.Create(full)
 	rr2 := httptest.NewRecorder()
-	srv.ServeHTTP(rr2, httptest.NewRequest("GET", "/ui/parts/"+full.ID, nil))
+	srv.ServeHTTP(rr2, httptest.NewRequest("GET", "/ui/parts/"+full.ID+"/exp", nil))
 	body2 := rr2.Body.String()
 	if !strings.Contains(body2, "Yageo · resistor · 0805") {
 		t.Errorf("full sub-line should render 'Yageo · resistor · 0805'; body=%s", body2)
@@ -1029,7 +1046,7 @@ func TestLocationDetailShowsContents(t *testing.T) {
 		}
 	}
 	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/locations/"+bin.ID, nil))
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/locations/"+bin.ID+"/exp", nil))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("detail = %d", rr.Code)
 	}
@@ -1417,13 +1434,13 @@ func TestCopyLinkButton(t *testing.T) {
 	srv := newTestServer(t)
 	p := uiCreatePart(t, srv, "COPY1")
 	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+p.ID, nil))
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/parts/"+p.ID+"/exp", nil))
 	if body := rr.Body.String(); !strings.Contains(body, "copyVia(this,'"+p.ViaCode+"')") {
 		t.Errorf("part detail should carry a copyVia button with the via-code; body=%s", body)
 	}
 	bin := uiCreateLocation(t, srv, "CopyBin")
 	rr2 := httptest.NewRecorder()
-	srv.ServeHTTP(rr2, httptest.NewRequest("GET", "/ui/locations/"+bin.ID, nil))
+	srv.ServeHTTP(rr2, httptest.NewRequest("GET", "/ui/locations/"+bin.ID+"/exp", nil))
 	if body := rr2.Body.String(); !strings.Contains(body, "copyVia(this,'"+bin.ViaCode+"')") {
 		t.Errorf("location detail should carry a copyVia button with the via-code; body=%s", body)
 	}
