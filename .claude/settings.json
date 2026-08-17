@@ -3,22 +3,22 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Write|Edit|Bash",
         "hooks": [
           {
-            "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/ledger-guard.mjs\""
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/ledger-guard.mjs\"",
+            "type": "command"
           }
-        ]
+        ],
+        "matcher": "Write|Edit|Bash"
       }
     ],
     "PreCompact": [
       {
         "hooks": [
           {
-            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-drain.mjs\" --hook --trigger PreCompact",
             "timeout": 60,
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-drain.mjs\" --hook --trigger PreCompact"
+            "type": "command"
           }
         ]
       }
@@ -27,20 +27,9 @@
       {
         "hooks": [
           {
-            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-drain.mjs\" --hook --trigger SessionEnd",
             "timeout": 60,
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-drain.mjs\" --hook --trigger SessionEnd"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "timeout": 60,
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-drain.mjs\" --hook --trigger Stop --debounce 20"
+            "type": "command"
           }
         ]
       }
@@ -49,12 +38,38 @@
       {
         "hooks": [
           {
-            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-freshness.mjs\"",
             "timeout": 10,
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-freshness.mjs\""
+            "type": "command"
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-drain.mjs\" --hook --trigger Stop --debounce 20",
+            "timeout": 60,
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "mcp__gortex__analyze",
+      "mcp__gortex__capabilities",
+      "mcp__gortex__change",
+      "mcp__gortex__explore",
+      "mcp__gortex__read",
+      "mcp__gortex__recall",
+      "mcp__gortex__relations",
+      "mcp__gortex__response",
+      "mcp__gortex__search",
+      "mcp__gortex__trace",
+      "mcp__gortex__workspace"
     ]
   }
 }

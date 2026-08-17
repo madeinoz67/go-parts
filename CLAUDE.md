@@ -1,3 +1,5 @@
+@AGENTS.md
+
 # CLAUDE.md — go-parts
 
 > Project constitution for Claude Code sessions. Distilled from
