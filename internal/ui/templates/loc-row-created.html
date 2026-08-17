@@ -1,15 +1,9 @@
 {{define "loc-row-created.html"}}
-{{/* Create-success fragment (mirrors Parts' row-created.html): the new row is
-     the PRIMARY swap (prepended into #loc-tbody by the create form's
-     hx-swap="afterbegin"); the OOB #loc-detail opens the fresh bin ready to
-     stock, and the OOB #loc-tag-nav refreshes tag counts. htmx processes
-     hx-swap-oob elements from the full response regardless of hx-select. */}}
-<tr hx-get="/ui/locations/{{.L.ID}}" hx-target="#loc-detail" hx-swap="innerHTML">
-  <td>{{.L.Label}}</td>
-  <td class="phos">{{.L.ViaCode}}</td>
-  <td class="num">0</td>
-  <td class="muted">-</td>
-</tr>
-<section class="detail" id="loc-detail" hx-swap-oob="true">{{template "location-detail.html" .D}}</section>
-<aside class="sidebar" id="loc-tag-nav" hx-swap-oob="true">{{template "loc-tag-nav.html" (dict "Tags" .Tags "Active" .Active)}}</aside>
+{{/* Create-success fragment (unit 2): the PRIMARY swap prepends the new row
+     into #loc-tbody (the create form's afterbegin — tbody target = table
+     context, so the bare tr parses safely). No panel to open; the operator
+     clicks the new row to expand it. OOB sidebar refreshes tag counts.
+     New bins have no movements: counts 0, last-used "-" (ZeroTime). */}}
+{{template "loc-row.html" (dict "L" .L "Counts" 0 "LastUsed" .ZeroTime)}}
+<aside class="sidebar" id="loc-tag-nav" hx-swap-oob="true">{{template "loc-tag-nav.html" (dict "Tags" .Tags "Active" .Active "ArchivedActive" false "ArchivedCount" .ArchivedCount)}}</aside>
 {{end}}

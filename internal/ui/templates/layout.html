@@ -20,7 +20,7 @@
              hx-include="this" autocomplete="off">
       <span class="search-kbd">/</span>
     </div>
-    <button class="btn btn-primary nav-action" hx-get="/ui/parts/new" hx-target="#detail-panel" hx-swap="innerHTML">+ new</button>
+    <button class="btn btn-primary nav-action" hx-get="/ui/parts/new" hx-target="#form-row" hx-swap="innerHTML">+ new</button>
   </header>
 
   <nav class="topnav">
@@ -39,6 +39,7 @@
 
     <main class="main">
       {{template "bulk-bar.html" .}}
+      <div id="form-row"></div>
       <table class="parts">
         <thead>
           <tr>
@@ -57,9 +58,6 @@
       </table>
     </main>
 
-    <section class="detail" id="detail-panel">
-      <p class="hint">select a part</p>
-    </section>
   </div>
 
   <footer class="statusbar">
@@ -100,8 +98,8 @@ document.addEventListener('keydown', e => {
   if (e.key === '/' && document.activeElement.id !== 'search') { e.preventDefault(); document.getElementById('search').focus(); }
   if (e.key === 'Escape') {
     document.getElementById('confirmOverlay')?.classList.remove('active');
-    const dp = document.getElementById('detail-panel');
-    if (dp) dp.innerHTML = '<p class="hint">select a part</p>';
+    const fr = document.getElementById('form-row'); // unit 2: the form surface
+    if (fr) fr.innerHTML = '';
   }
   if (e.key === 'n' && document.activeElement.id !== 'search' && !/input|select|textarea/i.test(document.activeElement.tagName)) {
     document.getElementById('search')?.blur();

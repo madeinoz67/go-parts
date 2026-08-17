@@ -3,17 +3,7 @@
 {{if not .Locations}}
   <tr class="empty"><td colspan="5" style="text-align:center;color:var(--text-faint);padding:18px">no locations yet — click + new</td></tr>
 {{else}}
-{{range .Locations}}
-<tr id="loc-row-{{.ID}}" hx-get="/ui/locations/{{.ID}}/exp" hx-swap="afterend">
-  <td class="checkbox-col"><input type="checkbox" class="row-checkbox" name="id" value="{{.ID}}" aria-label="select row" onchange="locUpdateBulkBar()"></td>
-  <td>{{.Label}}</td>
-  <td class="phos">{{.ViaCode}}</td>
-  <td class="num">{{index $.Counts .ID}}</td>
-  {{/* Last used = most-recent Movement.Timestamp across this location's
-       components (derived, schema-free; zero time = "-"). */}}
-  <td class="muted">{{$t := index $.LastUsed .ID}}{{if $t.IsZero}}-{{else}}{{$t.Format "Jan 02 15:04"}}{{end}}</td>
-</tr>
-{{end}}
+{{range .Locations}}{{template "loc-row.html" (dict "L" . "Counts" (index $.Counts .ID) "LastUsed" (index $.LastUsed .ID))}}{{end}}
 {{end}}
 </tbody>
 <aside class="sidebar" id="loc-tag-nav" hx-swap-oob="true">{{template "loc-tag-nav.html" (dict "Tags" .Tags "Active" .Active "ArchivedActive" .Archived "ArchivedCount" .ArchivedCount)}}</aside>

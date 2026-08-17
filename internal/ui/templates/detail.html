@@ -22,7 +22,7 @@
 
 <hr>
 
-<form class="inline edit" hx-post="/ui/parts/{{.P.ID}}" hx-target="#detail-panel">
+<form class="inline edit" hx-post="/ui/parts/{{.P.ID}}" hx-target="#exp-open" hx-swap="outerHTML">
   {{if .Error}}<div class="conflict"><p>{{.Error}}</p></div>{{end}}
   <input type="hidden" name="version" value="{{.P.Version}}">
   <div class="spec-rows">

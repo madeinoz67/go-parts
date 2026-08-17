@@ -1,0 +1,9 @@
+{{define "loc-row.html"}}
+<tr id="loc-row-{{.L.ID}}"{{if .OOB}} hx-swap-oob="true"{{end}} hx-get="/ui/locations/{{.L.ID}}/exp" hx-swap="afterend">
+  <td class="checkbox-col"><input type="checkbox" class="row-checkbox" name="id" value="{{.L.ID}}" aria-label="select row" onchange="locUpdateBulkBar()"></td>
+  <td>{{.L.Label}}</td>
+  <td class="phos">{{.L.ViaCode}}</td>
+  <td class="num">{{.Counts}}</td>
+  <td class="muted">{{if .LastUsed.IsZero}}-{{else}}{{.LastUsed.Format "Jan 02 15:04"}}{{end}}</td>
+</tr>
+{{end}}

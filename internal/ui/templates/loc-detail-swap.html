@@ -1,10 +1,11 @@
 {{define "loc-detail-swap.html"}}
-{{/* Edit-success wrapper for the Storage detail: the location detail is the
-     PRIMARY swap (the edit form targets #loc-detail innerHTML), and the OOB
-     aside refreshes the tag sidebar so a tag change lands without a manual
-     reload — mirroring the create path's loc-row-created.html. The data is
-     locationDetailData + the two facet keys (Tags, Active). htmx pulls
-     hx-swap-oob elements out of the response before the primary swap. */}}
-{{template "location-detail.html" .}}
-<aside class="sidebar" id="loc-tag-nav" hx-swap-oob="true">{{template "loc-tag-nav.html" (dict "Tags" .Tags "Active" .Active)}}</aside>
+{{/* Location edit-success response (unit 2): the edit form targets the OPEN
+     EXPANSION ROW (#loc-open, a tr) with outerHTML — PRIMARY is the fresh
+     loc-expansion tr (tr→tr, table-context safe); the location's table row
+     refreshes in place via the table-wrapped OOB (needs Row data: Counts is
+     not carried — pass 0-safe via .RowCounts/.RowLastUsed when present); the
+     OOB aside refreshes the tag sidebar. */}}
+<tr class="exp-row" id="loc-open"><td colspan="5">{{template "location-detail.html" .}}</td></tr>
+{{if .RowOOB}}<table>{{template "loc-row.html" (dict "L" .L "OOB" true "Counts" (index .Counts .L.ID) "LastUsed" (index .LastUsed .L.ID))}}</table>{{end}}
+<aside class="sidebar" id="loc-tag-nav" hx-swap-oob="true">{{template "loc-tag-nav.html" (dict "Tags" .Tags "Active" .Active "ArchivedActive" false "ArchivedCount" .ArchivedCount)}}</aside>
 {{end}}

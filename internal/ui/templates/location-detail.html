@@ -21,7 +21,7 @@
       <span><a href="/ui/?part={{.PartID}}" style="text-decoration:none;color:inherit">{{if $p}}{{$p.MPN}}{{else}}<span class="muted">{{.PartID}}</span>{{end}}</a></span>
       <span style="display:flex;align-items:center;gap:6px">
         <span class="qty-value" style="display:inline-block;min-width:2em;text-align:center">{{.Quantity}}</span>
-        <form style="display:inline" hx-post="/ui/locations/{{$.L.ID}}/components/{{.PartID}}/remove" hx-target="#loc-detail">
+        <form style="display:inline" hx-post="/ui/locations/{{$.L.ID}}/components/{{.PartID}}/remove" hx-target="#loc-open" hx-swap="outerHTML">
           <button type="submit" class="step" style="padding:0 6px;font-size:12px;background:none;border:1px solid var(--border);cursor:pointer;color:var(--warn,red)" title="remove component">✕</button>
         </form>
       </span>
@@ -29,7 +29,7 @@
     {{/* Task 45: explicit stock in/out — qty + direction + a REQUIRED reason
          (enforced server-side; the client `required` is convenience only).
          The submit button's name=dir value carries the direction. */}}
-    <form class="create" style="flex-direction:row;flex-wrap:wrap;gap:4px;align-items:center;padding:4px 0" hx-post="/ui/locations/{{$.L.ID}}/components/{{.PartID}}/adjust" hx-target="#loc-detail">
+    <form class="create" style="flex-direction:row;flex-wrap:wrap;gap:4px;align-items:center;padding:4px 0" hx-post="/ui/locations/{{$.L.ID}}/components/{{.PartID}}/adjust" hx-target="#loc-open" hx-swap="outerHTML">
       <input type="number" name="qty" value="1" min="1" style="width:4em">
       <input type="text" name="reason" placeholder="reason (required)" required style="flex:1;min-width:8em">
       <button class="btn btn-primary" type="submit" name="dir" value="in" style="padding:4px 10px">in</button>
@@ -60,7 +60,7 @@
 {{if .PartsList}}
 <hr>
 <div class="eyebrow" style="margin-bottom:4px">Add component</div>
-<form class="create" style="flex-direction:row;gap:6px;flex-wrap:wrap" hx-post="/ui/locations/{{.L.ID}}/components/add" hx-target="#loc-detail">
+<form class="create" style="flex-direction:row;gap:6px;flex-wrap:wrap" hx-post="/ui/locations/{{.L.ID}}/components/add" hx-target="#loc-open" hx-swap="outerHTML">
   <select name="part_id" style="flex:1;min-width:12em">
     <option value="">select part…</option>
     {{range .PartsList}}<option value="{{.ID}}">{{.MPN}}{{if .Description}} — {{.Description}}{{end}}</option>{{end}}
@@ -72,7 +72,7 @@
 
 <hr>
 
-<form class="inline edit" hx-post="/ui/locations/{{.L.ID}}" hx-target="#loc-detail">
+<form class="inline edit" hx-post="/ui/locations/{{.L.ID}}" hx-target="#loc-open" hx-swap="outerHTML">
   <input type="hidden" name="version" value="{{.L.Version}}">
   <div class="spec-rows">
     <div class="spec-row"><span>Label</span><input type="text" name="label" value="{{.L.Label}}" style="flex:1"></div>

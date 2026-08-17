@@ -68,7 +68,7 @@ func TestShellStructure(t *testing.T) {
 	for _, want := range []string{
 		`id="search"`,               // search input (now in the header)
 		`id="parts-tbody"`,          // table body target for htmx
-		`id="detail-panel"`,         // detail panel target
+		`id="form-row"`,             // unit 2: form surface (detail panel removed)
 		`hx-get="/ui/parts/search"`, // htmx live-filter wiring
 		`<header`,                   // header band (wordmark + search + new)
 		`<nav class="topnav"`,       // topnav band (six tabs)
@@ -79,6 +79,7 @@ func TestShellStructure(t *testing.T) {
 		`id="bulkBar"`,              // slice 4a — bulk-action bar
 		`role="dialog"`,             // hardening — confirm overlay ARIA
 		`aria-modal="true"`,         // hardening — confirm overlay ARIA
+		`id="form-row"`,             // unit 2: the +new form surface
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("shell missing %q", want)
@@ -186,15 +187,16 @@ func TestCreateReturnsNewRow(t *testing.T) {
 // resets the panel to the "select a part" hint. This test would fail against
 // the old row.html response (no OOB marker, no panel reset).
 func TestCreateClearsDetailPanelOOB(t *testing.T) {
+	// unit 2: the panel is gone; the create response prepends the row (with
+	// the exp trigger) + ships the OOB tag-sidebar refresh instead.
 	srv := newTestServer(t)
-	// Normal create path (known footprint 0805 → no confirm).
 	rr := newTestServerRecorder(t, srv, postForm("POST", "/ui/parts", "mpn=OOB1&part_type=local&footprint=0805"))
 	body := rr.Body.String()
-	if !strings.Contains(body, `id="detail-panel"`) || !strings.Contains(body, `hx-swap-oob="true"`) {
-		t.Errorf("normal create should ship an OOB #detail-panel clear; body=%s", body)
+	if !strings.Contains(body, `hx-get="/ui/parts/`) || !strings.Contains(body, `/exp" hx-swap="afterend"`) {
+		t.Errorf("created row should carry the inline-expansion trigger; body=%s", body)
 	}
-	if !strings.Contains(body, "select a part") {
-		t.Errorf("OOB panel should reset to the 'select a part' hint; body=%s", body)
+	if !strings.Contains(body, `id="tag-nav" hx-swap-oob="true"`) {
+		t.Errorf("create should ship the OOB tag-sidebar refresh; body=%s", body)
 	}
 }
 
@@ -209,8 +211,9 @@ func TestCreateConfirmClearsDetailPanelOOB(t *testing.T) {
 		t.Fatalf("confirmed create = %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, `id="detail-panel"`) || !strings.Contains(body, `hx-swap-oob="true"`) {
-		t.Errorf("confirmed create should ship an OOB #detail-panel clear; body=%s", body)
+	// unit 2: row with the expansion trigger + OOB sidebar (no panel to clear).
+	if !strings.Contains(body, `/exp" hx-swap="afterend"`) {
+		t.Errorf("confirmed create should ship the created row; body=%s", body)
 	}
 	if strings.Contains(body, "confirm-footprint") {
 		t.Errorf("confirmed create must not leak the stale confirm prompt; body=%s", body)
@@ -316,7 +319,7 @@ func TestPartExpansionRow(t *testing.T) {
 		t.Fatalf("exp = %d", rr.Code)
 	}
 	b := rr.Body.String()
-	if !strings.Contains(b, `<tr class="exp-row"><td colspan="7">`) {
+	if !strings.Contains(b, `<tr class="exp-row" id="exp-open"><td colspan="7">`) {
 		t.Errorf("expansion wrapper shape wrong; body=%s", b)
 	}
 	if !strings.Contains(b, "EXPP1") {
@@ -340,7 +343,7 @@ func TestLocationExpansionRow(t *testing.T) {
 		t.Fatalf("exp = %d", rr.Code)
 	}
 	b := rr.Body.String()
-	if !strings.Contains(b, `<tr class="exp-row"><td colspan="5">`) {
+	if !strings.Contains(b, `<tr class="exp-row" id="loc-open"><td colspan="5">`) {
 		t.Errorf("expansion wrapper shape wrong; body=%s", b)
 	}
 	if !strings.Contains(b, "EXPLoc") {
@@ -430,11 +433,13 @@ func TestEditStaleVersionReturns409(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
-	if rr.Code != http.StatusConflict {
-		t.Fatalf("stale edit = %d, want 409; body=%s", rr.Code, rr.Body.String())
+	// unit 2: conflicts land in the open expansion row as a 200 banner (htmx
+	// does not swap error statuses) — the §5.14 rejection is still loud.
+	if rr.Code != http.StatusOK {
+		t.Fatalf("stale edit = %d, want 200-with-banner; body=%s", rr.Code, rr.Body.String())
 	}
 	if !strings.Contains(rr.Body.String(), "edited elsewhere") {
-		t.Errorf("conflict fragment should say 'edited elsewhere'; body=%s", rr.Body.String())
+		t.Errorf("conflict banner should say 'edited elsewhere'; body=%s", rr.Body.String())
 	}
 }
 
@@ -461,9 +466,9 @@ func TestCreateUnknownFootprintReturnsConfirm(t *testing.T) {
 	if !strings.Contains(body, `name="footprint_confirmed"`) {
 		t.Errorf("confirm prompt must carry the hidden confirm flag; body=%s", body)
 	}
-	// Retargeted into #detail-panel (create form's own target is #parts-tbody).
-	if got := rr.Header().Get("Hx-Retarget"); got != "#detail-panel" {
-		t.Errorf("Hx-Retarget = %q, want #detail-panel", got)
+	// Retargeted into #form-row (the create form surface — unit 2).
+	if got := rr.Header().Get("Hx-Retarget"); got != "#form-row" {
+		t.Errorf("Hx-Retarget = %q, want #form-row", got)
 	}
 	// The part must NOT have been created.
 	if hits := srv.fts.Search([8]byte{}, "NEW1", 10); len(hits) != 0 {
@@ -1058,9 +1063,10 @@ func TestLocationCreate(t *testing.T) {
 	if !strings.Contains(body, "New Bin") {
 		t.Errorf("create fragment should contain the new row's label; body=%s", body)
 	}
-	// OOB detail open + sidebar refresh — mirrors Parts' row-created flow.
-	if !strings.Contains(body, `id="loc-detail"`) || !strings.Contains(body, `hx-swap-oob="true"`) {
-		t.Errorf("create fragment should ship OOB #loc-detail + swap markers; body=%s", body)
+	// unit 2: no panel — the created row (bare, tbody afterbegin context) +
+	// the OOB sidebar refresh.
+	if !strings.Contains(body, `id="loc-tag-nav" hx-swap-oob="true"`) {
+		t.Errorf("create fragment should ship the OOB sidebar refresh; body=%s", body)
 	}
 	if !strings.Contains(body, `id="loc-tag-nav"`) {
 		t.Errorf("create fragment should refresh the tag sidebar; body=%s", body)
@@ -1150,8 +1156,8 @@ func TestCreateDuplicateMPNBanner(t *testing.T) {
 	srv.store.Create(&parts.Part{MPN: "DUPM1", PartType: "local"})
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, postForm("POST", "/ui/parts", "mpn=DUPM1&part_type=local"))
-	if got := rr.Header().Get("Hx-Retarget"); got != "#detail-panel" {
-		t.Fatalf("Hx-Retarget = %q, want #detail-panel", got)
+	if got := rr.Header().Get("Hx-Retarget"); got != "#form-row" {
+		t.Fatalf("Hx-Retarget = %q, want #form-row", got)
 	}
 	body := rr.Body.String()
 	if !strings.Contains(body, "duplicate mpn") {
@@ -1227,8 +1233,8 @@ func TestLocationBulkCreateRow(t *testing.T) {
 			t.Errorf("refreshed tbody missing %q; body=%s", want, body)
 		}
 	}
-	if !strings.Contains(body, `id="loc-detail" hx-swap-oob`) || !strings.Contains(body, "created 3") {
-		t.Errorf("bulk response should reset the panel to a created-3 notice; body=%s", body)
+	if !strings.Contains(body, `id="form-row" hx-swap-oob`) || !strings.Contains(body, "created 3") {
+		t.Errorf("bulk response should reset the form row to a created-3 notice; body=%s", body)
 	}
 	if !strings.Contains(body, `id="loc-tag-nav" hx-swap-oob`) {
 		t.Errorf("bulk response should ship the OOB sidebar refresh; body=%s", body)
@@ -1269,8 +1275,8 @@ func TestLocationBulkCreateBadRange(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/bulk",
 		"method=row&prefix=box&from=5&to=1"))
-	if got := rr.Header().Get("Hx-Retarget"); got != "#loc-detail" {
-		t.Errorf("Hx-Retarget = %q, want #loc-detail", got)
+	if got := rr.Header().Get("Hx-Retarget"); got != "#form-row" {
+		t.Errorf("Hx-Retarget = %q, want #form-row", got)
 	}
 	body := rr.Body.String()
 	if !strings.Contains(body, "invalid") {
@@ -1531,7 +1537,8 @@ func TestLocationArchiveFlow(t *testing.T) {
 		t.Errorf("sidebar should carry the archived facet with count 2; body=%s", body)
 	}
 
-	// Detail toggle: unarchive A (button relabels).
+	// Detail toggle: unarchive A. unit 2: the archive form refreshes the
+	// tbody (no per-bin panel re-render).
 	rr2 := httptest.NewRecorder()
 	srv.ServeHTTP(rr2, postForm("POST", "/ui/locations/"+a.ID+"/archive", ""))
 	if rr2.Code != http.StatusOK {
@@ -1540,9 +1547,6 @@ func TestLocationArchiveFlow(t *testing.T) {
 	got, _ := srv.locations.Get(a.ID)
 	if got.Archived {
 		t.Error("toggle should have unarchived A")
-	}
-	if !strings.Contains(rr2.Body.String(), ">archive<") {
-		t.Errorf("unarchived detail should relabel the button to 'archive'; body=%s", rr2.Body.String())
 	}
 
 	// Archived view shows only B.
@@ -1577,8 +1581,8 @@ func TestArchiveToggleConflictRetargets(t *testing.T) {
 		for _, rr := range []*httptest.ResponseRecorder{r1, r2} {
 			if got := rr.Header().Get("Hx-Retarget"); got == "" {
 				continue // the winner (or a no-conflict trial) — check the other
-			} else if got != "#loc-detail" {
-				t.Fatalf("Hx-Retarget = %q, want #loc-detail (a bare fragment into #loc-tbody white-outs the table)", got)
+			} else if got != "#loc-open" {
+				t.Fatalf("Hx-Retarget = %q, want #loc-open (the open expansion row)", got)
 			}
 			body := rr.Body.String()
 			if !strings.Contains(body, "version conflict") {
@@ -1647,11 +1651,13 @@ func TestLocationEditVersionConflictReload(t *testing.T) {
 	body := url.Values{"version": {"1"}, "label": {"VC-overwrite"}}.Encode()
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/"+a.ID, body))
-	if rr.Code != http.StatusConflict {
-		t.Fatalf("version-conflict edit = %d, want 409; body=%s", rr.Code, rr.Body.String())
+	// unit 2: conflicts land in the open expansion row as a 200 banner (htmx
+	// does not swap error statuses) — still loud, still not applied.
+	if rr.Code != http.StatusOK {
+		t.Fatalf("version-conflict edit = %d, want 200-with-banner; body=%s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "reload") {
-		t.Errorf("version-conflict should render the reload prompt; body: %s", rr.Body.String())
+	if !strings.Contains(rr.Body.String(), "edited elsewhere") {
+		t.Errorf("version-conflict should say 'edited elsewhere'; body: %s", rr.Body.String())
 	}
 	got, _ := srv.locations.Get(a.ID)
 	if got.Label == "VC-overwrite" {

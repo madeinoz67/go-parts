@@ -138,6 +138,7 @@ type confirmFootprintData struct {
 	Swap      string
 	CancelURL string
 	Fields    []formField
+	TDWrap    bool // unit 2: wrap in <td colspan=7> when landing in the tr-context #exp-open
 }
 
 // renderConfirmFootprint emits the "unknown footprint — confirm?" prompt and
@@ -150,7 +151,7 @@ type confirmFootprintData struct {
 // form already targets #detail-panel, so the retarget is a harmless no-op
 // there). The confirm re-submit's Target/Swap match the original form's so
 // the success fragment lands correctly on the second POST.
-func (s *Server) renderConfirmFootprint(w http.ResponseWriter, action, target, swap, cancelURL, fp string, r *http.Request) {
+func (s *Server) renderConfirmFootprint(w http.ResponseWriter, action, target, swap, retarget, cancelURL, fp string, r *http.Request) {
 	// Carry every submitted field forward as a hidden input, except the
 	// confirm flag (the template adds that fresh) so a stale value can't
 	// bypass a fresh prompt.
@@ -168,7 +169,7 @@ func (s *Server) renderConfirmFootprint(w http.ResponseWriter, action, target, s
 			fields = append(fields, formField{Name: k, Value: v})
 		}
 	}
-	w.Header().Set("Hx-Retarget", "#detail-panel")
+	w.Header().Set("Hx-Retarget", retarget)
 	w.Header().Set("Hx-Reswap", "innerHTML")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "confirm-footprint.html", confirmFootprintData{
@@ -178,6 +179,7 @@ func (s *Server) renderConfirmFootprint(w http.ResponseWriter, action, target, s
 		Swap:      swap,
 		CancelURL: cancelURL,
 		Fields:    fields,
+		TDWrap:    retarget == "#exp-open",
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -393,7 +395,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	// form's (#parts-tbody / afterbegin) so a confirmed save still prepends
 	// the new row to the table.
 	if r.PostFormValue("footprint_confirmed") != "true" && s.footprintNeedsConfirm(r.PostFormValue("footprint")) {
-		s.renderConfirmFootprint(w, "/ui/parts", "#parts-tbody", "afterbegin", "/ui/parts/new", r.PostFormValue("footprint"), r)
+		s.renderConfirmFootprint(w, "/ui/parts", "#parts-tbody", "afterbegin", "#form-row", "/ui/parts/new", r.PostFormValue("footprint"), r)
 		return
 	}
 	p := &parts.Part{
@@ -421,7 +423,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		// #parts-tbody — the white-out class the archive adversary flagged;
 		// retarget error fragments into the panel, always).
 		if errors.Is(err, parts.ErrDuplicateMPN) || errors.Is(err, parts.ErrDuplicateLocalNumber) {
-			w.Header().Set("Hx-Retarget", "#detail-panel")
+			w.Header().Set("Hx-Retarget", "#form-row")
 			w.Header().Set("Hx-Reswap", "innerHTML")
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_ = s.tmpl.ExecuteTemplate(w, "create.html", map[string]any{
@@ -487,7 +489,9 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 	// canonical record so the form reverts to the stored footprint value —
 	// the typo the user wants to fix is exactly what cancel discards.
 	if r.PostFormValue("footprint_confirmed") != "true" && s.footprintNeedsConfirm(r.PostFormValue("footprint")) {
-		s.renderConfirmFootprint(w, "/ui/parts/"+id, "#detail-panel", "innerHTML", "/ui/parts/"+id, r.PostFormValue("footprint"), r)
+		// Edit form posts into the OPEN EXPANSION ROW (#exp-open outerHTML,
+		// tr target) — the confirm must arrive table-context-safe.
+		s.renderConfirmFootprint(w, "/ui/parts/"+id, "#exp-open", "outerHTML", "#exp-open", "/ui/parts/"+id, r.PostFormValue("footprint"), r)
 		return
 	}
 	expected, _ := strconv.Atoi(r.PostFormValue("version"))
@@ -516,23 +520,23 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 		// finding 4: the generic 409 "edited elsewhere — reload" fragment
 		// misdiagnosed a duplicate as a concurrent edit and discarded the
 		// edit on reload). 200 — htmx does not swap error-status responses.
-		if errors.Is(err, parts.ErrDuplicateMPN) || errors.Is(err, parts.ErrDuplicateLocalNumber) {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_ = s.tmpl.ExecuteTemplate(w, "detail.html", map[string]any{
-				"P":          cur, // the operator's submitted values — the form re-fills
-				"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
-				"Locations":  s.locationOptions(),
-				"Error":      err.Error(),
-			})
-			return
-		}
+		// Both error paths land in the OPEN EXPANSION ROW (the form's target,
+		// #exp-open outerHTML — tr context): responses are the part-expansion
+		// wrapper carrying the banner. 200 throughout — htmx does not swap
+		// error-status responses (the adversary finding-4 lesson).
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusConflict)
-		if tErr := s.tmpl.ExecuteTemplate(w, "conflict.html", map[string]any{"Reload": "/ui/parts/" + id}); tErr != nil {
-			// Header already sent (409); the best we can do is nothing — the
-			// fragment is short and the template engine doesn't error mid-write.
-			_ = tErr
+		// parts.Update has no conflict sentinel (locations does) — the message
+		// is the discriminator; friendly text for the §5.14 rejection.
+		msg := err.Error()
+		if strings.Contains(msg, "version conflict") {
+			msg = "edited elsewhere — close and reopen this row to reload the current values"
 		}
+		_ = s.tmpl.ExecuteTemplate(w, "part-expansion.html", map[string]any{
+			"P":          cur, // the operator's submitted values — the form re-fills
+			"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
+			"Locations":  s.locationOptions(),
+			"Error":      msg,
+		})
 		return
 	}
 	// Success → the updated detail (primary swap into #detail-panel) wrapped
@@ -920,20 +924,20 @@ func (s *Server) handleLocationArchiveToggle(w http.ResponseWriter, r *http.Requ
 		if gErr != nil {
 			cur = l // store unreadable; best effort with what we hold
 		}
-		w.Header().Set("Hx-Retarget", "#loc-detail")
-		w.Header().Set("Hx-Reswap", "innerHTML")
+		w.Header().Set("Hx-Retarget", "#loc-open")
+		w.Header().Set("Hx-Reswap", "outerHTML")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, cur, err.Error()))
+		_ = s.tmpl.ExecuteTemplate(w, "loc-expansion.html", s.locationDetailData(id, cur, err.Error()))
 		return
 	}
 	// Rebuild the view the operator is actually in (adversary finding 3): the
 	// archived/q/tag/sort/dir params ride the same client-side configRequest
 	// injection as the bulk forms (the toggle form is covered by the
-	// [hx-post*="/archive"] selector arm).
+	// [hx-post*="/archive"] selector arm). The tbody refresh drops the open
+	// expansion row with the old rows — correct: the bin moved views.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data := s.locationsView(strings.ToLower(r.PostFormValue("q")), r.PostFormValue("tag"), r.PostFormValue("sort"), r.PostFormValue("dir"), r.PostFormValue("archived") == "1")
-	data["D"] = s.locationDetailData(id, l, "")
-	_ = s.tmpl.ExecuteTemplate(w, "loc-archive-swap.html", data)
+	_ = s.tmpl.ExecuteTemplate(w, "locations-rows.html", data)
 }
 
 // handleLocationBulkArchive: POST /ui/locations/bulk-archive — sets Archived
@@ -1140,7 +1144,7 @@ func (s *Server) handleLocationBulkCreate(w http.ResponseWriter, r *http.Request
 	}
 	labels, err := locations.GenerateLabels(engineMethod, p, maxLabels)
 	if err != nil {
-		w.Header().Set("Hx-Retarget", "#loc-detail")
+		w.Header().Set("Hx-Retarget", "#form-row")
 		w.Header().Set("Hx-Reswap", "innerHTML")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = s.tmpl.ExecuteTemplate(w, "location-bulk.html", map[string]any{"Error": err.Error()})
@@ -1197,7 +1201,7 @@ func (s *Server) handleLocationCreate(w http.ResponseWriter, r *http.Request) {
 		Notes: r.PostFormValue("notes"),
 	}
 	if err := s.locations.Create(l); err != nil {
-		w.Header().Set("Hx-Retarget", "#loc-detail")
+		w.Header().Set("Hx-Retarget", "#form-row")
 		w.Header().Set("Hx-Reswap", "innerHTML")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = s.tmpl.ExecuteTemplate(w, "location-create.html", map[string]any{
@@ -1205,14 +1209,16 @@ func (s *Server) handleLocationCreate(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	// Create populates ID/ViaCode/timestamps on l. Open the new bin's detail so
-	// the operator can immediately add components, and refresh the tag sidebar.
+	// Create populates ID/ViaCode/timestamps on l. Prepend the row; refresh
+	// the tag sidebar. (unit 2: no panel — the operator clicks the row to
+	// expand.)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "loc-row-created.html", map[string]any{
-		"L":      l,
-		"D":      s.locationDetailData(l.ID, l, ""),
-		"Tags":   s.locations.TagCounts(),
-		"Active": "",
+		"L":             l,
+		"ZeroTime":      time.Time{},
+		"Tags":          s.locations.TagCounts(),
+		"Active":        "",
+		"ArchivedCount": s.archivedLocationCount(),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -1246,29 +1252,30 @@ func (s *Server) handleLocationEdit(w http.ResponseWriter, r *http.Request) {
 		// Version but the user's stale fields, enabling a blind-overwrite on
 		// retry; the reload forces a re-fetch. Mirrors the parts handleEdit UX;
 		// conflict.html is parametrized by Reload. (Header not sent yet.)
+		// Both error paths land in the OPEN EXPANSION ROW (#loc-open, the
+		// form's tr target): the loc-expansion wrapper carries the banner.
+		// locationDetailData is mandatory (location-detail.html indexes
+		// $.PartLookup — the 2026-08-14 nil bug). 200 — htmx does not swap
+		// error statuses.
+		msg := err.Error()
 		if errors.Is(err, locations.ErrVersionConflict) {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusConflict)
-			_ = s.tmpl.ExecuteTemplate(w, "conflict.html", map[string]any{"Reload": "/ui/locations/" + id, "Target": "#loc-detail"})
-			return
+			msg = "edited elsewhere — close and reopen this row to reload"
 		}
-		// Non-conflict store error → re-render the detail with a banner. MUST
-		// go through locationDetailData: location-detail.html indexes
-		// $.PartLookup per component, and a hand-built map without it fails
-		// the whole render ("index of untyped nil") on any location that holds
-		// components — the 2026-08-14 reported bug.
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, cur, err.Error()))
+		_ = s.tmpl.ExecuteTemplate(w, "loc-expansion.html", s.locationDetailData(id, cur, msg))
 		return
 	}
-	// Success → re-render the updated detail (htmx swaps it into #loc-detail)
-	// via locationDetailData (PartLookup + PartsList included), wrapped with an
-	// OOB #loc-tag-nav swap so a tag change refreshes the sidebar live — no
-	// manual reload.
+	// Success → replace the open expansion row (fresh detail) + OOB refresh
+	// the location's table row (instant) + the tag sidebar.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	counts, lastUsed := s.locationStats([]*locations.Location{cur})
 	data := s.locationDetailData(id, cur, "")
 	data["Tags"] = s.locations.TagCounts()
 	data["Active"] = ""
+	data["RowOOB"] = true
+	data["Counts"] = counts
+	data["LastUsed"] = lastUsed
+	data["ArchivedCount"] = s.archivedLocationCount()
 	if tErr := s.tmpl.ExecuteTemplate(w, "loc-detail-swap.html", data); tErr != nil {
 		http.Error(w, tErr.Error(), http.StatusInternalServerError)
 	}
@@ -1364,8 +1371,23 @@ func (s *Server) handlePartLocations(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// renderLocationDetail re-renders the location detail fragment (the common
-// success path for the component management handlers).
+// archivedLocationCount is the corpus-wide archived-bin count (the sidebar
+// facet badge) for single-location response paths that don't run
+// locationsView.
+func (s *Server) archivedLocationCount() int {
+	n := 0
+	for _, l := range s.locationOptions() {
+		if l.Archived {
+			n++
+		}
+	}
+	return n
+}
+
+// renderLocationDetail re-renders the OPEN EXPANSION ROW (unit 2: the
+// component-management forms post into #loc-open, a tr target — so the
+// response is the loc-expansion wrapper, not bare detail content). The
+// common success path for the component handlers.
 func (s *Server) renderLocationDetail(w http.ResponseWriter, r *http.Request, id string) {
 	l, err := s.locations.Get(id)
 	if err != nil {
@@ -1373,14 +1395,14 @@ func (s *Server) renderLocationDetail(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// Loud, not swallowed: a template failure here silently blanks the detail
-	// panel (the 2026-08-14 nil-PartLookup bug class) — surface it instead.
-	if tErr := s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, l, "")); tErr != nil {
+	// Loud, not swallowed: a template failure here silently blanks the row
+	// (the 2026-08-14 nil-PartLookup bug class) — surface it instead.
+	if tErr := s.tmpl.ExecuteTemplate(w, "loc-expansion.html", s.locationDetailData(id, l, "")); tErr != nil {
 		http.Error(w, tErr.Error(), http.StatusInternalServerError)
 	}
 }
 
-// renderLocationDetailError re-renders the detail with an error banner.
+// renderLocationDetailError re-renders the expansion row with an error banner.
 func (s *Server) renderLocationDetailError(w http.ResponseWriter, r *http.Request, id, errMsg string) {
 	l, err := s.locations.Get(id)
 	if err != nil {
@@ -1388,7 +1410,7 @@ func (s *Server) renderLocationDetailError(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = s.tmpl.ExecuteTemplate(w, "location-detail.html", s.locationDetailData(id, l, errMsg))
+	_ = s.tmpl.ExecuteTemplate(w, "loc-expansion.html", s.locationDetailData(id, l, errMsg))
 }
 
 // applySort re-orders pts in place by the requested key/direction. No-op when

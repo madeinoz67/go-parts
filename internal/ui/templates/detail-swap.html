@@ -1,20 +1,10 @@
 {{define "detail-swap.html"}}
-{{/* Edit-success wrapper for the Parts detail: the detail is the PRIMARY swap
-     (the edit form targets #detail-panel innerHTML), and the OOB aside
-     refreshes the tag sidebar so a tag change lands without a manual reload.
-     Data: the detail.html map + the two facet keys (Tags, Active). htmx pulls
-     hx-swap-oob elements out of the response before the primary swap. */}}
-{{template "detail.html" .}}
-{{/* The edited part's row, refreshed in place (OOB, keyed by id=row-{id}) —
-     an edit (local number, MPN, description…) must show instantly in the
-     table, no manual reload. Rendered only when the caller passes P. */}}
-{{/* Wrapped in a <table>: the edit form targets #detail-panel (a section), so
-     htmx parses this response in DIV context, where a bare top-level <tr> is
-     destroyed by foster-parenting (the 2026-08-10 htmx gotcha, inverted —
-     create works only because ITS form targets the tbody). The wrapper is
-     parsing scaffolding: it makes the parser treat the tr as table content so
-     the id + hx-swap-oob survive; htmx then OOB-swaps the tr by id and
-     discards the wrapper. */}}
+{{/* Edit-success response (unit 2): the edit form targets the OPEN EXPANSION
+     ROW (#exp-open, a tr) with outerHTML — so the PRIMARY content is the
+     fresh exp-row tr itself (tr→tr, table-context parse, safe), plus the
+     table-wrapped row OOB (the clicked table row refreshes in place — the
+     "instantly displayed" directive) and the tag-sidebar OOB. */}}
+<tr class="exp-row" id="exp-open"><td colspan="7">{{template "detail.html" .}}</td></tr>
 {{if .P}}<table>{{template "row.html" (dict "P" .P "OOB" true)}}</table>{{end}}
 <aside class="sidebar" id="tag-nav" hx-swap-oob="true">{{template "tag-nav.html" (dict "Tags" .Tags "Active" .Active)}}</aside>
 {{end}}

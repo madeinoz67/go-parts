@@ -1,4 +1,8 @@
 {{define "confirm-footprint.html"}}
+{{/* unit 2: when landing in the tr-context #exp-open (TDWrap), the whole
+     fragment is wrapped in a <td colspan=7> — divs directly inside a tr are
+     fostered out by the parser. Cancel returns to the form surface. */}}
+{{if .TDWrap}}<td colspan="7">{{end}}
 <div class="confirm-footprint">
   <p>Unknown footprint "<strong>{{.Footprint}}</strong>". Add it as a new footprint?</p>
   <form hx-post="{{.Action}}" hx-target="{{.Target}}" hx-swap="{{.Swap}}">
@@ -6,6 +10,7 @@
     <input type="hidden" name="footprint_confirmed" value="true">
     <button class="btn btn-primary" type="submit">confirm add</button>
   </form>
-  <button class="btn" hx-get="{{.CancelURL}}" hx-target="#detail-panel">cancel</button>
+  <button class="btn" hx-get="{{.CancelURL}}" hx-target="#form-row">cancel</button>
 </div>
+{{if .TDWrap}}</td>{{end}}
 {{end}}

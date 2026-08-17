@@ -21,8 +21,8 @@
              hx-include="this" autocomplete="off">
       <span class="search-kbd">/</span>
     </div>
-    <button class="btn btn-primary nav-action" hx-get="/ui/locations/new" hx-target="#loc-detail" hx-swap="innerHTML">+ new</button>
-    <button class="btn nav-action" hx-get="/ui/locations/bulk" hx-target="#loc-detail" hx-swap="innerHTML">+ bulk</button>
+    <button class="btn btn-primary nav-action" hx-get="/ui/locations/new" hx-target="#form-row" hx-swap="innerHTML">+ new</button>
+    <button class="btn nav-action" hx-get="/ui/locations/bulk" hx-target="#form-row" hx-swap="innerHTML">+ bulk</button>
   </header>
 
   <nav class="topnav">
@@ -43,6 +43,7 @@
       {{if .Error}}<div class="conflict"><p>{{.Error}}</p></div>{{end}}
 
       {{template "loc-bulk-bar.html" .}}
+      <div id="form-row"></div>
       <table class="parts">
         <thead>
           <tr>
@@ -59,9 +60,6 @@
       </table>
     </main>
 
-    <section class="detail" id="loc-detail">
-      <p class="hint">select a location</p>
-    </section>
   </div>
 
   <footer class="statusbar">
@@ -80,8 +78,8 @@ document.addEventListener('keydown', e => {
   if (e.key === '/' && document.activeElement.id !== 'loc-search') { e.preventDefault(); document.getElementById('loc-search').focus(); }
   if (e.key === 'Escape') {
     document.getElementById('locConfirmOverlay')?.classList.remove('active');
-    const dp = document.getElementById('loc-detail');
-    if (dp) dp.innerHTML = '<p class="hint">select a location</p>';
+    const fr = document.getElementById('form-row');
+    if (fr) fr.innerHTML = '';
   }
   if (e.key === 'n' && document.activeElement.id !== 'loc-search' && !/input|select|textarea/i.test(document.activeElement.tagName)) {
     document.getElementById('loc-search')?.blur();

@@ -1,9 +1,0 @@
-{{define "loc-archive-swap.html"}}
-{{/* Archive-toggle response: the PRIMARY swap is the refreshed tbody (the
-     toggle form targets #loc-tbody outerHTML — the bin moves lists), with
-     locations-rows' own OOB sidebar swap; the extra OOB section re-renders
-     the detail panel with the toggled state (the button relabels
-     archive/unarchive). */}}
-{{template "locations-rows.html" .}}
-<section class="detail" id="loc-detail" hx-swap-oob="true">{{template "location-detail.html" .D}}</section>
-{{end}}

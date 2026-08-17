@@ -122,17 +122,23 @@ button,a,input,th[role="columnheader"],tr{transition:background-color 150ms ease
 /* Inline detail expansion row (2026-08-17 redesign): full-width detail below
  * the clicked row — copper inset left rule echoing .selected, surface bg. */
 tr.exp-row > td{ background:var(--surface); padding:12px 18px; box-shadow:inset 3px 0 0 var(--copper); border-bottom:1px solid var(--border); }
+
+/* Form row (unit 2): the +new / +bulk form surface, a strip above the table
+ * (NOT a table row — the 2026-08-10 form-mangling gotcha). Empty = collapsed
+ * (no height); populated by the header buttons. */
+#form-row{ margin-bottom:10px; }
+#form-row:empty{ display:none; }
+#form-row > *{ background:var(--surface); padding:12px 16px; box-shadow:inset 3px 0 0 var(--copper); }
 .topnav{
   display:flex; gap:2px; padding:0 20px;
   border-bottom:1px solid var(--border); background:var(--bg);
 }
 .body-grid{
-  display:grid; grid-template-columns:220px 1fr 300px;
-  grid-template-areas:"side main detail";
+  display:grid; grid-template-columns:220px 1fr;
+  grid-template-areas:"side main";
 }
 .body-grid .sidebar{ grid-area:side; }
 .body-grid .main{ grid-area:main; }
-.body-grid .detail{ grid-area:detail; }
 .header .nav-action{ white-space:nowrap; }
 .statusbar .sep{ color:var(--border); padding:0; }
 .shell > *{min-width:0} /* let grid children shrink + scroll correctly */
@@ -443,10 +449,9 @@ table.parts{
 @media(max-width:900px){
   .body-grid{
     grid-template-columns:1fr;
-    grid-template-areas:"main" "detail";
+    grid-template-areas:"main";
   }
   .body-grid .sidebar{ display:none; }
-  .body-grid .detail{ border-left:none; border-top:1px solid var(--border); }
   /* Mobile chip-row — horizontal scroller of category chips above the table. */
   .chip-row{
     display:flex;
