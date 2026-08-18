@@ -18,7 +18,16 @@ package main
 // Group commands (ones with subcommands, e.g. `locations`) are documented as
 // "## <Name>" section intros, never "### `go-parts <name>`" headers: they are
 // exempt from the undocumented check, and the ghost check tolerates a group
-// header (via the groups set) without requiring one.
+// header (via the groups set) without requiring one. A tolerated group
+// header's flag table documents the GROUP's own flags (typically none) —
+// subcommand flags belong under the subcommand's header, and a group table
+// listing dead flags still reds (adversary F2, 2026-08-18).
+//
+// Doc-author rules the parser enforces implicitly: a backticked flag in a
+// table row belongs to THAT command — cross-reference other commands' flags
+// in prose, never inside a table cell (adversary F11). Flag shorthands and
+// Default-column values are unchecked (names only, adversary F13). Command
+// paths and flag names may contain [a-z0-9._-] (adversary F5).
 
 import (
 	"os"
@@ -44,8 +53,10 @@ func cliDocPath(t *testing.T) string {
 }
 
 var (
-	docCmdHeader = regexp.MustCompile("(?m)^### `go-parts ([a-z-]+(?: [a-z-]+)*)`\\s*$")
-	docFlagToken = regexp.MustCompile("`(--[a-z0-9-]+)`")
+	// [a-z0-9-] path segments and [a-z0-9._-] flag names: digits (schema-v2),
+	// dots (--log.level) and underscores must document cleanly (adversary F5).
+	docCmdHeader = regexp.MustCompile("(?m)^### `go-parts ([a-z0-9-]+(?: [a-z0-9-]+)*)`\\s*$")
+	docFlagToken = regexp.MustCompile("`(--[a-z0-9._-]+)`")
 )
 
 // parseCLIDoc returns {command path -> flag set} from cli.md, plus the root's
@@ -95,9 +106,9 @@ func parseCLIDoc(t *testing.T, src string) map[string]map[string]bool {
 // Cobra's auto help/completion commands and the help flag are excluded (they
 // are engine, not surface); --version is included on the root because the
 // guide documents it in the global table.
-func codeCommands(root *cobra.Command) (leaves map[string]map[string]bool, groups map[string]bool) {
+func codeCommands(root *cobra.Command) (leaves map[string]map[string]bool, groups map[string]map[string]bool) {
 	leaves = map[string]map[string]bool{"": {}}
-	groups = map[string]bool{}
+	groups = map[string]map[string]bool{}
 	root.PersistentFlags().VisitAll(func(f *pflag.Flag) { leaves[""]["--"+f.Name] = true })
 	if root.Version != "" {
 		leaves[""]["--version"] = true
@@ -113,7 +124,16 @@ func codeCommands(root *cobra.Command) (leaves map[string]map[string]bool, group
 			// collected per command: the guide documents them once, in the
 			// Global flags table, and the root entry above owns that check.
 			if len(sub.Commands()) > 0 {
-				groups[strings.TrimPrefix(p, " ")] = true // documented as a ## intro; ghost-tolerated, never required
+				// Documented as a ## intro; ghost-tolerated, never required —
+				// but a tolerated group header's OWN flag table is still
+				// ghost-checked against these real flags (adversary F2).
+				gflags := map[string]bool{}
+				sub.Flags().VisitAll(func(f *pflag.Flag) {
+					if f.Name != "help" {
+						gflags["--"+f.Name] = true
+					}
+				})
+				groups[strings.TrimPrefix(p, " ")] = gflags
 			} else {
 				flags := map[string]bool{}
 				sub.Flags().VisitAll(func(f *pflag.Flag) {
@@ -147,7 +167,10 @@ func TestCLIDocMatchesCommands(t *testing.T) {
 		}
 		docFlags, ok := doc[path]
 		if !ok {
-			undocumented = append(undocumented, label+" (command missing from docs/guide/cli.md)")
+			// "Missing" can also mean a near-miss header the regex can't parse
+			// (trailing punctuation, wrong depth) — the header must be exactly
+			// "### `go-parts <path>`" (adversary F12).
+			undocumented = append(undocumented, label+" (missing from docs/guide/cli.md — or its header is not exactly \"### `go-parts <path>`\")")
 			continue
 		}
 		var missingFlags, ghostFlags []string
@@ -174,8 +197,24 @@ func TestCLIDocMatchesCommands(t *testing.T) {
 		if path == "" || path == "-" {
 			continue
 		}
-		if _, ok := code[path]; !ok && !groups[path] {
-			ghost = append(ghost, "go-parts "+path+" (documented but not a real command)")
+		if _, ok := code[path]; !ok {
+			if _, isGroup := groups[path]; !isGroup {
+				ghost = append(ghost, "go-parts "+path+" (missing from docs/guide/cli.md — or its header is not exactly `### `+`go-parts <path>`)")
+			}
+		}
+	}
+	// A tolerated group header may still carry a flag table — ghost-check it
+	// against the group's REAL flags. The 79b1d69 tolerance exempted group
+	// tables entirely, which re-opened the gate's founding drift class
+	// (--parent/--single-part-only under a group header passed green).
+	for path, docFlags := range doc {
+		if _, isGroup := groups[path]; !isGroup {
+			continue
+		}
+		for f := range docFlags {
+			if !groups[path][f] {
+				ghost = append(ghost, "go-parts "+path+" documents removed flags: "+f)
+			}
 		}
 	}
 	if len(undocumented) > 0 || len(ghost) > 0 {

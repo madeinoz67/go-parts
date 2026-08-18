@@ -72,7 +72,9 @@ services, multiple protocol surfaces over a shared embedded store.
   against `docs/guide/cli.md`, `docs/reference/api.md`, and
   `docs/internals/keyspace-registry.md` — a red drift test means doc and code disagree:
   usually a missing doc update, sometimes an accidental removal. Fix whichever is wrong
-  (see `docs/development/doc-obligations.md`); never skip the test.
+  (see `docs/development/doc-obligations.md`); never skip the test, and trust a green
+  result only from an unfiltered run — `-run` filters skip these silently, and lockstep
+  code+doc edits (a feature deleted from both sides) pass green by design.
 - **CLI conventions match go-rag / MuninnDB (§5.12):** `start`/`stop`/`status`
   top-level verbs; `<area> <subsystem> <verb>` for feature areas; guided `init`
   wizards with `--non-interactive`; `--dry-run` on anything that mutates;

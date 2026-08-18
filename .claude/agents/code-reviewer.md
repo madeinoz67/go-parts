@@ -136,7 +136,9 @@ A change often touches more than one. Apply every group whose files appear in th
   `docs/reference/api.md`), and `internal/storage/keys/registry_doc_test.go` (the prefix
   consts vs the registry's Allocated line). If one is red, the change shipped without its
   doc update — blocking on its own, no judgment needed. The tests read tables, not meaning:
-  prose truthfulness is still yours.
+  prose truthfulness is still yours — and they diff two artifacts, so a lockstep code+doc
+  deletion passes green; removals are yours to catch. Mind the GREEN direction of the
+  `-run` trap: a "gate is green" claim must be unfiltered or name the three tests.
 
 ## What to produce
 

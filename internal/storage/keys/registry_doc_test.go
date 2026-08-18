@@ -5,30 +5,46 @@ package keys
 // docs/internals/keyspace-registry.md is the single source of truth for the
 // Pebble prefix bytes ("every new assignment must be registered here as it
 // lands"). The registry's own disjointness test catches collisions; THIS test
-// catches the other half of the contract — a prefix allocated in keys.go but
-// missing from the registry's Allocated line, or vice versa (a registry entry
-// for a byte no const claims). Both are blocking review findings per
-// CLAUDE.md §2; this makes them red tests instead of hoping the reviewer
-// remembers.
+// catches the other half of the contract — a prefix allocated in this package
+// but missing from the registry's Allocated line, or vice versa. Both are
+// blocking review findings per CLAUDE.md §2; this makes them red tests
+// instead of hoping the reviewer remembers.
+//
+// Parse contracts: prefix consts are hex OR decimal literals (a decimal const
+// is converted before comparison — adversary F3: `byte = 32` was invisible to
+// a hex-only regex), every byte-typed const in this package must be named
+// *Prefix and be compared (the loud shape guard fails on anything else rather
+// than shrinking silently), and the registry's Allocated line must enumerate
+// every byte individually — no ranges (`0x05–0x07` reads as just its
+// endpoints; adversary F10).
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 var (
-	codePrefixRe  = regexp.MustCompile(`(\w*Prefix)\s+byte\s*=\s*(0x[0-9A-Fa-f]+)`)
+	codePrefixRe  = regexp.MustCompile(`(\w*Prefix)\s+byte\s*=\s*(0x[0-9A-Fa-f]+|\d+)`)
+	byteConstRe   = regexp.MustCompile(`(?m)^\s*(\w+)\s+byte\s*=`)
 	hexTokenRe    = regexp.MustCompile(`0x[0-9A-Fa-f]+`)
 	allocatedLine = regexp.MustCompile(`(?m)^Allocated:.*$`)
 )
 
-// normalize folds a hex literal to canonical form for comparison: lowercase
-// 0x prefix, uppercase digits (0xf0 == 0xF0 == 0xF0).
-func normalize(h string) string {
-	return "0x" + strings.ToUpper(strings.TrimPrefix(h, "0x"))
+// normalize folds a literal to canonical form for comparison: lowercase 0x
+// prefix, uppercase digits; decimals are converted (32 → 0x20).
+func normalize(lit string) string {
+	if !strings.HasPrefix(lit, "0x") {
+		if n, err := strconv.Atoi(lit); err == nil {
+			return fmt.Sprintf("0x%02X", n)
+		}
+		return lit
+	}
+	return "0x" + strings.ToUpper(strings.TrimPrefix(lit, "0x"))
 }
 
 func TestRegistryDocMatchesPrefixes(t *testing.T) {
@@ -51,15 +67,32 @@ func TestRegistryDocMatchesPrefixes(t *testing.T) {
 		buf.Write(b)
 		buf.WriteByte('\n')
 	}
+	src := buf.String()
+
 	code := map[string]string{} // byte -> const name
-	for _, m := range codePrefixRe.FindAllStringSubmatch(buf.String(), -1) {
+	byName := map[string]bool{} // const names the comparison saw
+	for _, m := range codePrefixRe.FindAllStringSubmatch(src, -1) {
 		if prev, dup := code[normalize(m[2])]; dup {
-			t.Fatalf("keys.go: %s and %s both claim %s — the disjointness test owns this, but doc-drift cannot proceed", prev, m[1], m[2])
+			t.Fatalf("%s and %s both claim %s — the disjointness test owns this, but doc-drift cannot proceed", prev, m[1], m[2])
 		}
 		code[normalize(m[2])] = m[1]
+		byName[m[1]] = true
 	}
 	if len(code) == 0 {
-		t.Fatal("no prefix consts parsed from keys.go — parser rotted?")
+		t.Fatal("no prefix consts parsed from this package's sources — parser rotted?")
+	}
+
+	// Loud shape guard (adversary F3): every byte-typed const here is a
+	// keyspace prefix by convention. One named outside the *Prefix shape, or
+	// in the shape but missed by the comparison regex, fails loud instead of
+	// silently shrinking what the gate sees.
+	for _, m := range byteConstRe.FindAllStringSubmatch(src, -1) {
+		if !strings.HasSuffix(m[1], "Prefix") {
+			t.Fatalf("byte const %s does not end in 'Prefix' — it is either an unregistered keyspace (register it in the registry and Allocated line) or misnamed so the drift comparison cannot see it", m[1])
+		}
+		if !byName[m[1]] {
+			t.Fatalf("byte const %s was not captured by the prefix comparison — parser rot; fix the regex in this test", m[1])
+		}
 	}
 
 	reg, err := os.ReadFile("../../../docs/internals/keyspace-registry.md")
@@ -89,7 +122,7 @@ func TestRegistryDocMatchesPrefixes(t *testing.T) {
 	if len(undocumented) > 0 || len(ghost) > 0 {
 		sort.Strings(undocumented)
 		sort.Strings(ghost)
-		t.Errorf("keyspace registry drift:\n  UNREGISTERED (in keys.go, missing from the Allocated line):\n    %s\n  GHOST (in the Allocated line, no keys.go const):\n    %s",
+		t.Errorf("keyspace registry drift:\n  UNREGISTERED (in this package's prefix consts, missing from the Allocated line):\n    %s\n  GHOST (in the Allocated line, no const claims it):\n    %s",
 			strings.Join(undocumented, "\n    "), strings.Join(ghost, "\n    "))
 	}
 }

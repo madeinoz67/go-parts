@@ -27,3 +27,12 @@ table's top rows into red tests instead of reviewer memory:
 A red drift test is the same blocking finding as a missed row above — fix the doc (or the
 code) in the same change; never skip the test. Prose truthfulness is still the reviewer's:
 the tests read tables, not meaning.
+
+**Boundary, stated plainly (adversary pass, 2026-08-18):** the drift tests diff two
+artifacts, so a change that edits code and doc **together** passes green — a feature
+deleted from both sides is caught only by review and behavior tests, not by these.
+cli.md's fenced usage blocks are unchecked (a lockstep flag rename leaves the
+copy-pasteable lines stale — keep fences in sync by hand). Flag shorthands and
+Default-column values are name-only. And a **green** claim must come from an unfiltered
+`go test ./... -race` (or name the three test names in the output) — a `-run` filter
+skips them with green-looking output, the same trap as a no-match RED run in reverse.
