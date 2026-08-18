@@ -163,3 +163,30 @@ a non-loopback bind without a configured base the QR encodes the relative
 `locations label` derives it from config the same way. Physical printing (page
 layout, the OS print dialog) is a client concern; go-parts renders the SVG,
 not a print driver.
+
+## MCP endpoint (POST /mcp)
+
+The daemon serves the Model Context Protocol at `POST /mcp` on the same bind
+as REST and the UI (`127.0.0.1:7890` by default) — stateless JSON-RPC 2.0,
+one request per POST (`initialize`, `tools/list`, `tools/call`). Connect an
+agent with `claude mcp add --transport http http://127.0.0.1:7890/mcp`.
+
+Tools are thin renderings of the same composed stores REST and the UI use —
+identical results, never a hop through REST (§5.2). Tool ARGUMENT keys and
+compact summaries use snake_case; full part records render with the same
+PascalCase Go field names as REST bodies.
+
+| Tool | Input | Notes |
+|---|---|---|
+| `search_parts` | `query?`, `tag?`, `low?`, `limit?` (≤100, default 20) | same pipeline as the UI live filter (FTS or list → tag → low) |
+| `get_part` | one of `id` / `mpn` / `local_number` (also `P-` via-code as `id`) | full record + per-location stock + 10 most recent movements; an ambiguous selector errors listing every match |
+| `upsert_part` | `part` (full record, PascalCase fields) | empty `ID` creates; otherwise the record's `Version` is the optimistic-concurrency token — a stale `Version` is rejected with the conflict error, never a silent overwritten write. `QtyOnHand` is honored only at create; stock moves go through `adjust_stock` |
+| `adjust_stock` | `part`, `location` (label or `L-` via-code), `delta`, `reason` — all required | appends a movement and re-derives part qty; a location the part isn't stocked at is an error listing where it IS stocked |
+| `list_low_stock` | — | parts with `QtyOnHand` ≤ `ReorderPoint` (the UI low filter's comparison) |
+| `get_inventory_stats` | — | `parts_total`, `locations_total`, `low_stock`, `out_of_stock` |
+
+Domain failures (not-found, version conflict, duplicate identity, bad
+location) return tool results with `isError: true` carrying the engine
+sentinel's message verbatim — the same strings REST surfaces. Only
+protocol-level failures (malformed JSON-RPC, unknown method, unknown tool)
+are JSON-RPC errors. No auth in v1 (§5.8 loopback posture).

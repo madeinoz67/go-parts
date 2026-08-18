@@ -34,6 +34,7 @@ import (
 	"github.com/madeinoz67/go-parts/internal/config"
 	"github.com/madeinoz67/go-parts/internal/index"
 	"github.com/madeinoz67/go-parts/internal/locations"
+	"github.com/madeinoz67/go-parts/internal/mcp"
 	"github.com/madeinoz67/go-parts/internal/parts"
 	"github.com/madeinoz67/go-parts/internal/rest"
 	"github.com/madeinoz67/go-parts/internal/storage"
@@ -88,8 +89,13 @@ func Run(cfg config.Config) error {
 	restSrv := rest.NewServer(store, fts, viaStore, locStore, compStore)
 	restSrv.SetPublicBaseURL(cfg.PublicBaseURL)
 	uiSrv := ui.NewServer(store, fts, locStore, compStore)
+	// MCP surface (spec 2026-08-18): same composed stores as REST/UI, mounted
+	// on the same mux+port — in-process by construction (Pebble's flock means
+	// an out-of-process MCP would have to REST-hop, which no sibling takes).
+	mcpSrv := mcp.NewServer(store, fts, viaStore, locStore, compStore)
 	mux := http.NewServeMux()
 	mux.Handle("/ui/", uiSrv)
+	mux.Handle("/mcp", mcpSrv.HTTPHandler())
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/ui/", http.StatusSeeOther)
 	})
