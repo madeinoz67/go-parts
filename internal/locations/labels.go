@@ -22,18 +22,52 @@ type LabelParams struct {
 
 	LevelFrom int // 3d_grid only (numeric, inclusive)
 	LevelTo   int // 3d_grid only
+
+	// Separator joins the prefix and each coordinate group in row/grid/3d_grid
+	// labels (Task 44a): nil = the "-" default, an explicit "" glues the parts
+	// (the legacy row style "box1"), any other value verbatim. Max 4 bytes, no
+	// whitespace — see sep().
+	Separator *string
+}
+
+// sepDefault is the label separator when LabelParams.Separator is nil.
+const sepDefault = "-"
+
+// sep resolves and validates the label separator: nil means the "-" default;
+// "" is a legal explicit choice (glued labels); anything longer than 4 bytes
+// or containing whitespace/control runes is rejected — a separator that
+// embeds space cannot be re-typed into the search box, and a long one is
+// almost always a pasted mistake.
+func (p LabelParams) sep() (string, error) {
+	if p.Separator == nil {
+		return sepDefault, nil
+	}
+	s := *p.Separator
+	if len(s) > 4 {
+		return "", fmt.Errorf("locations: separator %q too long (max 4 bytes)", s)
+	}
+	for _, r := range s {
+		if r <= 0x20 || r == 0x7f {
+			return "", fmt.Errorf("locations: separator %q contains whitespace or control characters", s)
+		}
+	}
+	return s, nil
 }
 
 // GenerateLabels returns the labels a creation method produces (PRD §7.1). It
-// is PURE: no I/O, no Store. The label formats are load-bearing (pinned by the
-// four PRD examples):
+// is PURE: no I/O, no Store. The label formats are load-bearing (pinned by
+// the PRD examples); one separator knob (Task 44a, default "-") joins the
+// prefix and each coordinate group:
 //   - single:  the Label as-is.
-//   - row:     Prefix + strconv.Itoa(n) — NO separator ("box1").
-//   - grid:    Prefix + "-" + row + strconv.Itoa(col) ("shelf-A1").
-//   - 3d_grid: Prefix + "-" + level + "-" + row + strconv.Itoa(col) ("rack-1-A1").
+//   - row:     Prefix + sep + n ("box-1" with the default sep).
+//   - grid:    Prefix + sep + row + col ("shelf-A1").
+//   - 3d_grid: Prefix + sep + level + sep + row + col ("rack-1-A1").
+//
+// sep is LabelParams.Separator: nil = "-", "" = glued ("box1", the legacy row
+// style), any other short non-whitespace literal verbatim.
 //
 // Rows are single uppercase letters A-Z. An invalid range, a multi-character
-// row letter, or an unknown method returns an error.
+// row letter, an invalid separator, or an unknown method returns an error.
 //
 // maxLabels caps the label count as an operator-controlled sanity guard. If
 // maxLabels <= 0 the call errors immediately; if the total label count the
@@ -45,6 +79,10 @@ type LabelParams struct {
 func GenerateLabels(method string, p LabelParams, maxLabels int) ([]string, error) {
 	if maxLabels <= 0 {
 		return nil, fmt.Errorf("locations: maxLabels must be positive, got %d", maxLabels)
+	}
+	sep, err := p.sep()
+	if err != nil {
+		return nil, err
 	}
 	switch method {
 	case "single":
@@ -69,7 +107,7 @@ func GenerateLabels(method string, p LabelParams, maxLabels int) ([]string, erro
 		}
 		var out []string
 		for n := p.From; n <= p.To; n++ {
-			out = append(out, p.Prefix+strconv.Itoa(n))
+			out = append(out, p.Prefix+sep+strconv.Itoa(n))
 		}
 		return out, nil
 	case "grid":
@@ -88,7 +126,7 @@ func GenerateLabels(method string, p LabelParams, maxLabels int) ([]string, erro
 		var out []string
 		for _, r := range rows {
 			for c := p.ColFrom; c <= p.ColTo; c++ {
-				out = append(out, p.Prefix+"-"+r+strconv.Itoa(c))
+				out = append(out, p.Prefix+sep+r+strconv.Itoa(c))
 			}
 		}
 		return out, nil
@@ -113,7 +151,7 @@ func GenerateLabels(method string, p LabelParams, maxLabels int) ([]string, erro
 		for lvl := p.LevelFrom; lvl <= p.LevelTo; lvl++ {
 			for _, r := range rows {
 				for c := p.ColFrom; c <= p.ColTo; c++ {
-					out = append(out, p.Prefix+"-"+strconv.Itoa(lvl)+"-"+r+strconv.Itoa(c))
+					out = append(out, p.Prefix+sep+strconv.Itoa(lvl)+sep+r+strconv.Itoa(c))
 				}
 			}
 		}

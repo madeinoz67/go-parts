@@ -140,6 +140,7 @@ go-parts locations bulk --method row|grid|3d --prefix box \
 |---|---|---|
 | `--method` | (required) | `row`, `grid`, or `3d` (single uses `add`) |
 | `--prefix` | `""` | label prefix (e.g. `box`, `shelf`, `rack`) |
+| `--separator` | `"-"` | label separator joining prefix and coordinates; an explicit empty string glues (`box1`) |
 | `--from`, `--to` | `0` | `row`: numeric range start/end (inclusive) |
 | `--row-from`, `--row-to` | `""` | `grid`/`3d`: first and last row letter (A-Z, inclusive) |
 | `--col-from`, `--col-to` | `0` | `grid`/`3d`: first and last column (inclusive) |
@@ -152,7 +153,8 @@ go-parts locations bulk --method row|grid|3d --prefix box \
 The four methods, by flag combination:
 
 - **Row** — `go-parts locations bulk --method row --prefix box --from 1 --to 5`
-  yields `box1`, `box2`, `box3`, `box4`, `box5`.
+  yields `box-1`, `box-2`, `box-3`, `box-4`, `box-5` (the default `--separator -`;
+  `--separator ""` yields the glued legacy form `box1`…`box5`).
 - **Grid** — `go-parts locations bulk --method grid --prefix shelf --row-from A --row-to B --col-from 1 --col-to 2`
   yields `shelf-A1`, `shelf-A2`, `shelf-B1`, `shelf-B2`.
 - **3-D grid** — `go-parts locations bulk --method 3d --prefix rack --level-from 1 --level-to 2 --row-from A --row-to B --col-from 1 --col-to 2`

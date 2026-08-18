@@ -7,35 +7,38 @@
      the response (loc-bulk-created.html) re-renders the full table with the
      new locations + OOB tag-sidebar swap + resets this panel to a count
      notice. Field groups toggle with the method selector (bulkMethod). No
-     tags field: BulkOpts carries Notes only — CLI parity. */}}
+     tags field: BulkOpts carries Notes only — CLI parity. Task 44a: ranges
+     are SELECT dropdowns (rows A-Z, cols 1-24, levels 1-9) and the label
+     separator is a field — default "-", empty glues (box1). */}}
 <form class="create" hx-post="/ui/locations/bulk" hx-target="#loc-tbody" hx-swap="outerHTML">
   <div class="spec-rows">
     <div class="spec-row"><span>Method</span>
       <select name="method" onchange="bulkMethod(this)" style="flex:1">
-        <option value="row">row (prefix1..N)</option>
+        <option value="row">row (prefix-1..N)</option>
         <option value="grid">grid (prefix-A1..)</option>
         <option value="3d">3d grid (prefix-1-A1..)</option>
       </select>
     </div>
     <div class="spec-row"><span>Prefix</span><input type="text" name="prefix" placeholder="box, shelf, rack" required style="flex:1"></div>
+    <div class="spec-row"><span>Separator</span><input type="text" name="separator" value="-" maxlength="4" title="joins prefix and coordinates — default '-' ; clearing it glues them (box1)" style="flex:1"></div>
     <div class="spec-row bulk-f" data-m="row"><span>From</span><input type="number" name="from" min="0" value="1" style="flex:1"></div>
     <div class="spec-row bulk-f" data-m="row"><span>To</span><input type="number" name="to" min="0" value="4" style="flex:1"></div>
     <div class="spec-row bulk-f" data-m="grid,3d" style="display:none"><span>Rows</span>
       <span style="display:flex;gap:6px;flex:1">
-        <input type="text" name="row_from" placeholder="A" maxlength="1" style="flex:1">
-        <input type="text" name="row_to" placeholder="B" maxlength="1" style="flex:1">
+        <select name="row_from" style="flex:1">{{range .RowLetters}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+        <select name="row_to" style="flex:1">{{range .RowLetters}}<option value="{{.}}"{{if eq . "B"}} selected{{end}}>{{.}}</option>{{end}}</select>
       </span>
     </div>
     <div class="spec-row bulk-f" data-m="grid,3d" style="display:none"><span>Cols</span>
       <span style="display:flex;gap:6px;flex:1">
-        <input type="number" name="col_from" placeholder="1" style="flex:1">
-        <input type="number" name="col_to" placeholder="4" style="flex:1">
+        <select name="col_from" style="flex:1">{{range .ColNums}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+        <select name="col_to" style="flex:1">{{range .ColNums}}<option value="{{.}}"{{if eq . 4}} selected{{end}}>{{.}}</option>{{end}}</select>
       </span>
     </div>
     <div class="spec-row bulk-f" data-m="3d" style="display:none"><span>Levels</span>
       <span style="display:flex;gap:6px;flex:1">
-        <input type="number" name="level_from" placeholder="1" style="flex:1">
-        <input type="number" name="level_to" placeholder="2" style="flex:1">
+        <select name="level_from" style="flex:1">{{range .LevelNums}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+        <select name="level_to" style="flex:1">{{range .LevelNums}}<option value="{{.}}"{{if eq . 2}} selected{{end}}>{{.}}</option>{{end}}</select>
       </span>
     </div>
     <div class="spec-row"><span>Notes</span><input type="text" name="notes" placeholder="applied to every row" style="flex:1"></div>

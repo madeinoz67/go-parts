@@ -130,6 +130,7 @@ func newLocationsBulkCmd(dataDir *string) *cobra.Command {
 		notes              string
 		dryRun             bool
 		maxLabels          int
+		separator          string // Task 44a: label separator, default "-" ("" glues)
 	)
 	cmd := &cobra.Command{
 		Use:   "bulk --method row|grid|3d --prefix box [--from/--to|--row-from/--row-to/--col-from/--col-to|--level-from/--level-to]",
@@ -163,6 +164,7 @@ func newLocationsBulkCmd(dataDir *string) *cobra.Command {
 				From:   from, To: to,
 				RowFrom: rowFrom, RowTo: rowTo, ColFrom: colFrom, ColTo: colTo,
 				LevelFrom: levelFrom, LevelTo: levelTo,
+				Separator: &separator,
 			}
 			labels, err := locations.GenerateLabels(canonical, p, maxLabels)
 			if err != nil {
@@ -208,6 +210,7 @@ func newLocationsBulkCmd(dataDir *string) *cobra.Command {
 	cmd.Flags().StringVar(&notes, "notes", "", "free-text notes applied to every row")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the labels that would be created without writing")
 	cmd.Flags().IntVar(&maxLabels, "max-labels", 100, "maximum labels a single bulk may generate (sanity cap)")
+	cmd.Flags().StringVar(&separator, "separator", "-", "label separator joining prefix and coordinates (default -; pass an empty string to glue: box1)")
 	return cmd
 }
 

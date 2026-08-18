@@ -1055,9 +1055,29 @@ func formInt(v string) int {
 // cap, over the SAME GenerateLabels/CreateBulk engine the CLI drives.
 func (s *Server) handleLocationBulkForm(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "location-bulk.html", map[string]any{}); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "location-bulk.html", bulkFormOptions()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// bulkFormOptions feeds the bulk-create form's SELECT dropdowns (Task 44a):
+// rows span the engine's full A-Z letter space; cols (1-24) and levels (1-9)
+// are bounded to plausible physical hardware — wider ranges remain a CLI job,
+// and the --max-labels cap still guards totals either way.
+func bulkFormOptions() map[string]any {
+	letters := make([]string, 0, 26)
+	for c := 'A'; c <= 'Z'; c++ {
+		letters = append(letters, string(c))
+	}
+	cols := make([]int, 0, 24)
+	for n := 1; n <= 24; n++ {
+		cols = append(cols, n)
+	}
+	levels := make([]int, 0, 9)
+	for n := 1; n <= 9; n++ {
+		levels = append(levels, n)
+	}
+	return map[string]any{"RowLetters": letters, "ColNums": cols, "LevelNums": levels}
 }
 
 // handleLocationBulkCreate: POST /ui/locations/bulk — the UI adapter over
@@ -1095,12 +1115,22 @@ func (s *Server) handleLocationBulkCreate(w http.ResponseWriter, r *http.Request
 		LevelFrom: formInt(r.PostFormValue("level_from")),
 		LevelTo:   formInt(r.PostFormValue("level_to")),
 	}
+	// Task 44a separator: an ABSENT field keeps the engine's "-" default
+	// (nil Separator); a PRESENT field is the operator's explicit choice,
+	// including "" for glued labels (box1). PostFormValue collapses both to
+	// "", so the presence check runs on r.PostForm directly.
+	if _, ok := r.PostForm["separator"]; ok {
+		sep := strings.TrimSpace(r.PostFormValue("separator"))
+		p.Separator = &sep
+	}
 	labels, err := locations.GenerateLabels(engineMethod, p, maxLabels)
 	if err != nil {
 		w.Header().Set("Hx-Retarget", "#form-row")
 		w.Header().Set("Hx-Reswap", "innerHTML")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = s.tmpl.ExecuteTemplate(w, "location-bulk.html", map[string]any{"Error": err.Error()})
+		opts := bulkFormOptions()
+		opts["Error"] = err.Error()
+		_ = s.tmpl.ExecuteTemplate(w, "location-bulk.html", opts)
 		return
 	}
 	created, cErr := s.locations.CreateBulk(labels, locations.BulkOpts{

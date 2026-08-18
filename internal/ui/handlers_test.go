@@ -1224,7 +1224,8 @@ func TestLocationBulkFormRenders(t *testing.T) {
 		t.Fatalf("GET /ui/locations/bulk = %d, want 200", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{`hx-post="/ui/locations/bulk"`, `name="method"`, `name="prefix"`, `name="max_labels"`} {
+	for _, want := range []string{`hx-post="/ui/locations/bulk"`, `name="method"`, `name="prefix"`, `name="separator"`, `name="max_labels"`,
+		`<select name="row_from"`, `<select name="row_to"`, `<select name="col_from"`, `<select name="col_to"`, `<select name="level_from"`, `<select name="level_to"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("bulk form missing %q; body=%s", want, body)
 		}
@@ -1245,7 +1246,7 @@ func TestLocationBulkCreateRow(t *testing.T) {
 		t.Fatalf("bulk = %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"box1", "box2", "box3"} {
+	for _, want := range []string{"box-1", "box-2", "box-3"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("refreshed tbody missing %q; body=%s", want, body)
 		}
@@ -1258,6 +1259,25 @@ func TestLocationBulkCreateRow(t *testing.T) {
 	}
 	if got := len(srv.locations.List()); got != before+3 {
 		t.Errorf("locations = %d, want %d", got, before+3)
+	}
+}
+
+// TestLocationBulkCreateSeparator pins Task 44a's separator field end-to-end:
+// the form value flows through LabelParams.Separator verbatim ("." here). An
+// absent field must fall back to the engine's "-" default, never to glue —
+// only a deliberately-cleared field (present-but-empty) glues.
+func TestLocationBulkCreateSeparator(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/locations/bulk",
+		"method=row&prefix=box&from=1&to=2&separator=.&max_labels=100"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bulk = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	for _, want := range []string{"box.1", "box.2"} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Errorf("tbody missing %q; body=%s", want, rr.Body.String())
+		}
 	}
 }
 

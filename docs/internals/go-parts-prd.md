@@ -835,9 +835,10 @@ These arrive in Phase 6+ (§10) — deliberately not v1 scope, so the "start usi
 - Stock-at-location via the Component junction (§6.1): a part is stocked at any number of locations, each with its own quantity and movement history
 - **Location creation — start basic, expand as needed (matches PartsBox's four methods exactly):**
   - **Single** — one location, one name (e.g. `junk-box`). Zero planning required — this is the day-one default, fits "start using it straight away."
-  - **Row (1D)** — a linear sequence from a prefix + range: prefix `box`, range `1`–`5` → `box1`, `box2`, `box3`, `box4`, `box5`
+  - **Row (1D)** — a linear sequence from a prefix + range: prefix `box`, range `1`–`5` → `box-1`, `box-2`, `box-3`, `box-4`, `box-5`
   - **Grid (2D)** — row × column labels: prefix `shelf`, rows `A,B`, columns `1,2` → `shelf-A1`, `shelf-A2`, `shelf-B1`, `shelf-B2`
   - **3D Grid (3D)** — level × row × column labels: prefix `rack`, levels `1,2`, rows `A,B`, columns `1,2` → `rack-1-A1`, `rack-1-A2`, `rack-1-B1`, `rack-1-B2`, `rack-2-A1`, ...
+  - **Separator** (Task 44a, principal directive 2026-08-18: "custom, with default as '-'") — one knob joins the prefix and each coordinate group in row/grid/3D labels: `-` by default, an empty string glues (`box1`, the pre-44a row style), any other short non-whitespace literal verbatim (`box.1`, `shelf.A2`). `nil`/absent keeps the default, so every pre-44a grid/3D call is byte-identical; only the row method's default output changed (`box1` → `box-1`). Exposed as CLI `--separator` and the bulk-create form's separator field.
   - All four just create ordinary `Location` rows — `creation_method` is reference metadata, not a structural constraint, so anything created in bulk can be renamed or reorganized individually afterward, same as PartsBox
   - Progressive by design: start with one `Single` junk-box location, add `Row`/`Grid`/`3D Grid` batches later as the collection grows — no migration needed for what's already there
 - Dashboard stats — part/location/project counts, low-stock and out-of-stock counts, enrichment queue status, via `GET /stats` (§5.19); cheap to compute, no reason to wait for Phase 6

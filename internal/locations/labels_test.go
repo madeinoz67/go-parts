@@ -22,7 +22,7 @@ func TestGenerateLabels_Row(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"box1", "box2", "box3", "box4", "box5"}
+	want := []string{"box-1", "box-2", "box-3", "box-4", "box-5"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("row = %v, want %v", got, want)
 	}
@@ -55,6 +55,61 @@ func TestGenerateLabels_3DGrid(t *testing.T) {
 	}
 }
 
+// TestGenerateLabels_Separator pins Task 44a's single separator knob across
+// every method: nil = the "-" default; "" = glued (the legacy row style);
+// any other short non-whitespace literal joins prefix and each coordinate
+// group verbatim. Grid/3d output under the default is unchanged from the
+// pre-44a formats; row output changes (box1 → box-1) by the principal's
+// 2026-08-18 directive ("custom, with default as '-'").
+func TestGenerateLabels_Separator(t *testing.T) {
+	dot := "."
+	glue := ""
+	for _, tc := range []struct {
+		name   string
+		method string
+		p      LabelParams
+		want   []string
+	}{
+		{"row default sep", "row", LabelParams{Prefix: "box", From: 1, To: 2}, []string{"box-1", "box-2"}},
+		{"row dot sep", "row", LabelParams{Prefix: "box", From: 1, To: 2, Separator: &dot}, []string{"box.1", "box.2"}},
+		{"row glue sep", "row", LabelParams{Prefix: "box", From: 1, To: 2, Separator: &glue}, []string{"box1", "box2"}},
+		{"grid default sep", "grid", LabelParams{Prefix: "shelf", RowFrom: "A", RowTo: "A", ColFrom: 1, ColTo: 2}, []string{"shelf-A1", "shelf-A2"}},
+		{"grid dot sep", "grid", LabelParams{Prefix: "shelf", RowFrom: "A", RowTo: "A", ColFrom: 1, ColTo: 2, Separator: &dot}, []string{"shelf.A1", "shelf.A2"}},
+		{"grid glue sep", "grid", LabelParams{Prefix: "shelf", RowFrom: "A", RowTo: "A", ColFrom: 1, ColTo: 2, Separator: &glue}, []string{"shelfA1", "shelfA2"}},
+		{"3d default sep", "3d_grid", LabelParams{Prefix: "rack", LevelFrom: 1, LevelTo: 1, RowFrom: "A", RowTo: "A", ColFrom: 1, ColTo: 1}, []string{"rack-1-A1"}},
+		{"3d dot sep", "3d_grid", LabelParams{Prefix: "rack", LevelFrom: 1, LevelTo: 1, RowFrom: "A", RowTo: "A", ColFrom: 1, ColTo: 1, Separator: &dot}, []string{"rack.1.A1"}},
+		{"3d glue sep", "3d_grid", LabelParams{Prefix: "rack", LevelFrom: 1, LevelTo: 1, RowFrom: "A", RowTo: "A", ColFrom: 1, ColTo: 1, Separator: &glue}, []string{"rack1A1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := GenerateLabels(tc.method, tc.p, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("%s = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+	// Invalid separators are rejected regardless of method: too long, or
+	// whitespace inside (a label that cannot be re-typed cannot be searched).
+	long := "toolong"
+	spacey := "a b"
+	for _, bad := range []*string{&long, &spacey} {
+		if _, err := GenerateLabels("row", LabelParams{Prefix: "box", From: 1, To: 2, Separator: bad}, 100); err == nil {
+			t.Fatalf("expected error for separator %q, got nil", *bad)
+		}
+	}
+	// single ignores the separator — it labels nothing to join.
+	hyphen := "-"
+	got, err := GenerateLabels("single", LabelParams{Label: "junk-box", Separator: &hyphen}, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []string{"junk-box"}) {
+		t.Fatalf("single with separator = %v, want [junk-box]", got)
+	}
+}
+
 func TestGenerateLabels_Errors(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -83,7 +138,7 @@ func TestGenerateLabels_RowSingleValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"x3"}
+	want := []string{"x-3"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("row single = %v, want %v", got, want)
 	}
