@@ -42,6 +42,13 @@ func argInt(args map[string]any, key string) (int, bool, error) {
 	if f != math.Trunc(f) {
 		return 0, true, fmt.Errorf("%s must be an integer (got %v)", key, f)
 	}
+	// Magnitude (adversary I1): int(f) on an out-of-int64 integral float
+	// SATURATES ({"delta":1e19} → MaxInt64; adjust_stock then wraps stock
+	// negative). ±2^63 are exactly representable float64s, so >= +2^63 /
+	// < -2^63 is a precise bound — reject with the same usage-error shape.
+	if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+		return 0, true, fmt.Errorf("%s must be an integer between -9223372036854775808 and 9223372036854775807 (got %v)", key, f)
+	}
 	return int(f), true, nil
 }
 
@@ -94,19 +101,23 @@ func (s *Server) stockedLabels(partID string) []map[string]any {
 // Multiple matches (legacy pre-v5 duplicate MPNs, or a cross-field collision)
 // return every match so the caller errors with the list — never a silent pick.
 func (s *Server) resolvePart(sel string) ([]*parts.Part, error) {
-	if sel == "" {
+	if strings.TrimSpace(sel) == "" {
+		// TrimSpace, not == "" (adversary M2): a whitespace-only selector would
+		// trim to "" in the scan below and match parts whose MPN/LocalNumber
+		// are empty (empty identities are exempt from the uniqueness index).
 		return nil, errors.New("part selector is empty — pass id, mpn, or local_number")
 	}
 	if strings.HasPrefix(sel, "P-") {
-		_, id, err := s.via.Lookup(sel)
-		if err != nil {
-			return nil, err
+		if _, id, err := s.via.Lookup(sel); err == nil {
+			p, err := s.store.Get(id)
+			if err != nil {
+				return nil, err
+			}
+			return []*parts.Part{p}, nil
 		}
-		p, err := s.store.Get(id)
-		if err != nil {
-			return nil, err
-		}
-		return []*parts.Part{p}, nil
+		// Via-miss → fall through to the identity scan (adversary M3): a
+		// selector beginning "P-" may be a literal MPN ("P-LCC100"); a miss
+		// means the selector is not a code, not that the entity is absent.
 	}
 	if p, err := s.store.Get(sel); err == nil {
 		return []*parts.Part{p}, nil
@@ -250,7 +261,11 @@ func (s *Server) resolveLocation(sel string) (*locations.Location, error) {
 		return nil, errors.New("location selector is empty")
 	}
 	if strings.HasPrefix(sel, "L-") {
-		return s.locations.ByVia(sel)
+		if loc, err := s.locations.ByVia(sel); err == nil {
+			return loc, nil
+		}
+		// Via-miss → fall through to the label match (adversary M3): a label
+		// may itself begin "L-"; a miss means "not a code", not "absent".
 	}
 	var matches []*locations.Location
 	for _, l := range s.locations.List() {
@@ -320,6 +335,17 @@ func (s *Server) toolUpsertPart(args map[string]any) (string, error) {
 		if p.Version < 1 {
 			return "", errors.New("update requires the part's current Version — fetch via get_part; stale versions are rejected")
 		}
+		// Audit preservation (adversary M1): store.Update does NOT preserve
+		// CreatedBy/CreatedAt (REST compensates via get-then-merge; applyPatch's
+		// contract says audit is never patched). Copy the stored create-time
+		// values over the caller's — UpdatedBy/UpdatedAt stay store-owned. A
+		// partial body (no audit fields) must not zero them.
+		cur, err := s.store.Get(p.ID)
+		if err != nil {
+			return "", err
+		}
+		p.CreatedBy = cur.CreatedBy
+		p.CreatedAt = cur.CreatedAt
 		if err := s.store.Update(&p, p.Version); err != nil {
 			return "", err
 		}

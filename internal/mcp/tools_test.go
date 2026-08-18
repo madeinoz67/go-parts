@@ -440,6 +440,150 @@ func TestAdjustStockNotStockedAnywhere(t *testing.T) {
 	}
 }
 
+// --- adversary fix wave (I1, M1, M2, M3) ---
+
+// I1: an integral float OUTSIDE int64 is a usage error naming the bound —
+// argInt's int(f) saturates to ±MaxInt64, and adjust_stock then wraps stock
+// negative (1e19 + 5 == -9223372036854775804). Never silently-wrong.
+func TestAdjustStockDeltaBeyondInt64Rejected(t *testing.T) {
+	srv := newTestServer(t)
+	part := mustCreate(t, srv, &parts.Part{MPN: "M1", QtyOnHand: 5})
+	loc := &locations.Location{Label: "Bin A3"}
+	if err := srv.locations.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.components.Add(loc.ID, part.ID, 5, nil); err != nil {
+		t.Fatal(err)
+	}
+	const bound = "between -9223372036854775808 and 9223372036854775807"
+	for _, delta := range []string{"1e19", "-1e19"} {
+		errTxt := toolError(t, srv, "adjust_stock", `{"part":"M1","location":"Bin A3","delta":`+delta+`,"reason":"x"}`)
+		if !strings.Contains(errTxt, "delta must be an integer "+bound) {
+			t.Fatalf("out-of-int64 delta %s must name the bound: %q", delta, errTxt)
+		}
+	}
+	// Nothing moved: component qty, movement history (Add appends the one
+	// initial movement), and the part's recomputed qty are all untouched.
+	comp, err := srv.components.Get(loc.ID, part.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := srv.store.Get(part.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comp.Quantity != 5 || len(comp.History) != 1 || fresh.QtyOnHand != 5 {
+		t.Fatalf("rejected delta must not move stock: comp=%d history=%d part=%d",
+			comp.Quantity, len(comp.History), fresh.QtyOnHand)
+	}
+}
+
+// I1 sibling: search_parts' limit goes through the same argInt — an
+// out-of-int64 limit must ERROR, not silently fall back to the default 20.
+// The call-site range check (1..100 honored, outside → default) is unchanged.
+func TestSearchPartsLimitBeyondInt64Rejected(t *testing.T) {
+	srv := seedFixture(t)
+	errTxt := toolError(t, srv, "search_parts", `{"limit":1e19}`)
+	if !strings.Contains(errTxt, "limit must be an integer between") {
+		t.Fatalf("out-of-int64 limit must error loudly, not default: %q", errTxt)
+	}
+	if txt := toolText(t, srv, "search_parts", `{"limit":100}`); !strings.Contains(txt, "RC0805FR-0710KL") {
+		t.Fatalf("in-range limit 100 must still be honored: %s", txt)
+	}
+}
+
+// M1: a partial update must not wipe create-time audit. store.Update does NOT
+// preserve CreatedBy/CreatedAt (the REST surface compensates via
+// get-then-merge; applyPatch's contract says audit is never patched) — the
+// MCP update branch must do the same before Update.
+func TestUpsertPartUpdatePreservesCreateAudit(t *testing.T) {
+	srv := newTestServer(t)
+	txt := toolText(t, srv, "upsert_part", `{"part":{"MPN":"AUDIT","Description":"d1"}}`)
+	var created map[string]any
+	if err := json.Unmarshal([]byte(txt), &created); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := created["ID"].(string)
+	createdAt, _ := created["CreatedAt"].(string)
+	if createdAt == "" {
+		t.Fatalf("create must stamp CreatedAt: %s", txt)
+	}
+	// Partial record: no audit fields in the body.
+	txt2 := toolText(t, srv, "upsert_part", `{"part":{"ID":"`+id+`","MPN":"AUDIT","Description":"d2","Version":1}}`)
+	var updated map[string]any
+	if err := json.Unmarshal([]byte(txt2), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated["CreatedBy"] != "local" || updated["CreatedAt"] != createdAt {
+		t.Fatalf("update must preserve create-time audit, want CreatedBy=local CreatedAt=%s: %s", createdAt, txt2)
+	}
+	if updated["Description"] != "d2" {
+		t.Fatalf("caller-supplied description must apply: %s", txt2)
+	}
+}
+
+// M2: a whitespace-only selector trims to "" and would match parts whose
+// MPN/LocalNumber are empty (empty identities are exempt from the uniqueness
+// index, so they exist) — resolvePart must reject it like the empty selector.
+func TestAdjustStockWhitespacePartSelectorRejected(t *testing.T) {
+	srv := newTestServer(t)
+	part := mustCreate(t, srv, &parts.Part{Description: "no identity", QtyOnHand: 5}) // empty MPN/LocalNumber
+	loc := &locations.Location{Label: "Bin A3"}
+	if err := srv.locations.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.components.Add(loc.ID, part.ID, 5, nil); err != nil {
+		t.Fatal(err)
+	}
+	errTxt := toolError(t, srv, "adjust_stock", `{"part":" ","location":"Bin A3","delta":1,"reason":"x"}`)
+	if !strings.Contains(errTxt, "part selector is empty") {
+		t.Fatalf("whitespace-only selector is a usage error: %q", errTxt)
+	}
+	comp, err := srv.components.Get(loc.ID, part.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comp.Quantity != 5 || len(comp.History) != 1 {
+		t.Fatalf("rejected selector must not move stock: qty=%d history=%d", comp.Quantity, len(comp.History))
+	}
+}
+
+// M3: a selector BEGINNING "P-" may be a literal MPN, not a via code — a
+// via-miss must fall through to the identity scan, not error "via: not found".
+// ("LCC100" contains base32-impossible chars, so P-LCC100 is a deterministic
+// via-miss.)
+func TestGetPartMPNBeginningLikeViaCode(t *testing.T) {
+	srv := newTestServer(t)
+	mustCreate(t, srv, &parts.Part{MPN: "P-LCC100", Description: "socket adapter"})
+	txt := toolText(t, srv, "get_part", `{"mpn":"P-LCC100"}`)
+	if !strings.Contains(txt, `"MPN":"P-LCC100"`) {
+		t.Fatalf("a P- MPN must resolve by the identity scan: %s", txt)
+	}
+}
+
+// M3 sibling: the same fallthrough for locations — a label beginning "L-"
+// ("BENCH" is 5 chars; via codes carry 6) resolves by label, and a REAL
+// L- via-code still resolves through the index (prefix fast-path intact).
+func TestAdjustStockLocationLabelBeginningLikeViaCode(t *testing.T) {
+	srv := newTestServer(t)
+	part := mustCreate(t, srv, &parts.Part{MPN: "M1", QtyOnHand: 5})
+	loc := &locations.Location{Label: "L-BENCH"}
+	if err := srv.locations.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.components.Add(loc.ID, part.ID, 5, nil); err != nil {
+		t.Fatal(err)
+	}
+	txt := toolText(t, srv, "adjust_stock", `{"part":"M1","location":"L-BENCH","delta":1,"reason":"restock"}`)
+	if !strings.Contains(txt, `"part_qty_on_hand":6`) {
+		t.Fatalf("an L- label must resolve by label match: %s", txt)
+	}
+	txt2 := toolText(t, srv, "adjust_stock", `{"part":"M1","location":"`+loc.ViaCode+`","delta":1,"reason":"restock"}`)
+	if !strings.Contains(txt2, `"part_qty_on_hand":7`) {
+		t.Fatalf("real via-code %s must still resolve through the index: %s", loc.ViaCode, txt2)
+	}
+}
+
 // M5: adjust_stock's multi-match error carries the candidate list in
 // get_part's "id (mpn)" formatting — an agent disambiguates in one round-trip.
 func TestAdjustStockAmbiguousPartListsCandidates(t *testing.T) {
