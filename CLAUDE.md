@@ -62,6 +62,12 @@ services, multiple protocol surfaces over a shared embedded store.
   not your memory of it.
 - **Build and test the real change before claiming done:**
   `go build ./... && go vet ./... && gofmt -l .` plus the relevant `go test ./... -race`.
+- **Compiled binaries go in `bin/`, never the repo root** (principal directive,
+  2026-08-18): `go build -o bin/go-parts ./cmd/go-parts` — the main package is
+  `cmd/go-parts/`, not root. Both `/bin/` and `/go-parts` are gitignored; a root
+  binary goes stale silently (the 2026-08-18 `/mcp` 404 was a day-old root binary
+  outliving the MCP arc). After a rebuild, restart the daemon — `start` is
+  foreground and never hot-reloads.
 - **`-race` is mandatory**, not optional, for anything touching concurrency (§5.14),
   the background job queue (§5.10), or migrations (§5.13) — exactly where races hide.
 - **RED-sanity-check bug fixes.** A test for a fixed bug must be shown to fail
