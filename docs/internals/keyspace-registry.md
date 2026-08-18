@@ -25,7 +25,7 @@ an unregistered or colliding prefix as a **blocking** finding.
 | `parts` | Part records (mpn, specs, stock, `via_code`, `version`, …) | §6.1 | `0x10` | **allocated** |
 | `via` | Via-code index (`via_code` → `{type,id}`); uniqueness + resolver | §5.17 | `0x12` | **allocated** |
 | `categories` | category / subcategory (plain-string taxonomy facet, not an enum) | §5.1, §6.2 | — | planned |
-| `locations` | Location records (nested storage, `via_code`) | §6.1, §5.17 | `0x11` | **allocated** |
+| `locations` | Location records (flat — tagged bins, `via_code`) | §6.1, §5.17 | `0x11` | **allocated** |
 | `components` | Component records (Part-at-Location junction): `0x13 \| ws(8) \| LocationID(26) \| PartID(26)` | §6.1 | `0x13` | **allocated** |
 | `ident` | Part-identity uniqueness index (`kind(M\|L) \| ws(8) \| value → partID`); MPN + LocalNumber | §6.1 | `0x14` | **allocated** |
 | `suppliers` | Supplier records + part-number mapping conventions | §6.1 | — | planned |

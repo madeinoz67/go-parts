@@ -14,7 +14,8 @@ retrieval/storage contract.
 | Field | Type | Notes |
 |---|---|---|
 | `ID` | string | ULID, assigned by `Store.Create`; the Pebble key payload |
-| `MPN` | string | manufacturer part number |
+| `LocalNumber` | string | operator's own stock-catalog number (schema v5); unique when non-empty via the `ident` keyspace, exempt when empty |
+| `MPN` | string | manufacturer part number; unique when non-empty via the `ident` keyspace (schema v5) |
 | `Manufacturer` | string | |
 | `Category` | string | plain-string taxonomy facet (not an enum) |
 | `Subcategory` | string | |
@@ -25,14 +26,12 @@ retrieval/storage contract.
 | `Footprint` | string | |
 | `UnitOfMeasure` | string | |
 | `PackageQty` | int | |
-| `QtyOnHand` | int | **stock — `AdjustStock`'s exclusive domain** |
+| `QtyOnHand` | int | **derived stock** — sum of the part's Component quantities across all locations; maintained by the components store's recompute on every stock move, re-derivable offline via `go-parts fix-qty` |
 | `ReorderPoint` | int | |
 | `Tags` | `[]string` | |
 | `CustomFields` | `map[string]string` | |
 | `DatasheetStore` | string | empty until the §5.6 datasheet slice |
 | `DatasheetRef` | string | local path, or go-rag vault doc-id when that gateway is on |
-| `DefaultLocationID` | string | the part's home location (§6.1); `""` = unassigned. When non-empty it references a Location and the `single_part_only` guard rejects assigning to a `SinglePartOnly` location that already holds a different part (`ErrLocationSinglePartConflict`); a missing location returns `ErrLocationNotFound`. Additive (Locations Slice 3a) — no `schema_version` bump. |
-| `DefaultLocationMandatory` | bool | stock for this part may only be added at `DefaultLocationID` (§6.1); enforced on the stock path, carried + round-tripped here. `false` by default; additive. |
 | `CreatedBy` | string | `"local"` in v1 (no auth); caller identity post-auth |
 | `UpdatedBy` | string | mirrors `CreatedBy` |
 | `CreatedAt` | `time.Time` | UTC, set by `Create` |
@@ -58,8 +57,10 @@ from each Part (`indexText`). Weights:
 
 A single physical storage location (PRD §6.1, §7.1). Defined in
 `internal/locations/location.go`, serialized as JSON under the `locations`
-keyspace (`0x11`). Locations model bins/drawers/shelves/boxes (optionally
-nested via `parent_id`), are addressed by a Via code, and are
+keyspace (`0x11`). The model is **flat**: every location is a self-contained
+bin/drawer/shelf/box tagged with its physical context — no parents, no
+nesting. A location's contents are its Components (the stock junction, next
+section). Locations are addressed by a Via code and are
 navigated/scanned — **they are NOT full-text-indexed** (no FTS, unlike parts).
 Optimistic concurrency on `Version` mirrors Part's discipline.
 
@@ -68,10 +69,10 @@ Optimistic concurrency on `Version` mirrors Part's discipline.
 | `ID` | string | ULID, assigned by `Store.Create`; the Pebble key payload |
 | `Label` | string | "Bin A3", "Drawer 12" |
 | `ViaCode` | string | `L-XXXXXX` — random 6-char code, assigned on create (§5.17); immutable post-Create |
-| `ParentID` | string | nested storage; `""` = top-level |
-| `CreationMethod` | string | `single` / `row` / `grid` / `3d_grid` — reference metadata (§7.1) |
-| `SinglePartOnly` | bool | bin dedicated to one part type |
+| `Tags` | `[]string` | physical context (`garage`, `workbench`, …) — the flat model's organizational layer, replacing hierarchy |
+| `CreationMethod` | string | `single` / `row` / `grid` / `3d_grid` — reference metadata (creation-only, §7.1) |
 | `Notes` | string | free text |
+| `Archived` | bool | soft-retire (schema v4): hidden from the default Storage view, restorable — never deletes components |
 | `CreatedBy` | string | `"local"` in v1 (no auth); caller identity post-auth |
 | `CreatedAt` | `time.Time` | UTC, set by `Create` |
 | `UpdatedAt` | `time.Time` | UTC, bumped by `Update` |
@@ -85,14 +86,36 @@ Optimistic concurrency on `Version` mirrors Part's discipline.
 - **No FTS.** Locations are never indexed into the `search_index` keyspace.
   `Store.Create`/`Update`/`Delete` touch only the `locations` keyspace and the
   shared `via` index — never the FTS. There is nothing to reindex.
-- **Delete refuses if the location has children** (`ErrHasChildren`) — the
-  caller must reparent first; never cascade.
-- **`Update` runs a parent-chain cycle guard** before accepting a `parent_id`
-  change (`ErrCycle`). Via-code is immutable post-Create (preserved from the
-  stored record).
+- **Delete refuses if components are still assigned** (`ErrHasParts`) — the
+  caller must un-stock first (`go-parts locations remove-component`); never
+  cascades. The guard composes above the store (CLI/REST/UI over the
+  components store) because locations cannot see the components keyspace
+  (§5.1).
+- Via-code is immutable post-Create (preserved from the stored record).
 
 JSON field names are Go PascalCase — the struct has **no `json:` tags**, same
 convention as Part.
+
+## The Component record (stock junction)
+
+A Component is one part's stock at one location (§6.1) — the flat model's
+only stock carrier. Defined in `internal/components/component.go`, serialized
+as JSON under the `components` keyspace (`0x13`), keyed
+`LocationID(26) | PartID(26)` (one row per pair).
+
+| Field | Type | Notes |
+|---|---|---|
+| `LocationID` | string | the location (bin) |
+| `PartID` | string | the part stocked there |
+| `Quantity` | int | current stock at this location |
+| `Tags` | `[]string` | component-level tags |
+| `History` | `[]Movement` | movement log; each `Movement` = `{Timestamp, Delta, Reason}` — the reason is required on the stock path, and the newest Timestamp drives the UI's per-location last-used |
+| `CreatedAt` / `UpdatedAt` / `Version` | | audit + optimistic concurrency, same discipline as Part |
+
+Writes verify referential integrity BEFORE mutating: the Part must exist
+(`Add`/`AdjustQty` refuse otherwise — no orphan Components, no
+double-counted History on retry). Every stock move appends a Movement and
+re-derives the part's `QtyOnHand` as the sum across its Components.
 
 ## Optimistic concurrency (§5.14)
 
@@ -104,16 +127,19 @@ convention as Part.
   stored version no longer matches. On success the stored version is bumped
   by one and the same bump is reflected on the caller's `*Part`. REST surfaces
   this as `409 Conflict` (`PATCH /parts/{id}`).
-- **`AdjustStock` does NOT bump `Version`.** Stock is a commutative delta
-  (±N) serialized under the per-id striped lock; two concurrent `-10` calls
-  always net `-20`. Because stock isn't an FTS-indexed field, `AdjustStock`
-  touches only the `parts` keyspace — never the FTS.
+- **Stock moves do not run the part-Update path.** Stock is a commutative
+  delta (±N) on the Component, serialized under the component's striped lock
+  (`components.AdjustQty` — CLI `go-parts locations adjust`, UI stock
+  in/out); two concurrent `-10` calls always net `-20`. Each move appends a
+  Movement and re-derives the part's `QtyOnHand` — the `parts` keyspace and
+  the FTS are never touched by the delta itself.
 
 A full-record `Update` **preserves the in-lock `QtyOnHand`** and ignores the
 caller's value (the F3 invariant — a `Get→modify→Update` caller carrying a
-stale `QtyOnHand` must not overwrite a concurrent `AdjustStock` delta, which
-didn't bump `Version` and so wouldn't fail the version check). Stock changes
-go through `POST /parts/{id}/stock`.
+stale `QtyOnHand` must not overwrite a concurrent stock delta, which didn't
+bump `Version` and so wouldn't fail the version check). Stock changes go
+through the Component stock path — CLI `go-parts locations adjust` or the
+UI's stock in/out with a required reason.
 
 ## `schema_version` marker (§5.13)
 
@@ -149,8 +175,10 @@ so every prefix is [registered](../internals/keyspace-registry.md).
 | Keyspace | Byte | Purpose |
 |---|---|---|
 | `parts` | `0x10` | Part records, keyed by ULID |
-| `locations` | `0x11` | Location records (nested storage), keyed by ULID — **no FTS** (navigated/scanned, not full-text-searched) |
+| `locations` | `0x11` | Location records (flat — tagged bins), keyed by ULID — **no FTS** (navigated/scanned, not full-text-searched) |
 | `via` | `0x12` | Via-code index (§5.17) — code → {type, id}; shared spine across entity types |
+| `components` | `0x13` | Component records (Part-at-Location stock junction), keyed `LocationID(26) \| PartID(26)` |
+| `ident` | `0x14` | Part-identity uniqueness index (MPN + LocalNumber, whitespace-trimmed) — value → partID |
 | `meta` | `0xF0` | `schema_version` marker + future migration cursors, sub-keyed by payload (`"schemaver"`) |
 | `search_index` FTS postings | `0x05` | term → id (verbatim shape from go-rag) |
 | `search_index` FTS indexed-set | `0x07` | ids already indexed |

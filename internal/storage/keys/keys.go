@@ -5,7 +5,7 @@ package keys
 
 const (
 	partsPrefix          byte = 0x10
-	locationPrefix       byte = 0x11 // Location records (nested storage)
+	locationPrefix       byte = 0x11 // Location records (flat — tagged bins)
 	metaPrefix           byte = 0xF0
 	viaPrefix            byte = 0x12 // via-code index (code string → {type,id}); §5.17
 	componentPrefix      byte = 0x13 // Component records (Part-at-Location junction); §6.1
