@@ -90,8 +90,8 @@ func TestToolsListGrowsWithTasks(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools/list result.tools missing: %v", out)
 	}
-	if len(tools) != 4 {
-		t.Fatalf("want 4 read tools (Task 2), got %d: %v", len(tools), out)
+	if len(tools) != 6 {
+		t.Fatalf("want 6 tools (Task 3), got %d: %v", len(tools), out)
 	}
 	srv := newTestServer(t)
 	for _, ta := range tools {

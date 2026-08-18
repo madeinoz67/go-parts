@@ -113,11 +113,15 @@ func (s *Server) dispatch(name string, args map[string]any) (string, error) {
 		return s.toolListLowStock(args)
 	case "get_inventory_stats":
 		return s.toolGetInventoryStats(args)
+	case "upsert_part":
+		return s.toolUpsertPart(args)
+	case "adjust_stock":
+		return s.toolAdjustStock(args)
 	}
 	return "", fmt.Errorf("%w: %q", ErrUnknownTool, name)
 }
 
-// toolDefs is the tools/list manifest (read tools; write tools land with Task 3).
+// toolDefs is the tools/list manifest (read tools + write tools).
 func toolDefs() []map[string]any {
 	return []map[string]any{
 		{
@@ -154,6 +158,34 @@ func toolDefs() []map[string]any {
 			"name":        "get_inventory_stats",
 			"description": "Inventory totals: parts_total, locations_total, low_stock, out_of_stock.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		{
+			"name":        "upsert_part",
+			"description": "Create or update a part from a full record (the get_part → edit → upsert loop). Empty ID creates; on update the record's Version field is the concurrency token — a stale Version is rejected with the conflict error, never silently overwritten. QtyOnHand is only set at create; ongoing stock changes go through adjust_stock.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"part"},
+				"properties": map[string]any{
+					"part": map[string]any{
+						"type":        "object",
+						"description": "full Part record with PascalCase fields, same shape get_part returns",
+					},
+				},
+			},
+		},
+		{
+			"name":        "adjust_stock",
+			"description": "Move stock at one location: appends a movement (with your reason) and re-derives the part's total. location is a bin label or L- via-code; if the part isn't stocked there, the error lists where it actually is.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"part", "location", "delta", "reason"},
+				"properties": map[string]any{
+					"part":     map[string]any{"type": "string", "description": "id, P- via-code, mpn, or local_number"},
+					"location": map[string]any{"type": "string", "description": "bin label or L- via-code"},
+					"delta":    map[string]any{"type": "integer", "description": "signed: positive in, negative out"},
+					"reason":   map[string]any{"type": "string"},
+				},
+			},
 		},
 	}
 }

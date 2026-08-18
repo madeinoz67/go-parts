@@ -223,3 +223,134 @@ func TestGetInventoryStats(t *testing.T) {
 		}
 	}
 }
+
+// --- write tools (spec Unit 2) ---
+
+func TestUpsertPartCreates(t *testing.T) {
+	srv := newTestServer(t)
+	txt := toolText(t, srv, "upsert_part", `{"part":{"MPN":"RC0805FR-0710KL","Description":"10k 0805 resistor","QtyOnHand":120,"ReorderPoint":50}}`)
+	var rec map[string]any
+	if err := json.Unmarshal([]byte(txt), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec["ID"] == nil || rec["Version"] != float64(1) || rec["CreatedBy"] != "local" {
+		t.Fatalf("create must return the canonical stored record: %s", txt)
+	}
+	// The created part is immediately retrievable through the read surface.
+	if got := toolText(t, srv, "get_part", `{"mpn":"RC0805FR-0710KL"}`); !strings.Contains(got, `"MPN":"RC0805FR-0710KL"`) {
+		t.Fatalf("created part not readable back: %s", got)
+	}
+}
+
+func TestUpsertPartUpdateRequiresVersion(t *testing.T) {
+	srv := newTestServer(t)
+	created := mustCreate(t, srv, &parts.Part{MPN: "M1", QtyOnHand: 5})
+	errTxt := toolError(t, srv, "upsert_part", `{"part":{"ID":"`+created.ID+`","MPN":"M1"}}`)
+	if !strings.Contains(errTxt, "Version") {
+		t.Fatalf("update without version must say so: %q", errTxt)
+	}
+}
+
+func TestUpsertPartStaleVersionRejected(t *testing.T) {
+	srv := newTestServer(t)
+	created := mustCreate(t, srv, &parts.Part{MPN: "M1", Description: "original", QtyOnHand: 5}) // Version 1
+	// First edit succeeds (v1 → v2).
+	toolText(t, srv, "upsert_part", `{"part":{"ID":"`+created.ID+`","MPN":"M1","Description":"edited","Version":1}}`)
+	// Stale retry at v1 must be REJECTED — never a silent overwrite (§5.14).
+	errTxt := toolError(t, srv, "upsert_part", `{"part":{"ID":"`+created.ID+`","MPN":"M1","Description":"stale write","Version":1}}`)
+	if !strings.Contains(errTxt, "version conflict") {
+		t.Fatalf("stale version must surface the conflict sentinel: %q", errTxt)
+	}
+	fresh, _ := srv.store.Get(created.ID)
+	if fresh.Description != "edited" || fresh.Version != 2 {
+		t.Fatalf("stale write leaked: description=%q version=%d", fresh.Description, fresh.Version)
+	}
+}
+
+func TestUpsertPartDuplicateMPNRejected(t *testing.T) {
+	srv := newTestServer(t)
+	mustCreate(t, srv, &parts.Part{MPN: "DUP"})
+	errTxt := toolError(t, srv, "upsert_part", `{"part":{"MPN":"DUP"}}`)
+	if !strings.Contains(errTxt, "parts: duplicate mpn") {
+		t.Fatalf("identity sentinel verbatim: %q", errTxt)
+	}
+}
+
+func TestAdjustStockHappyPath(t *testing.T) {
+	srv := newTestServer(t)
+	part := mustCreate(t, srv, &parts.Part{MPN: "M1", QtyOnHand: 5})
+	loc := &locations.Location{Label: "Bin A3"}
+	if err := srv.locations.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.components.Add(loc.ID, part.ID, 5, nil); err != nil {
+		t.Fatal(err)
+	}
+	txt := toolText(t, srv, "adjust_stock", `{"part":"M1","location":"Bin A3","delta":-2,"reason":"used two"}`)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(txt), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["part_qty_on_hand"] != float64(3) {
+		t.Fatalf("AdjustQty must re-derive part qty (recomputePartQty path): %s", txt)
+	}
+	comp, _ := got["component"].(map[string]any)
+	if comp == nil || comp["Quantity"] != float64(3) {
+		t.Fatalf("component quantity: %s", txt)
+	}
+	mov, _ := got["movement"].(map[string]any)
+	if mov == nil || mov["Delta"] != float64(-2) || mov["Reason"] != "used two" {
+		t.Fatalf("movement recorded: %s", txt)
+	}
+}
+
+func TestAdjustStockNotStockedThere(t *testing.T) {
+	srv := newTestServer(t)
+	part := mustCreate(t, srv, &parts.Part{MPN: "M1", QtyOnHand: 5})
+	stocked := &locations.Location{Label: "Bin A3"}
+	empty := &locations.Location{Label: "Drawer 9"}
+	if err := srv.locations.Create(stocked); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.locations.Create(empty); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.components.Add(stocked.ID, part.ID, 5, nil); err != nil {
+		t.Fatal(err)
+	}
+	errTxt := toolError(t, srv, "adjust_stock", `{"part":"M1","location":"Drawer 9","delta":1,"reason":"x"}`)
+	if !strings.Contains(errTxt, "not stocked at") || !strings.Contains(errTxt, "Bin A3") {
+		t.Fatalf("error must name the part's ACTUAL stocked locations: %q", errTxt)
+	}
+}
+
+func TestAdjustStockUnknownLocation(t *testing.T) {
+	srv := newTestServer(t)
+	mustCreate(t, srv, &parts.Part{MPN: "M1"})
+	errTxt := toolError(t, srv, "adjust_stock", `{"part":"M1","location":"nowhere","delta":1,"reason":"x"}`)
+	if !strings.Contains(errTxt, "locations: not found") {
+		t.Fatalf("unknown location sentinel: %q", errTxt)
+	}
+}
+
+func TestAdjustStockAmbiguousLabel(t *testing.T) {
+	srv := newTestServer(t)
+	mustCreate(t, srv, &parts.Part{MPN: "M1"})
+	for range 2 {
+		if err := srv.locations.Create(&locations.Location{Label: "Bench"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	errTxt := toolError(t, srv, "adjust_stock", `{"part":"M1","location":"Bench","delta":1,"reason":"x"}`)
+	if !strings.Contains(errTxt, "matches 2 locations") || !strings.Contains(errTxt, "L-") {
+		t.Fatalf("ambiguous label must list via-codes: %q", errTxt)
+	}
+}
+
+func TestAdjustStockRequiresAllArguments(t *testing.T) {
+	srv := newTestServer(t)
+	errTxt := toolError(t, srv, "adjust_stock", `{"part":"M1","location":"x","delta":1}`)
+	if !strings.Contains(errTxt, "required") {
+		t.Fatalf("missing reason is a usage error: %q", errTxt)
+	}
+}

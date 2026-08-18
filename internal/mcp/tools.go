@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/madeinoz67/go-parts/internal/components"
+	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
 )
 
@@ -221,4 +222,133 @@ func render(v any) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// --- write tools (spec Unit 2) ---
+
+// resolveLocation resolves a location selector: "L-" via-code (ByVia) or an
+// exact Label match over List(). Labels are NOT unique (only ViaCode is), so
+// an ambiguous label errors listing every candidate's via-code — never a
+// silent pick (spec: disambiguation is errors, not defaults).
+func (s *Server) resolveLocation(sel string) (*locations.Location, error) {
+	if sel == "" {
+		return nil, errors.New("location selector is empty")
+	}
+	if strings.HasPrefix(sel, "L-") {
+		return s.locations.ByVia(sel)
+	}
+	var matches []*locations.Location
+	for _, l := range s.locations.List() {
+		if l.Label == sel {
+			matches = append(matches, l)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return nil, fmt.Errorf("no location matches %q: %w", sel, locations.ErrNotFound)
+	}
+	names := make([]string, len(matches))
+	for i, l := range matches {
+		names[i] = l.Label + " (" + l.ViaCode + ")"
+	}
+	return nil, fmt.Errorf("label %q matches %d locations — pass the via-code: %s", sel, len(matches), strings.Join(names, ", "))
+}
+
+// stockedLabelList renders "Label (L-code)" strings for error messages.
+func (s *Server) stockedLabelList(partID string) []string {
+	entries := s.stockedLabels(partID)
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = fmt.Sprintf("%v (%v)", e["label"], e["via_code"])
+	}
+	return out
+}
+
+// toolUpsertPart is the full-record upsert: an empty ID creates; otherwise the
+// record's Version field IS the optimistic-concurrency token (the agent's
+// get_part → edit → upsert loop; REST expresses the same §5.14 discipline via
+// If-Match). Stale versions get the store's conflict sentinel verbatim.
+// QtyOnHand in the body is authoritative ONLY on create — Store.Update
+// preserves the in-lock server-side value (F3: stock is adjust_stock's domain).
+func (s *Server) toolUpsertPart(args map[string]any) (string, error) {
+	raw, ok := args["part"].(map[string]any)
+	if !ok {
+		return "", errors.New(`"part" object is required (PascalCase fields, same shape get_part returns)`)
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return "", err
+	}
+	var p parts.Part
+	if err := json.Unmarshal(b, &p); err != nil {
+		return "", fmt.Errorf("part fields: %v (PascalCase keys, same as REST)", err)
+	}
+	if p.ID == "" {
+		if err := s.store.Create(&p); err != nil {
+			return "", err
+		}
+	} else {
+		if p.Version < 1 {
+			return "", errors.New("update requires the part's current Version — fetch via get_part; stale versions are rejected")
+		}
+		if err := s.store.Update(&p, p.Version); err != nil {
+			return "", err
+		}
+	}
+	fresh, err := s.store.Get(p.ID)
+	if err != nil {
+		return "", err
+	}
+	return render(fresh)
+}
+
+// toolAdjustStock moves stock at ONE location: it requires an explicit
+// location (label or L- via-code) and a reason, appends a Movement via
+// components.AdjustQty (which re-derives Part.QtyOnHand — the engine's own
+// recomputePartQty path), and errors listing the part's actual stocked
+// locations when the part isn't stocked at the requested one.
+func (s *Server) toolAdjustStock(args map[string]any) (string, error) {
+	partSel := argStr(args, "part")
+	locSel := argStr(args, "location")
+	reason := argStr(args, "reason")
+	delta, haveDelta := argInt(args, "delta")
+	if partSel == "" || locSel == "" || reason == "" || !haveDelta {
+		return "", errors.New("part, location, delta, and reason are all required")
+	}
+	matches, err := s.resolvePart(partSel)
+	if err != nil {
+		return "", err
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("part selector matches %d parts — pass the exact id", len(matches))
+	}
+	p := matches[0]
+	loc, err := s.resolveLocation(locSel)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.components.Get(loc.ID, p.ID); err != nil {
+		return "", fmt.Errorf("part %s (%s) is not stocked at %s — stocked at: %s",
+			p.MPN, p.ID, loc.Label, strings.Join(s.stockedLabelList(p.ID), ", "))
+	}
+	if err := s.components.AdjustQty(loc.ID, p.ID, delta, reason); err != nil {
+		return "", err
+	}
+	comp, err := s.components.Get(loc.ID, p.ID)
+	if err != nil {
+		return "", err
+	}
+	fresh, err := s.store.Get(p.ID)
+	if err != nil {
+		return "", err
+	}
+	mov := components.Movement{}
+	if len(comp.History) > 0 {
+		mov = comp.History[len(comp.History)-1]
+	}
+	return render(map[string]any{
+		"movement": mov, "component": comp, "part_qty_on_hand": fresh.QtyOnHand,
+	})
 }
