@@ -1156,10 +1156,17 @@ func TestLocationTagFilter(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/ui/locations/search?tag=garage", nil))
 	body := rr.Body.String()
-	if !strings.Contains(body, "G1") {
+	// Assert on the label CELL (rendered as ">G1<"), never a bare substring:
+	// Crockford-base32 ULIDs contain both letters and digits, so a bare "W1"
+	// can occur INSIDE a rendered row id — this test flaked in CI (run
+	// 32181102011) when G1's id randomly ended "…SETW14687", tripping the
+	// leak assertion on a correctly-filtered body. Cell-delimited forms
+	// cannot appear inside an attribute value (same convention as >SRCH1<,
+	// >ArchA<, >R-001< elsewhere in this file).
+	if !strings.Contains(body, ">G1<") {
 		t.Errorf("?tag=garage should show G1; body=%s", body)
 	}
-	if strings.Contains(body, "W1") {
+	if strings.Contains(body, ">W1<") {
 		t.Errorf("?tag=garage should not leak the workbench row; body=%s", body)
 	}
 }
