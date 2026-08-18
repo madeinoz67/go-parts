@@ -2,17 +2,18 @@
 // stdlib net/http ServeMux using Go 1.26 method-patterns (no chi/gin/echo).
 //
 // This is the first MULTI-WRITER surface over the parts keyspace (Task 10):
-// every mutating HTTP request lands on parts.Store.Update / AdjustStock /
-// Create / Delete, all of which are §5.14-safe (per-id striped locks +
-// optimistic Version). The handlers here are deliberately thin — they marshal
-// JSON and route status codes; every concurrency-sensitive decision is made
-// below this layer in Store.
+// every mutating HTTP request lands on parts.Store.Update / Create / Delete
+// or the components stock path, all of which are §5.14-safe (per-id striped
+// locks + optimistic Version). The handlers here are deliberately thin — they
+// marshal JSON and route status codes; every concurrency-sensitive decision is
+// made below this layer in Store.
 //
 // v1 = no-op auth middleware seam (PRD §5.8): every request passes through one
 // interceptor point (`Server.auth`), so makerspace auth is additive later
-// rather than a rewrite. Stock is AdjustStock's exclusive domain — the PATCH
+// rather than a rewrite. Stock is the components store's domain — the PATCH
 // handler does NOT touch QtyOnHand even if the body carries one (Store.Update
-// enforces this server-side as the F3 invariant; the handler documents it).
+// preserves the in-lock value server-side as the F3 invariant; the handler
+// documents it).
 package rest
 
 import (
@@ -230,9 +231,9 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 //     is the consistent F3-decision shape.
 //
 //  2. STOCK IS NOT EDITABLE HERE. Update preserves cur.QtyOnHand server-side
-//     (F3 invariant — stock is AdjustStock-only; §5.14). Even if the PATCH
-//     body carries QtyOnHand it has no effect. Stock changes go to
-//     POST /parts/{id}/stock.
+//     (F3 invariant — stock is the components store's domain; §5.14). Even if
+//     the PATCH body carries QtyOnHand it has no effect. Stock changes go to
+//     PATCH /locations/{id}/components/{partId}.
 //
 // If-Match is REQUIRED: a missing header is 428 Precondition Required; a stale
 // version (the loaded version no longer matches the stored version under the

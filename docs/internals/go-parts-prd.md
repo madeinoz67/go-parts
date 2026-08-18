@@ -26,7 +26,7 @@ Follows the same low-friction philosophy as **go-rag** and **MuninnDB**: one bin
 - **REST API** for programmatic access, web frontend, and integrations (KiCAD plugin, barcode scanner)
 - Minimal **embedded web UI** served from the same binary — no separate frontend build/deploy
 - **Terminal UI (TUI)** — `go-parts tui` subcommand for search/browse/stock-adjust straight from the command line, no browser required (§5.11)
-- Physical **location/bin tracking** suited to a workshop/homelab (drawer, bin, shelf, box, nested)
+- Physical **location/bin tracking** suited to a workshop/homelab (drawer, bin, shelf, box — flat, tagged by physical context)
 - **BOM import/export** for KiCAD projects
 - Backup-friendly (flat file / Pebble snapshot) — compatible with your existing Backblaze B2 + Backrest pattern
 - Optional **gateway to go-rag and MuninnDB** so parts data joins your broader personal knowledge/RAG/memory ecosystem rather than sitting in a silo
@@ -877,7 +877,10 @@ GET    /parts/{id}                 (returns ETag header — §5.14)
 POST   /parts
 PATCH  /parts/{id}                 (requires If-Match: <etag> — rejects on version conflict, §5.14)
 DELETE /parts/{id}
-POST   /parts/{id}/stock           (delta-based, no version required — §5.14)
+GET    /locations/{id}/components   (a bin's contents — part refs, quantities, history)
+POST   /locations/{id}/components   (stock a part into a location; 409 on duplicate pair)
+PATCH  /locations/{id}/components/{partId} (stock in/out — commutative delta + reason, no version required, §5.14)
+DELETE /locations/{id}/components/{partId} (un-stock; the part record is untouched)
 GET    /tags                       (live list with counts, powers the sidebar — §5.7)
 PATCH  /tags/{tag}                 (rename everywhere it's used, or {merge_into: "other-tag"} — §5.7, admin-only in Phase 8)
 GET    /manufacturers              (live list, powers autocomplete — §5.22, same shape as /tags)
@@ -909,7 +912,7 @@ POST   /builds
 GET    /projects/{id}/builds
 POST   /shopping-lists             ({project_id, build_qty} or {below_reorder_threshold: true})
 GET    /shopping-lists/{id}        (entries with quantity_wanted = BOM qty − on-hand, or reorder gap)
-POST   /parts/{id}/stock           (vendor + unit_price fields optional — logging a purchase is the same call as adjusting stock, §5.14)
+PATCH  /locations/{id}/components/{partId} (planned: vendor + unit_price fields optional — logging a purchase becomes the same call as a stock-in, §5.14)
 GET    /purchases                  (?part_id= or ?vendor= — cost history)
 ```
 

@@ -1,9 +1,9 @@
 # REST API
 
 The REST surface is a stdlib `net/http` `ServeMux` over one `parts.Store` +
-one field-weighted BM25 FTS (`internal/rest/server.go`). Go 1.26
-method-patterns make the routing table executable documentation; `{id}` is
-read via `r.PathValue`.
+one field-weighted BM25 FTS, the locations/components stores, and the shared
+via index (`internal/rest/server.go`). Go 1.26 method-patterns make the
+routing table executable documentation; `{id}` is read via `r.PathValue`.
 
 v1 has a **no-op auth middleware seam** (`Server.auth`, PRD §5.8): every
 request passes through one interceptor point so makerspace auth is additive
@@ -16,19 +16,22 @@ later rather than a rewrite. There is no auth in v1.
 | `GET` | `/healthz` | `200` | liveness probe; returns text/plain `ok`, no store touch |
 | `GET` | `/stats` | `200` | `{"parts_total": N}` via `Store.Count()` |
 | `GET` | `/parts?q=…` | `200` | BM25 search (FTS); empty/absent `q` → empty list |
-| `POST` | `/parts` | `201` (+`ETag`) / `400` / `409` / `500` | create; caller MUST NOT set `ID`/`Version`/audit. `400` if `DefaultLocationID` references a missing location; `409` if it targets an occupied `SinglePartOnly` location (Slice 3b) |
+| `POST` | `/parts` | `201` (+`ETag`) / `400` / `409` / `500` | create; caller MUST NOT set `ID`/`Version`/audit. `409` if the `MPN` or `LocalNumber` is already taken (identity uniqueness, schema v5) |
 | `GET` | `/parts/{id}` | `200` (+`ETag`) / `404` | one part by ID |
-| `PATCH` | `/parts/{id}` | `200` (+`ETag`) / `428` / `400` / `404` / `409` | edit; `If-Match` required |
-| `DELETE` | `/parts/{id}` | `204` / `404` | remove record + FTS entry |
-| `POST` | `/parts/{id}/stock` | `200` (+`ETag`) / `400` / `404` | commutative stock delta |
-| `GET` | `/via/{code}` | `200` / `404` | generic Via resolver (§5.17, Slice 4): location → `{Type,Location,Contents}`; part → `{Type,Part}` |
+| `PATCH` | `/parts/{id}` | `200` (+`ETag`) / `428` / `400` / `404` / `409` | edit; `If-Match` required. `409` = version conflict **or** taken identity |
+| `DELETE` | `/parts/{id}` | `204` / `404` / `409` | remove record + FTS entry; `409` if Components still reference it (`ErrHasComponents` — un-stock first) |
+| `GET` | `/via/{code}` | `200` / `303` / `404` | generic Via resolver (§5.17): location → `{Type,Location,Contents}`; part → `{Type,Part}`; browsers get `303` → UI deep-link |
 | `POST` | `/parts/{id}/label` | `200` (`image/svg+xml`) / `404` | render the part's scannable label SVG; `{id}` accepts a part id **or** a `P-` via-code |
 | `POST` | `/locations/{id}/label` | `200` (`image/svg+xml`) / `404` | render the location's label SVG; `{id}` accepts a location id **or** an `L-` via-code |
 | `GET` | `/locations` | `200` | list every location (JSON array) |
 | `GET` | `/locations/{id}` | `200` (+`ETag`) / `404` | one location by ID |
 | `POST` | `/locations` | `201` (+`ETag`) / `400` | create; caller MUST NOT set `ID`/`Version`/`CreatedBy` |
-| `PATCH` | `/locations/{id}` | `200` (+`ETag`) / `400` / `409` | RFC 7396 edit (`Label`/`ParentID`/`Notes`/`SinglePartOnly`); `If-Match` required. `409` on cycle or version conflict |
-| `DELETE` | `/locations/{id}` | `204` / `404` / `409` | remove; `409` if has children (`ErrHasChildren`) or assigned parts (`ErrHasParts`) |
+| `PATCH` | `/locations/{id}` | `200` (+`ETag`) / `400` / `404` / `409` | RFC 7396 edit (`Label`/`Notes`/`Tags`); `ViaCode` immutable; `If-Match` required; `409` on version conflict |
+| `DELETE` | `/locations/{id}` | `204` / `404` / `409` | remove; `409` if Components are still assigned (`ErrHasParts` — un-stock first) |
+| `GET` | `/locations/{id}/components` | `200` | list the bin's components (part ref, quantity, tags, movement history) |
+| `POST` | `/locations/{id}/components` | `201` / `400` / `409` / `500` | stock a part into the bin — body `{"PartID","Quantity","Tags"}`; `409` if the pair already exists (`ErrDuplicate`); a missing Part record is refused by the referential-integrity guard |
+| `PATCH` | `/locations/{id}/components/{partId}` | `200` / `400` / `404` | stock in/out — body `{"Delta","Reason"}`; appends a Movement, re-derives the part's `QtyOnHand` |
+| `DELETE` | `/locations/{id}/components/{partId}` | `204` / `404` | remove the component row (un-stock; the part record is untouched) |
 
 All bodies are `application/json`.
 
@@ -36,9 +39,9 @@ All bodies are `application/json`.
 
 Optimistic concurrency (§5.14) is exposed via `ETag` and `If-Match`:
 
-- **`ETag`** — emitted on every Part-bearing response (`POST` `201`, `GET`
-  `/parts/{id}`, `PATCH` `200`, `POST /parts/{id}/stock` `200`). Format: a
-  quoted integer = the Part's `Version` — e.g. `"3"`.
+- **`ETag`** — emitted on every record-bearing response (parts `POST`/`GET`/
+  `PATCH`; locations `POST`/`GET`/`PATCH`). Format: a quoted integer = the
+  record's `Version` — e.g. `"3"`.
 - **`If-Match`** — **required** on `PATCH`. Send the `ETag` value you got
   from a prior `GET`.
   - Missing header → `428 Precondition Required`.
@@ -48,50 +51,61 @@ Optimistic concurrency (§5.14) is exposed via `ETag` and `If-Match`:
   - The loaded version no longer matches the in-lock stored version →
     `409 Conflict` — **never silently overwritten**.
 
-`POST /parts/{id}/stock` does **not** require `If-Match`: stock adjustment is
-a commutative delta that does not bump `Version` (§5.14). The response's
-`ETag` is pinned to the unchanged `Version`.
+Stock moves (`PATCH /locations/{id}/components/{partId}`) do not require
+`If-Match`: a stock delta is commutative and does not run the record-Update
+path (§5.14).
 
 ## PATCH semantics
 
-`PATCH` does **Get-then-edit**: the handler loads the current part, copies
-writable fields from the patch body onto it (zero-means-skip per field), then
-`Store.Update(loaded, currentVersion)`. This round-trips `CreatedAt`/
-`CreatedBy` (a bare `Update` would zero them).
+`PATCH` does **Get-then-edit**: the handler loads the current record, copies
+writable fields from the patch body onto it, then `Store.Update(loaded,
+currentVersion)`. This round-trips `CreatedAt`/`CreatedBy` (a bare `Update`
+would zero them).
 
-**Stock is not editable on `PATCH`** — the F3 invariant (§5.14): `QtyOnHand`
-is `AdjustStock`'s exclusive domain. The handler never copies `QtyOnHand`
-from the patch body, and `Store.Update` preserves the in-lock `cur.QtyOnHand`
-server-side. Even a patch body carrying `QtyOnHand` has no effect. Stock
-changes go to `POST /parts/{id}/stock`.
+**Stock is not editable on part `PATCH`** — the F3 invariant (§5.14):
+`QtyOnHand` is derived from the part's Components. The handler never copies
+`QtyOnHand` from the patch body, and `Store.Update` preserves the in-lock
+`cur.QtyOnHand` server-side. Even a patch body carrying `QtyOnHand` has no
+effect. Stock changes go through the component endpoints (or CLI
+`go-parts locations adjust` / the UI's stock in-out).
 
 Authoritative fields never taken from the patch body: `ID`, `Version`,
 `QtyOnHand`, `CreatedAt`/`CreatedBy`, `UpdatedAt`/`UpdatedBy`.
 
-**Patch semantics are RFC 7396 JSON Merge Patch** (RedTeam fix): a key PRESENT
-in the body overwrites (non-null) or clears (JSON `null` → the field's zero
-value); an ABSENT key is left unchanged. So `"Description":null` clears,
-`"ReorderPoint":null` resets to 0, `"Tags":null` empties, `"DefaultLocationID":null`
-unassigns. (The old zero-means-skip rule could not clear fields; PATCH silently
-dropped the operation — a §2 violation.) `DefaultLocationID` assignment runs the
-`single_part_only` guard in `Store.Update`: `409 Conflict` if the target is a
-`SinglePartOnly` location already holding a different part; `400 Bad Request` if
-the id references no location.
+**Patch semantics are RFC 7396 JSON Merge Patch**: a key PRESENT in the body
+overwrites (non-null) or clears (JSON `null` → the field's zero value); an
+ABSENT key is left unchanged. So `"Description":null` clears,
+`"ReorderPoint":null` resets to 0, `"Tags":null` empties. Writable part
+fields: `MPN`, `LocalNumber`, `Manufacturer`, `Category`, `Subcategory`,
+`PartType`, `Description`, `Footprint`, `UnitOfMeasure`, `DatasheetRef`,
+`PackageQty`, `ReorderPoint`, `Tags`, `Specs`, `CustomFields`.
 
-**Two distinct `409 Conflict` cases on PATCH** (both surface as 409; the
-response body distinguishes them): (1) the `expectedVersion` no longer matches
-the in-lock stored version — the §5.14 optimistic-concurrency race, "edited
-elsewhere"; (2) a `DefaultLocationID` assignment that trips the
-`single_part_only` guard, "that bin holds another part". A client should read
-the body to tell them apart.
+**Two distinct `409 Conflict` cases on part `PATCH`** (both surface as 409;
+the response body distinguishes them): (1) the `expectedVersion` no longer
+matches the in-lock stored version — the §5.14 optimistic-concurrency race,
+"edited elsewhere"; (2) the patched `MPN`/`LocalNumber` is already taken by
+another part (schema v5 identity uniqueness). A client should read the body
+to tell them apart.
 
-## Stock endpoint
+## Components (stock) endpoints
 
-`POST /parts/{id}/stock` with body `{"Delta": <int>}` (Go field name — no
-`json:` tags). Applies a commutative delta to `QtyOnHand` under the per-id
-striped lock; returns the updated Part so callers see the new `QtyOnHand`
-without a follow-up `GET`. Empty body is treated as `Delta=0` (no-op). A
-missing Part → `404`.
+Stock lives on Component rows — one per (location, part) pair, keyed
+`LocationID(26) | PartID(26)` (see the
+[data model](data-model.md#the-component-record-stock-junction)):
+
+- `GET /locations/{id}/components` — the bin's contents: part ref, quantity,
+  tags, and the full movement history.
+- `POST /locations/{id}/components` — body
+  `{"PartID":"…","Quantity":N,"Tags":[…]}` (Go field names — no `json:`
+  tags). The Part must exist (referential-integrity guard — no orphan
+  Components). `409` if the pair already exists; use PATCH for quantities.
+- `PATCH /locations/{id}/components/{partId}` — body `{"Delta":N,"Reason":"…"}`.
+  A commutative delta under the component's striped lock; each move appends a
+  `Movement{Timestamp, Delta, Reason}` and re-derives the part's `QtyOnHand`
+  as the sum across its Components. Returns the updated component. A missing
+  pair → `404`.
+- `DELETE /locations/{id}/components/{partId}` — removes the row (un-stock).
+  The part record itself is untouched.
 
 ## JSON field names — Go PascalCase
 
@@ -113,20 +127,26 @@ the FTS read and the hydrate (a benign race — the FTS is eventually
 consistent), that hit is skipped. An empty or absent `q` returns an empty
 list (the tokenizer drops everything → search returns nil).
 
-## Via resolver + labels (§5.17, Slice 4)
+## Via resolver + labels (§5.17)
 
 `GET /via/{code}` is the **generic** Via resolver — one endpoint, not one per
 entity. It dispatches on the via index's type tag and returns a `Resolved`
 object (PascalCase, no json tags):
 
-- **location** → `{Type:"location", Location:{…}, Contents:[{…part…}]}`. The
-  embedded `Contents` IS scan-to-find — the parts whose `DefaultLocationID`
-  points at this location (`parts.ListByLocation`). `Contents` is `null` when
-  the location holds no parts.
+- **location** → `{Type:"location", Location:{…}, Contents:[{…component…}]}`.
+  The embedded `Contents` IS scan-to-find — the Components stocked at this
+  location (part + quantity). `Contents` is `null`/empty when the bin holds
+  no stock.
 - **part** → `{Type:"part", Part:{…}}`.
 - unknown code → `404` (`via.ErrNotFound`).
 
-**Browser redirect (Slice 6, content-negotiation):** a client sending `Accept: text/html` (a browser scanning the QR) is `303`-redirected to the entity's UI deep-link — a part → `/ui/?part={id}`, a location → `/ui/locations?loc={id}`. API clients (`Accept: application/json`, or curl's `*/*`) still get the JSON above. So the QR's encoded `/via/{code}` URL serves both a browser scan (lands on the entity open in the UI) and an API call, without a separate endpoint or re-cutting labels.
+**Browser redirect (content-negotiation):** a client sending `Accept: text/html`
+(a browser scanning the QR) is `303`-redirected to the entity's UI deep-link —
+a part → `/ui/?part={id}`, a location → `/ui/locations?loc={id}`. API clients
+(`Accept: application/json`, or curl's `*/*`) still get the JSON above. So the
+QR's encoded `/via/{code}` URL serves both a browser scan (lands on the entity
+open in the UI) and an API call, without a separate endpoint or re-cutting
+labels.
 
 `POST /parts/{id}/label` and `POST /locations/{id}/label` render a black-on-
 white scannable **SVG label** (`Content-Type: image/svg+xml`). The QR encodes
@@ -137,7 +157,9 @@ entity's via-code (`P-`/`L-`).
 
 **`public_base_url`** (config.json, non-secret §5.18) is the base for the QR
 URL. When unset, the REST label endpoints derive it from the request's
-`scheme://host`; the CLI `locations label` derives it from config and, with no
-base configured, encodes the relative `/via/{code}` (a scanner gets a path —
-less useful but not broken). Physical printing (page layout, the OS print
-dialog) is a client concern; go-parts renders the SVG, not a print driver.
+`scheme://host` **only for loopback hosts** (a Host-header-poisoning guard); on
+a non-loopback bind without a configured base the QR encodes the relative
+`/via/{code}` (safe but less useful — set `public_base_url`). The CLI
+`locations label` derives it from config the same way. Physical printing (page
+layout, the OS print dialog) is a client concern; go-parts renders the SVG,
+not a print driver.

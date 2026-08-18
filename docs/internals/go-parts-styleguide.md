@@ -172,7 +172,7 @@ Custom line-art SVGs styled as schematic symbols — resistor zigzag, capacitor 
 ### Via mobile landing page
 - Single column, not the three-column desktop shell — a scanned Via (PRD §5.24) loads a minimal task-focused view, not the full app
 - Minimal top bar: wordmark + a "full app" link only, no six-item top nav
-- Location: breadcrumb above the label if nested, then tappable list of contents (MPN, description, `--phosphor` quantity) — tap a row to open its quantity stepper directly
+- Location: the label, then a tappable list of contents (MPN, description, `--phosphor` quantity) — tap a row to open its quantity stepper directly
 - Part: detail view with the quantity stepper front and center, same component as desktop, larger tap target underneath
 - Stepper `+`/`−` touch targets are sized for a thumb, not a mouse — same visual treatment as the desktop stepper, bigger hit area
 
