@@ -96,6 +96,17 @@ services, multiple protocol surfaces over a shared embedded store.
   diverges from go-rag's** single-author "commit straight to main" model — go-parts
   uses a develop/main split. Default working branch is `develop`.
 - **Conventional commits** (parsed by `cliff.toml` → CHANGELOG).
+- **REST, RPC, and the TUI are first-class surfaces: feature work carries every one
+  of them wherever it can express the change (principal directive, 2026-08-19).** A
+  new engine capability ships with its REST route in the same arc — the API is never
+  the laggard behind the Web UI. For the TUI, core workflows (search/browse, part
+  detail, stock adjust, low-stock — §5.11's v1 scope) land in the same arc or the
+  PR/commit states why not; the bar is NOT web parity (§5.11 scopes images, builds,
+  purchase lists, and rich forms web-only, accepted — the test is "could a keyboard
+  express this?", not "does the web UI have it?"). RPC is Phase 4 and unbuilt. Until
+  the TUI and RPC arcs ship, the binding form is: new features must not deepen those
+  gaps — surface the gap in the PR, don't accrue it silently; once each ships, the
+  same-arc obligation applies to it exactly as it does to REST.
 
 ## 4. Findings that outlive the session
 
