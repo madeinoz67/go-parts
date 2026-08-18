@@ -85,22 +85,24 @@ func TestInitialize(t *testing.T) {
 }
 
 func TestToolsListGrowsWithTasks(t *testing.T) {
-	// Task 1: no tools yet. Task 2 updates the want to the four read tools;
-	// Task 3 to all six. The test pins that tools/list and dispatch agree —
-	// a tool advertised but not dispatched (or vice versa) is a finding.
 	_, out := call(t, newTestServer(t), `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	tools, ok := resultOf(t, out, "tools").([]any)
 	if !ok {
 		t.Fatalf("tools/list result.tools missing: %v", out)
 	}
+	if len(tools) != 4 {
+		t.Fatalf("want 4 read tools (Task 2), got %d: %v", len(tools), out)
+	}
+	srv := newTestServer(t)
 	for _, ta := range tools {
 		td := ta.(map[string]any)
 		name, _ := td["name"].(string)
-		// Every advertised tool must dispatch (here: to a real handler, not
-		// unknown-tool). With zero tools the loop body never runs — green.
-		_, out2 := call(t, newTestServer(t), `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"`+name+`","arguments":{}}}`)
-		if errObj, hasErr := out2["error"]; hasErr {
-			t.Errorf("tools/list advertises %q but tools/call errors: %v", name, errObj)
+		if td["description"] == nil || td["inputSchema"] == nil {
+			t.Errorf("tool %q missing description/inputSchema", name)
+		}
+		_, out2 := call(t, srv, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"`+name+`","arguments":{}}}`)
+		if _, hasErr := out2["error"]; hasErr {
+			t.Errorf("tools/list advertises %q but tools/call errors", name)
 		}
 	}
 }

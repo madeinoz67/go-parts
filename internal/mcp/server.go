@@ -102,16 +102,60 @@ func (s *Server) callTool(req rpcReq) any {
 	})
 }
 
-// dispatch routes a tool call to its renderer. Task 1 ships the envelope with
-// zero tools; read tools land in Task 2 and write tools in Task 3.
+// dispatch routes a tool call to its renderer.
 func (s *Server) dispatch(name string, args map[string]any) (string, error) {
-	_ = args
+	switch name {
+	case "search_parts":
+		return s.toolSearchParts(args)
+	case "get_part":
+		return s.toolGetPart(args)
+	case "list_low_stock":
+		return s.toolListLowStock(args)
+	case "get_inventory_stats":
+		return s.toolGetInventoryStats(args)
+	}
 	return "", fmt.Errorf("%w: %q", ErrUnknownTool, name)
 }
 
-// toolDefs is the tools/list manifest. Grows with each task.
+// toolDefs is the tools/list manifest (read tools; write tools land with Task 3).
 func toolDefs() []map[string]any {
-	return []map[string]any{}
+	return []map[string]any{
+		{
+			"name":        "search_parts",
+			"description": "Search the parts inventory (BM25 full-text, same search as the web UI). Empty query lists the corpus; optional tag and low-stock filters.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query": map[string]any{"type": "string", "description": "free-text search (mpn, description, specs...)"},
+					"tag":   map[string]any{"type": "string"},
+					"low":   map[string]any{"type": "boolean", "description": "keep only parts at/below their reorder point"},
+					"limit": map[string]any{"type": "integer", "default": 20, "maximum": 100},
+				},
+			},
+		},
+		{
+			"name":        "get_part",
+			"description": "Full part record (PascalCase fields) plus per-location stock and the 10 most recent stock movements. Selector: id, P- via-code, mpn, or local_number.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"id":           map[string]any{"type": "string"},
+					"mpn":          map[string]any{"type": "string"},
+					"local_number": map[string]any{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "list_low_stock",
+			"description": "Parts at or below their reorder point (QtyOnHand <= ReorderPoint).",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		{
+			"name":        "get_inventory_stats",
+			"description": "Inventory totals: parts_total, locations_total, low_stock, out_of_stock.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+	}
 }
 
 // --- JSON-RPC helpers (go-rag's shape) ---
