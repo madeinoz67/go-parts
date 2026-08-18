@@ -96,11 +96,20 @@ func (s *Store) lockFor(partID string) *sync.Mutex {
 // The entire check-then-create-then-recompute is serialized under
 // lockFor(partID) so two concurrent Adds at the same (locID, partID) cannot
 // both pass the duplicate check (TOCTOU), and the recompute sees a consistent
-// Component set.
+// Component set. The Part's existence is verified BEFORE the Component write,
+// so a bad partID can never leave an orphaned Component behind.
 func (s *Store) Add(locID, partID string, qty int, tags []string) error {
 	mu := s.lockFor(partID)
 	mu.Lock()
 	defer mu.Unlock()
+
+	// Referential integrity BEFORE any write: the Part must exist, or we'd
+	// persist a Component whose recomputePartQty call can only fail — an
+	// orphan whose retry then lands on ErrDuplicate. parts.Get is a bare
+	// Pebble read, so this adds no lock (ordering unchanged).
+	if _, err := s.parts.Get(partID); err != nil {
+		return fmt.Errorf("components: add %s/%s: %w", locID, partID, err)
+	}
 
 	var ws [8]byte
 	key := keys.ComponentKey(ws, locID, partID)
@@ -197,6 +206,14 @@ func (s *Store) AdjustQty(locID, partID string, delta int, reason string) error 
 	if err != nil {
 		return err
 	}
+	// Referential integrity BEFORE mutation: a Component whose Part is gone is
+	// pre-guard orphan data — adjusting it would append History + write first,
+	// then fail in recomputePartQty, and a RETRY would append History again
+	// (double-counted movement). Fail before any write; Remove is the
+	// sanctioned cleanup path for orphans.
+	if _, err := s.parts.Get(partID); err != nil {
+		return fmt.Errorf("components: adjust %s/%s: %w", locID, partID, err)
+	}
 	c.Quantity += delta
 	c.History = append(c.History, Movement{
 		Timestamp: time.Now().UTC(),
@@ -226,7 +243,13 @@ func (s *Store) Remove(locID, partID string) error {
 	if err := s.db.Delete(keys.ComponentKey(ws, locID, partID), pebble.Sync); err != nil {
 		return fmt.Errorf("components: delete %s/%s: %w", locID, partID, err)
 	}
-	return s.recomputePartQty(partID)
+	// An orphaned Component (its Part deleted by a pre-guard binary) is
+	// cleaned up here; the recompute's parts miss is expected, not an error
+	// the operator can act on. Tolerate exactly that failure.
+	if err := s.recomputePartQty(partID); err != nil && !errors.Is(err, parts.ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 // FindByPart returns every Component whose PartID == partID, via a full

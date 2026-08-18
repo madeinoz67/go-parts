@@ -23,6 +23,14 @@ import (
 // parts.ErrNotFound automatically — no per-method translation needed.
 var ErrNotFound = errors.New("parts: not found")
 
+// ErrHasComponents is the has-components refusal for the composed part-delete
+// path (link.DeletePart), mirroring locations.ErrHasParts. parts.Store cannot
+// check it itself — the dependency is one-way (components→parts, §5.1) — so the
+// guard composes where both stores are in hand, and surfaces map this sentinel
+// uniformly (REST 409, CLI/UI "remove stock first"). Deleting a stocked Part
+// would orphan its Component rows (bare-ULID rendering, phantom counts).
+var ErrHasComponents = errors.New("parts: has components")
+
 // stripeShards is the size of the per-id striped-lock pool. 64 is coarse enough
 // to spread contention across a typical single-vault parts corpus and fine
 // enough that distinct ids only rarely collide on the same shard. A collision

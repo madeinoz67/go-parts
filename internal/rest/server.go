@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -93,18 +94,22 @@ func (s *Server) baseURL(r *http.Request) string {
 	return "" // non-loopback without public_base_url → safe fallback
 }
 
-// isLoopbackHost reports whether host (with optional :port) is a loopback
-// address. Used by baseURL to guard against Host-header poisoning of labels.
+// isLoopbackHost reports whether host (with optional :port, optionally a
+// bracketed IPv6 literal) is a loopback address. Used by baseURL to guard
+// against Host-header poisoning of labels. net.SplitHostPort handles both
+// "127.0.0.1:7881" and "[::1]:7881" (and leaves a portless host untouched);
+// net.ParseIP(...).IsLoopback() then covers the whole 127.0.0.0/8 block and
+// IPv4-mapped loopback, not just four literals.
 func isLoopbackHost(host string) bool {
 	h := host
-	if i := strings.LastIndex(h, ":"); i >= 0 {
-		h = h[:i] // strip the port
+	if hp, _, err := net.SplitHostPort(host); err == nil {
+		h = hp
 	}
-	switch h {
-	case "127.0.0.1", "localhost", "[::1]", "::1":
-		return true
+	h = strings.Trim(h, "[]")
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
 	}
-	return false
+	return strings.EqualFold(h, "localhost")
 }
 
 // ServeHTTP dispatches through the registered ServeMux. Every route is wrapped
@@ -374,14 +379,20 @@ func patchMap(raw map[string]json.RawMessage, key string, dst *map[string]string
 	return json.Unmarshal(v, dst)
 }
 
-// handleDelete removes a part. 204 on success; 404 if the part is missing (the
+// handleDelete removes a part through the composed link.DeletePart guard:
+// 409 if Components still reference it (deleting would orphan them); 204 on
+// success; 404 if the part is missing (the
 // store's Get-inside-Delete returns wrapped parts.ErrNotFound, which we
 // unwrap). Store.Delete is serialized under the per-id striped lock, so a
 // concurrent Update cannot resurrect a just-deleted record (§5.14).
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.Delete(r.PathValue("id")); err != nil {
+	if err := link.DeletePart(s.store, s.components, r.PathValue("id")); err != nil {
 		if errors.Is(err, parts.ErrNotFound) {
 			http.NotFound(w, r)
+			return
+		}
+		if errors.Is(err, parts.ErrHasComponents) {
+			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
 		http.Error(w, "delete: "+err.Error(), http.StatusInternalServerError)

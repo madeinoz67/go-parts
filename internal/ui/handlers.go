@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/madeinoz67/go-parts/internal/components"
+	"github.com/madeinoz67/go-parts/internal/link"
 	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
 )
@@ -544,14 +545,14 @@ func (s *Server) handleBulkDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	var ok, skip int
 	for _, id := range r.PostForm["id"] {
-		if err := s.store.Delete(id); err != nil {
-			skip++ // unknown id / concurrent edit
+		if err := link.DeletePart(s.store, s.components, id); err != nil {
+			skip++ // unknown id / concurrent edit / still stocked (guard refusal)
 		} else {
 			ok++
 		}
 	}
 	if skip > 0 {
-		w.Header().Set("HX-Trigger", fmt.Sprintf(`{"showToast":"Deleted %d, skipped %d (not found or concurrent edit)"}`, ok, skip))
+		w.Header().Set("HX-Trigger", fmt.Sprintf(`{"showToast":"Deleted %d, skipped %d (not found, concurrent edit, or still stocked)"}`, ok, skip))
 	}
 	q := r.PostFormValue("q")
 	tag := r.PostFormValue("tag")

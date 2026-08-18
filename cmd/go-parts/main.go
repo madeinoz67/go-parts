@@ -23,8 +23,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/madeinoz67/go-parts/internal/components"
 	"github.com/madeinoz67/go-parts/internal/config"
 	"github.com/madeinoz67/go-parts/internal/daemon"
+	"github.com/madeinoz67/go-parts/internal/parts"
 )
 
 var version = "dev"
@@ -134,12 +136,12 @@ func newReindexCmd(dataDir *string) *cobra.Command {
 
 // newFixQtyCmd builds `go-parts fix-qty` — re-derives every part's QtyOnHand
 // from the component store (sum of Component.Quantity across all locations).
-// Parts with no components get QtyOnHand=0. This is the post-redesign fixup:
-// the old model stored QtyOnHand directly on the Part; the new model derives it
-// from components. Run once after migrating from the nested model. Holds the
-// Pebble flock — stop the daemon first.
+// A part with stock but ZERO Component records is pre-redesign legacy stock:
+// it is skipped and reported (never silently zeroed) unless --force is passed.
+// Holds the Pebble flock — stop the daemon first.
 func newFixQtyCmd(dataDir *string) *cobra.Command {
-	return &cobra.Command{
+	var force bool
+	cmd := &cobra.Command{
 		Use:   "fix-qty",
 		Short: "Re-derive all parts' QtyOnHand from component quantities",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -148,21 +150,44 @@ func newFixQtyCmd(dataDir *string) *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			fixed := 0
-			for _, p := range ps.List() {
-				total := 0
-				for _, c := range cs.FindByPart(p.ID) {
-					total += c.Quantity
-				}
-				if p.QtyOnHand != total {
-					if err := ps.SetQty(p.ID, total); err != nil {
-						return fmt.Errorf("fix %s: %w", p.ID, err)
-					}
-					fixed++
-				}
+			fixed, skipped, err := runFixQty(ps, cs, force)
+			if err != nil {
+				return err
 			}
 			fmt.Printf("fixed %d parts (QtyOnHand re-derived from components)\n", fixed)
+			if skipped > 0 {
+				fmt.Printf("skipped %d parts with stock but no component records (pre-redesign legacy stock; re-stock into a location, or pass --force to zero)\n", skipped)
+			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "zero legacy stock (parts with QtyOnHand but no component records)")
+	return cmd
+}
+
+// runFixQty re-derives every part's QtyOnHand from its Component set. A part
+// with stock but zero Component records is pre-redesign legacy stock — the
+// derivation has nothing to sum, so unless force is set such parts are skipped
+// and counted, never silently zeroed.
+func runFixQty(ps *parts.Store, cs *components.Store, force bool) (fixed, skipped int, err error) {
+	for _, p := range ps.List() {
+		total := 0
+		for _, c := range cs.FindByPart(p.ID) {
+			total += c.Quantity
+		}
+		// Legacy stock: quantity recorded pre-redesign with no Component
+		// rows to derive from. Zeroing it would destroy the only record of
+		// that stock — skip and report unless the operator forced it.
+		if p.QtyOnHand > 0 && total == 0 && !force {
+			skipped++
+			continue
+		}
+		if p.QtyOnHand != total {
+			if err := ps.SetQty(p.ID, total); err != nil {
+				return fixed, skipped, fmt.Errorf("fix %s: %w", p.ID, err)
+			}
+			fixed++
+		}
+	}
+	return fixed, skipped, nil
 }
