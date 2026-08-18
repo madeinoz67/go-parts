@@ -96,17 +96,16 @@ services, multiple protocol surfaces over a shared embedded store.
   diverges from go-rag's** single-author "commit straight to main" model — go-parts
   uses a develop/main split. Default working branch is `develop`.
 - **Conventional commits** (parsed by `cliff.toml` → CHANGELOG).
-- **REST, RPC, and the TUI are first-class surfaces: feature work carries every one
-  of them wherever it can express the change (principal directive, 2026-08-19).** A
-  new engine capability ships with its REST route in the same arc — the API is never
-  the laggard behind the Web UI. For the TUI, core workflows (search/browse, part
-  detail, stock adjust, low-stock — §5.11's v1 scope) land in the same arc or the
-  PR/commit states why not; the bar is NOT web parity (§5.11 scopes images, builds,
-  purchase lists, and rich forms web-only, accepted — the test is "could a keyboard
-  express this?", not "does the web UI have it?"). RPC is Phase 4 and unbuilt. Until
-  the TUI and RPC arcs ship, the binding form is: new features must not deepen those
-  gaps — surface the gap in the PR, don't accrue it silently; once each ships, the
-  same-arc obligation applies to it exactly as it does to REST.
+- **Every surface is first-class: feature work carries the change on each surface
+  that can express it (principal directive, 2026-08-19).** The surfaces: Web UI, CLI,
+  REST, MCP, TUI, RPC. A new capability or core-workflow change ships on every BUILT
+  surface in the same arc — or the PR/commit names which are left out and why. PRD
+  exemptions count as why: reindex is REST/CLI-only (§5.15), image upload is web + REST
+  (§5.16), the TUI is deliberately not web-parity (§5.11 scopes images, builds, purchase
+  lists, rich forms web-only — the test is "could a keyboard express this?"). REST never
+  lags the Web UI; the CLI gets the operational verbs (§5.12). TUI and RPC are unbuilt:
+  until they ship the binding form is "don't deepen the gap silently — name it in the
+  PR"; once each ships, the same-arc obligation applies to it like every other surface.
 
 ## 4. Findings that outlive the session
 

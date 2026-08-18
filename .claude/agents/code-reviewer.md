@@ -121,16 +121,17 @@ A change often touches more than one. Apply every group whose files appear in th
   `version` field and optimistic-concurrency behave the **same across every protocol**
   (REST additionally does ETag/If-Match, but the underlying field is one mechanism — §5.14);
   a new MCP tool is classified mutating-or-readonly; deliberately-non-MCP operations (reindex
-  §5.15, image upload §5.16) stay REST/CLI only. The **first-class surfaces are REST,
-  RPC, and the TUI** (principal directive, 2026-08-19): a new engine capability ships
-  with its REST route in the same arc (the API is never the laggard behind the Web UI);
-  a change to a core workflow — search/browse, part detail, stock adjust, low-stock
-  (§5.11's v1 scope) — that skips its TUI expression is a **missed cross-surface
-  obligation** unless the PR states why the terminal can't express it, or §5.11 scopes
-  it web-only (images, builds, purchase lists, rich forms). The TUI bar is not web
-  parity — §5.11 accepts a less-rich TUI; the test is "could a keyboard express this?".
-  RPC is Phase 4 and unbuilt; until the TUI and RPC arcs ship, flag any change that
-  deepens those gaps without naming them. These are mostly *not* caught by CI.
+  §5.15, image upload §5.16) stay REST/CLI only. **Every surface is first-class**
+  (principal directive, 2026-08-19): Web UI, CLI, REST, MCP, TUI, RPC. A change that
+  skips a BUILT surface that can express it — a new engine capability without its REST
+  route, a core workflow (§5.11 v1 scope: search/browse, part detail, stock adjust,
+  low-stock) without its Web/CLI/MCP/TUI expression — is a **missed cross-surface
+  obligation** unless the PR names the exclusion and why (PRD exemptions count:
+  reindex REST/CLI-only §5.15, image upload web + REST §5.16, the TUI deliberately
+  not web-parity — §5.11 scopes images/builds/purchase lists/rich forms web-only).
+  REST never lags the Web UI. TUI and RPC are unbuilt; until they ship, flag any
+  change that deepens those gaps without naming them. These are mostly *not* caught
+  by CI.
 
 - **Documentation (the doc gate)** — any behavior change. Read
   `docs/development/doc-obligations.md` and apply every row whose trigger the diff hits: a
