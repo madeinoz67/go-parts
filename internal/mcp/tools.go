@@ -135,6 +135,18 @@ func (s *Server) resolvePart(sel string) ([]*parts.Part, error) {
 	return matches, nil
 }
 
+// partCandidates renders the multi-match selector error listing every match
+// as "id (mpn)" — get_part / adjust_stock / stock_part share it so an agent
+// disambiguates in one round-trip instead of re-issuing get_part (M5's
+// formatting, factored at the third call site).
+func partCandidates(sel string, matches []*parts.Part) error {
+	names := make([]string, len(matches))
+	for i, p := range matches {
+		names[i] = p.ID + " (" + p.MPN + ")"
+	}
+	return fmt.Errorf("part selector %q matches %d parts — pass the exact id: %s", sel, len(matches), strings.Join(names, ", "))
+}
+
 // --- the read tools ---
 
 func (s *Server) toolSearchParts(args map[string]any) (string, error) {
@@ -189,11 +201,7 @@ func (s *Server) toolGetPart(args map[string]any) (string, error) {
 		return "", err
 	}
 	if len(matches) > 1 {
-		names := make([]string, len(matches))
-		for i, p := range matches {
-			names[i] = p.ID + " (" + p.MPN + ")"
-		}
-		return "", fmt.Errorf("selector %q matches %d parts — pass the exact id: %s", sel, len(matches), strings.Join(names, ", "))
+		return "", partCandidates(sel, matches)
 	}
 	p := matches[0]
 	var movs []components.Movement
@@ -378,13 +386,7 @@ func (s *Server) toolAdjustStock(args map[string]any) (string, error) {
 		return "", err
 	}
 	if len(matches) > 1 {
-		// Same candidate formatting as get_part — an agent disambiguates in
-		// one round-trip instead of re-issuing get_part.
-		names := make([]string, len(matches))
-		for i, p := range matches {
-			names[i] = p.ID + " (" + p.MPN + ")"
-		}
-		return "", fmt.Errorf("part selector %q matches %d parts — pass the exact id: %s", partSel, len(matches), strings.Join(names, ", "))
+		return "", partCandidates(partSel, matches)
 	}
 	p := matches[0]
 	loc, err := s.resolveLocation(locSel)
@@ -400,6 +402,80 @@ func (s *Server) toolAdjustStock(args map[string]any) (string, error) {
 			p.MPN, p.ID, loc.Label, strings.Join(at, ", "))
 	}
 	if err := s.components.AdjustQty(loc.ID, p.ID, delta, reason); err != nil {
+		return "", err
+	}
+	comp, err := s.components.Get(loc.ID, p.ID)
+	if err != nil {
+		return "", err
+	}
+	fresh, err := s.store.Get(p.ID)
+	if err != nil {
+		return "", err
+	}
+	mov := components.Movement{}
+	if len(comp.History) > 0 {
+		mov = comp.History[len(comp.History)-1]
+	}
+	return render(map[string]any{
+		"movement": mov, "component": comp, "part_qty_on_hand": fresh.QtyOnHand,
+	})
+}
+
+// toolStockPart places FIRST stock: it creates the (location, part) Component
+// row via components.Add — the same engine call as REST POST
+// /locations/{id}/components — seeding the "initial" movement and re-deriving
+// Part.QtyOnHand. This closes the agent workflow hole where adjust_stock
+// required an existing component (final-review follow-up (a)): an agent can
+// now run upsert_part → stock_part → adjust_stock end-to-end. One Component
+// per part per location: a duplicate pair errors carrying the engine sentinel
+// plus the adjust_stock redirect — never a silent overwrite of the quantity.
+// A NEGATIVE qty is a usage error here (REST accepts it silently; an initial
+// stocking below zero is nonsense data — loud, not silently-wrong). Zero is
+// allowed (REST parity): the pair exists, count it later with adjust_stock.
+func (s *Server) toolStockPart(args map[string]any) (string, error) {
+	partSel := argStr(args, "part")
+	locSel := argStr(args, "location")
+	qty, haveQty, err := argInt(args, "qty")
+	if err != nil {
+		return "", err
+	}
+	if partSel == "" || locSel == "" || !haveQty {
+		return "", errors.New("part, location, and qty are all required")
+	}
+	if qty < 0 {
+		return "", errors.New("qty must be >= 0 (initial stocking; use adjust_stock with a negative delta for stock out)")
+	}
+	var tags []string
+	if raw, ok := args["tags"]; ok && raw != nil {
+		arr, isArr := raw.([]any)
+		if !isArr {
+			return "", errors.New("tags must be an array of strings")
+		}
+		tags = make([]string, len(arr))
+		for i, v := range arr {
+			sv, isStr := v.(string)
+			if !isStr {
+				return "", errors.New("tags must be an array of strings")
+			}
+			tags[i] = sv
+		}
+	}
+	matches, err := s.resolvePart(partSel)
+	if err != nil {
+		return "", err
+	}
+	if len(matches) > 1 {
+		return "", partCandidates(partSel, matches)
+	}
+	p := matches[0]
+	loc, err := s.resolveLocation(locSel)
+	if err != nil {
+		return "", err
+	}
+	if err := s.components.Add(loc.ID, p.ID, qty, tags); err != nil {
+		if errors.Is(err, components.ErrDuplicate) {
+			return "", fmt.Errorf("%w — this part is already stocked at %s; use adjust_stock for stock moves", err, loc.Label)
+		}
 		return "", err
 	}
 	comp, err := s.components.Get(loc.ID, p.ID)

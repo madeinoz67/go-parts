@@ -600,3 +600,168 @@ func TestAdjustStockAmbiguousPartListsCandidates(t *testing.T) {
 		}
 	}
 }
+
+// --- stock_part: initial stocking (final-review follow-up (a)) ---
+
+// The workflow hole this tool closes: adjust_stock requires an existing
+// (location, part) component, so an agent could create a part but never
+// place its first stock. stock_part wraps components.Add — the same engine
+// call as REST POST /locations/{id}/components.
+func TestStockPartHappyPath(t *testing.T) {
+	srv := newTestServer(t)
+	mustCreate(t, srv, &parts.Part{MPN: "M1", QtyOnHand: 5})
+	if err := srv.locations.Create(&locations.Location{Label: "Bin A3"}); err != nil {
+		t.Fatal(err)
+	}
+	txt := toolText(t, srv, "stock_part", `{"part":"M1","location":"Bin A3","qty":100}`)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(txt), &got); err != nil {
+		t.Fatal(err)
+	}
+	comp, _ := got["component"].(map[string]any)
+	if comp == nil || comp["Quantity"] != float64(100) {
+		t.Fatalf("component quantity: %s", txt)
+	}
+	mov, _ := got["movement"].(map[string]any)
+	if mov == nil || mov["Delta"] != float64(100) || mov["Reason"] != "initial" {
+		t.Fatalf("components.Add seeds the \"initial\" movement: %s", txt)
+	}
+	if got["part_qty_on_hand"] != float64(100) {
+		t.Fatalf("Add must re-derive part qty over the seeded record (recomputePartQty): %s", txt)
+	}
+	// The closed loop: first stock via MCP, then moves via adjust_stock.
+	if txt2 := toolText(t, srv, "adjust_stock", `{"part":"M1","location":"Bin A3","delta":-2,"reason":"used two"}`); !strings.Contains(txt2, `"part_qty_on_hand":98`) {
+		t.Fatalf("adjust_stock must compose after stock_part: %s", txt2)
+	}
+}
+
+func TestStockPartZeroQtyAllowed(t *testing.T) {
+	// REST parity: Quantity 0 is accepted (the pair exists; count it later
+	// with adjust_stock) — only NEGATIVE initial stock is nonsense data.
+	srv := newTestServer(t)
+	mustCreate(t, srv, &parts.Part{MPN: "M1"})
+	if err := srv.locations.Create(&locations.Location{Label: "Bin A3"}); err != nil {
+		t.Fatal(err)
+	}
+	if txt := toolText(t, srv, "stock_part", `{"part":"M1","location":"Bin A3","qty":0}`); !strings.Contains(txt, `"Quantity":0`) {
+		t.Fatalf("qty 0 places the pair: %s", txt)
+	}
+}
+
+func TestStockPartRequiresAllArguments(t *testing.T) {
+	srv := newTestServer(t)
+	errTxt := toolError(t, srv, "stock_part", `{"part":"M1","location":"Bin A3"}`)
+	if !strings.Contains(errTxt, "required") {
+		t.Fatalf("missing qty is a usage error: %q", errTxt)
+	}
+}
+
+func TestStockPartNegativeQtyRejected(t *testing.T) {
+	srv := newTestServer(t)
+	part := mustCreate(t, srv, &parts.Part{MPN: "M1"})
+	loc := &locations.Location{Label: "Bin A3"}
+	if err := srv.locations.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	errTxt := toolError(t, srv, "stock_part", `{"part":"M1","location":"Bin A3","qty":-5}`)
+	if !strings.Contains(errTxt, "qty must be >= 0") {
+		t.Fatalf("negative initial qty is a usage error, not silent nonsense data: %q", errTxt)
+	}
+	if _, err := srv.components.Get(loc.ID, part.ID); err == nil {
+		t.Fatal("rejected qty must not create the component")
+	}
+}
+
+func TestStockPartFractionalQtyRejected(t *testing.T) {
+	srv := newTestServer(t)
+	mustCreate(t, srv, &parts.Part{MPN: "M1"})
+	if err := srv.locations.Create(&locations.Location{Label: "Bin A3"}); err != nil {
+		t.Fatal(err)
+	}
+	errTxt := toolError(t, srv, "stock_part", `{"part":"M1","location":"Bin A3","qty":2.5}`)
+	if !strings.Contains(errTxt, "qty must be an integer") {
+		t.Fatalf("fractional qty must name the problem (argInt parity with delta): %q", errTxt)
+	}
+}
+
+func TestStockPartQtyBeyondInt64Rejected(t *testing.T) {
+	srv := newTestServer(t)
+	mustCreate(t, srv, &parts.Part{MPN: "M1"})
+	if err := srv.locations.Create(&locations.Location{Label: "Bin A3"}); err != nil {
+		t.Fatal(err)
+	}
+	errTxt := toolError(t, srv, "stock_part", `{"part":"M1","location":"Bin A3","qty":1e19}`)
+	if !strings.Contains(errTxt, "qty must be an integer between") {
+		t.Fatalf("out-of-int64 qty must name the bound (I1 parity): %q", errTxt)
+	}
+}
+
+func TestStockPartDuplicateRejected(t *testing.T) {
+	srv := newTestServer(t)
+	part := mustCreate(t, srv, &parts.Part{MPN: "M1"})
+	loc := &locations.Location{Label: "Bin A3"}
+	if err := srv.locations.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	toolText(t, srv, "stock_part", `{"part":"M1","location":"Bin A3","qty":100}`)
+	errTxt := toolError(t, srv, "stock_part", `{"part":"M1","location":"Bin A3","qty":50}`)
+	if !strings.Contains(errTxt, "components: already exists") || !strings.Contains(errTxt, "adjust_stock") {
+		t.Fatalf("duplicate must carry the engine sentinel AND the adjust_stock redirect: %q", errTxt)
+	}
+	comp, err := srv.components.Get(loc.ID, part.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comp.Quantity != 100 || len(comp.History) != 1 {
+		t.Fatalf("rejected duplicate must not touch the existing row: qty=%d history=%d", comp.Quantity, len(comp.History))
+	}
+}
+
+func TestStockPartUnknownPartAndLocation(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.locations.Create(&locations.Location{Label: "Bin A3"}); err != nil {
+		t.Fatal(err)
+	}
+	if errTxt := toolError(t, srv, "stock_part", `{"part":"nope","location":"Bin A3","qty":5}`); !strings.Contains(errTxt, "parts: not found") {
+		t.Fatalf("part sentinel verbatim: %q", errTxt)
+	}
+	mustCreate(t, srv, &parts.Part{MPN: "M1"})
+	if errTxt := toolError(t, srv, "stock_part", `{"part":"M1","location":"nowhere","qty":5}`); !strings.Contains(errTxt, "locations: not found") {
+		t.Fatalf("location sentinel verbatim: %q", errTxt)
+	}
+}
+
+func TestStockPartAmbiguousPartListsCandidates(t *testing.T) {
+	srv := newTestServer(t)
+	a := mustCreate(t, srv, &parts.Part{MPN: "X1"})
+	b := mustCreate(t, srv, &parts.Part{MPN: "other", LocalNumber: "X1"})
+	errTxt := toolError(t, srv, "stock_part", `{"part":"X1","location":"x","qty":1}`)
+	if !strings.Contains(errTxt, "matches 2 parts") {
+		t.Fatalf("multi-match must say the count: %q", errTxt)
+	}
+	for _, id := range []string{a.ID, b.ID} {
+		if !strings.Contains(errTxt, id+" (") {
+			t.Fatalf("multi-match error must list candidate %s as \"id (mpn)\": %q", id, errTxt)
+		}
+	}
+}
+
+func TestStockPartTags(t *testing.T) {
+	srv := newTestServer(t)
+	mustCreate(t, srv, &parts.Part{MPN: "M1"})
+	m2 := mustCreate(t, srv, &parts.Part{MPN: "M2"})
+	loc := &locations.Location{Label: "Bin A3"}
+	if err := srv.locations.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	if txt := toolText(t, srv, "stock_part", `{"part":"M1","location":"Bin A3","qty":10,"tags":["bulk","tape"]}`); !strings.Contains(txt, `"Tags":["bulk","tape"]`) {
+		t.Fatalf("component tags round-trip: %s", txt)
+	}
+	errTxt := toolError(t, srv, "stock_part", `{"part":"M2","location":"Bin A3","qty":1,"tags":["bulk",7]}`)
+	if !strings.Contains(errTxt, "tags must be an array of strings") {
+		t.Fatalf("non-string tag is a usage error: %q", errTxt)
+	}
+	if _, err := srv.components.Get(loc.ID, m2.ID); err == nil {
+		t.Fatal("rejected tags must not create the component")
+	}
+}

@@ -115,6 +115,8 @@ func (s *Server) dispatch(name string, args map[string]any) (string, error) {
 		return s.toolGetInventoryStats(args)
 	case "upsert_part":
 		return s.toolUpsertPart(args)
+	case "stock_part":
+		return s.toolStockPart(args)
 	case "adjust_stock":
 		return s.toolAdjustStock(args)
 	}
@@ -170,6 +172,20 @@ func toolDefs() []map[string]any {
 						"type":        "object",
 						"description": "full Part record with PascalCase fields, same shape get_part returns",
 					},
+				},
+			},
+		},
+		{
+			"name":        "stock_part",
+			"description": "Place a part's FIRST stock at a location — creates the (location, part) stock row with an \"initial\" movement and re-derives the part's total (the same operation as REST POST /locations/{id}/components). One stock row per part per location: re-stocking an existing pair errors — use adjust_stock for stock moves. part: id, P- via-code, mpn, or local_number; location: bin label or L- via-code.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"part", "location", "qty"},
+				"properties": map[string]any{
+					"part":     map[string]any{"type": "string", "description": "id, P- via-code, mpn, or local_number"},
+					"location": map[string]any{"type": "string", "description": "bin label or L- via-code"},
+					"qty":      map[string]any{"type": "integer", "description": "initial quantity (>= 0)"},
+					"tags":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "optional tags for the stock row"},
 				},
 			},
 		},
