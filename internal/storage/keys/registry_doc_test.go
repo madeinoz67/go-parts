@@ -91,7 +91,7 @@ func TestRegistryDocMatchesPrefixes(t *testing.T) {
 			t.Fatalf("byte const %s does not end in 'Prefix' — it is either an unregistered keyspace (register it in the registry and Allocated line) or misnamed so the drift comparison cannot see it", m[1])
 		}
 		if !byName[m[1]] {
-			t.Fatalf("byte const %s was not captured by the prefix comparison — parser rot; fix the regex in this test", m[1])
+			t.Fatalf("byte const %s was not captured by the prefix comparison — parser rot; fix the regex in this test (a grouped one-line decl (a, b byte = 0x20, 0x21) or a computed literal (base+2) also lands here: split the declaration or use a plain literal)", m[1])
 		}
 	}
 

@@ -59,9 +59,18 @@ var (
 	docFlagToken = regexp.MustCompile("`(--[a-z0-9._-]+)`")
 )
 
+// hasGroup reports whether path names a group command in the cobra tree.
+func hasGroup(groups map[string]map[string]bool, path string) bool {
+	_, ok := groups[path]
+	return ok
+}
+
 // parseCLIDoc returns {command path -> flag set} from cli.md, plus the root's
-// global-flag set under the "" key.
-func parseCLIDoc(t *testing.T, src string) map[string]map[string]bool {
+// global-flag set under the "" key. groups is the cobra tree's group set: a
+// "## <Title>" section whose normalized title names a group attributes its
+// table rows to that group (both the ## intro and a tolerated ###
+// "go-parts <name>" header are sanctioned group-doc locations — reviewer RC2).
+func parseCLIDoc(t *testing.T, src string, groups map[string]map[string]bool) map[string]map[string]bool {
 	t.Helper()
 	out := map[string]map[string]bool{"": {}}
 	lines := strings.Split(src, "\n")
@@ -81,12 +90,24 @@ func parseCLIDoc(t *testing.T, src string) map[string]map[string]bool {
 			section = "-"
 			continue
 		}
-		// A new ## section ends the current command's flag table (## Global
-		// flags resets to the root key; ## anything else ends table scope).
+		// A new ## section ends the current command's flag table — except the
+		// two sanctioned flag locations: ## Global flags resets to the root
+		// key, and a group's own ## intro (title matching a group name)
+		// attributes its rows to that group, where the group ghost-check
+		// covers them. Structural sections ("## Components (stock)",
+		// "## Subcommands") match no group and stay prose-only (reviewer RC2:
+		// a dead flag row directly under "## Locations" used to pass green).
 		if strings.HasPrefix(ln, "## ") {
-			if strings.Contains(ln, "Global flags") {
+			title := strings.ToLower(strings.TrimSpace(ln[3:]))
+			switch {
+			case title == "global flags":
 				section = ""
-			} else {
+			case hasGroup(groups, title):
+				section = title
+				if _, ok := out[section]; !ok {
+					out[section] = map[string]bool{}
+				}
+			default:
 				section = "-" // prose-only until the next ### header
 			}
 			continue
@@ -155,9 +176,9 @@ func TestCLIDocMatchesCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc := parseCLIDoc(t, string(src))
 	root, _ := newRootCmd()
 	code, groups := codeCommands(root)
+	doc := parseCLIDoc(t, string(src), groups)
 
 	var undocumented, ghost []string
 	for path, flags := range code {
@@ -199,7 +220,7 @@ func TestCLIDocMatchesCommands(t *testing.T) {
 		}
 		if _, ok := code[path]; !ok {
 			if _, isGroup := groups[path]; !isGroup {
-				ghost = append(ghost, "go-parts "+path+" (missing from docs/guide/cli.md — or its header is not exactly `### `+`go-parts <path>`)")
+				ghost = append(ghost, "go-parts "+path+" (documented but not a real command — check the header path or remove the stale section)")
 			}
 		}
 	}
