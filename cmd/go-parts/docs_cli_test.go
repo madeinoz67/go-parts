@@ -9,11 +9,16 @@ package main
 // command or flag the binary no longer has (the --parent/--single-part-only
 // class of drift that survived the flat-model pivot for weeks).
 //
-// The guide's parse contract: every documented command has an
+// The guide's parse contract: every documented LEAF command has an
 // "### `go-parts <path>`" header; its flags live in that section's table rows
 // as `--name` backtick tokens (multi-flag cells like "`--from`, `--to`" are
 // split); the root's persistent flags live under "## Global flags". Fenced
 // code blocks and prose are ignored — only table rows count.
+//
+// Group commands (ones with subcommands, e.g. `locations`) are documented as
+// "## <Name>" section intros, never "### `go-parts <name>`" headers: they are
+// exempt from the undocumented check, and the ghost check tolerates a group
+// header (via the groups set) without requiring one.
 
 import (
 	"os"
@@ -58,6 +63,13 @@ func parseCLIDoc(t *testing.T, src string) map[string]map[string]bool {
 			}
 			continue
 		}
+		// A non-command ###/#### subsection (Examples, Notes, …) closes the
+		// command's flag-table scope — its table rows must not be
+		// misattributed to the command above it.
+		if strings.HasPrefix(ln, "###") {
+			section = "-"
+			continue
+		}
 		// A new ## section ends the current command's flag table (## Global
 		// flags resets to the root key; ## anything else ends table scope).
 		if strings.HasPrefix(ln, "## ") {
@@ -78,15 +90,17 @@ func parseCLIDoc(t *testing.T, src string) map[string]map[string]bool {
 	return out
 }
 
-// codeCommands walks the cobra tree, returning {command path -> flag set}.
+// codeCommands walks the cobra tree, returning the leaf commands' flag sets
+// and the set of group commands (ones with subcommands, e.g. "locations").
 // Cobra's auto help/completion commands and the help flag are excluded (they
 // are engine, not surface); --version is included on the root because the
 // guide documents it in the global table.
-func codeCommands(root *cobra.Command) map[string]map[string]bool {
-	out := map[string]map[string]bool{"": {}}
-	root.PersistentFlags().VisitAll(func(f *pflag.Flag) { out[""]["--"+f.Name] = true })
+func codeCommands(root *cobra.Command) (leaves map[string]map[string]bool, groups map[string]bool) {
+	leaves = map[string]map[string]bool{"": {}}
+	groups = map[string]bool{}
+	root.PersistentFlags().VisitAll(func(f *pflag.Flag) { leaves[""]["--"+f.Name] = true })
 	if root.Version != "" {
-		out[""]["--version"] = true
+		leaves[""]["--version"] = true
 	}
 	var walk func(cmd *cobra.Command, path string)
 	walk = func(cmd *cobra.Command, path string) {
@@ -95,26 +109,25 @@ func codeCommands(root *cobra.Command) map[string]map[string]bool {
 				continue
 			}
 			p := path + " " + sub.Name()
-			flags := map[string]bool{}
-			sub.Flags().VisitAll(func(f *pflag.Flag) {
-				if f.Name != "help" {
-					flags["--"+f.Name] = true
-				}
-			})
 			// Inherited persistent flags (--data-dir) are intentionally NOT
 			// collected per command: the guide documents them once, in the
-			// Global flags table, and the root entry below owns that check.
-			// Group commands (locations) are exempt from the undocumented
-			// check — their docs are the section intro, not an ### header;
-			// only leaf commands carry per-command flag tables.
-			if len(sub.Commands()) == 0 {
-				out[strings.TrimPrefix(p, " ")] = flags
+			// Global flags table, and the root entry above owns that check.
+			if len(sub.Commands()) > 0 {
+				groups[strings.TrimPrefix(p, " ")] = true // documented as a ## intro; ghost-tolerated, never required
+			} else {
+				flags := map[string]bool{}
+				sub.Flags().VisitAll(func(f *pflag.Flag) {
+					if f.Name != "help" {
+						flags["--"+f.Name] = true
+					}
+				})
+				leaves[strings.TrimPrefix(p, " ")] = flags
 			}
 			walk(sub, p)
 		}
 	}
 	walk(root, "")
-	return out
+	return leaves, groups
 }
 
 func TestCLIDocMatchesCommands(t *testing.T) {
@@ -124,7 +137,7 @@ func TestCLIDocMatchesCommands(t *testing.T) {
 	}
 	doc := parseCLIDoc(t, string(src))
 	root, _ := newRootCmd()
-	code := codeCommands(root)
+	code, groups := codeCommands(root)
 
 	var undocumented, ghost []string
 	for path, flags := range code {
@@ -161,7 +174,7 @@ func TestCLIDocMatchesCommands(t *testing.T) {
 		if path == "" || path == "-" {
 			continue
 		}
-		if _, ok := code[path]; !ok {
+		if _, ok := code[path]; !ok && !groups[path] {
 			ghost = append(ghost, "go-parts "+path+" (documented but not a real command)")
 		}
 	}

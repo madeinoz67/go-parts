@@ -70,9 +70,9 @@ services, multiple protocol surfaces over a shared embedded store.
 - **Docs-vs-code drift is tested, not remembered.** `docs_cli_test.go`, `routes_doc_test.go`,
   and `registry_doc_test.go` diff the real cobra tree, route registrations, and prefix consts
   against `docs/guide/cli.md`, `docs/reference/api.md`, and
-  `docs/internals/keyspace-registry.md` — a red drift test means the change shipped without
-  its doc update (see `docs/development/doc-obligations.md`). Fix the doc, never skip the
-  test.
+  `docs/internals/keyspace-registry.md` — a red drift test means doc and code disagree:
+  usually a missing doc update, sometimes an accidental removal. Fix whichever is wrong
+  (see `docs/development/doc-obligations.md`); never skip the test.
 - **CLI conventions match go-rag / MuninnDB (§5.12):** `start`/`stop`/`status`
   top-level verbs; `<area> <subsystem> <verb>` for feature areas; guided `init`
   wizards with `--non-interactive`; `--dry-run` on anything that mutates;

@@ -30,20 +30,36 @@ var (
 	docRouteRe = regexp.MustCompile(`(?m)^\|\s*` + "`" + `([A-Z]+)` + "`" + `\s*\|\s*` + "`" + `(/[^\s` + "`" + `]+)` + "`")
 )
 
-// codeRoutes reads server.go next to this test and extracts the registered
-// "METHOD /path" set.
+// codeRoutes reads every non-test .go file in this package and extracts the
+// registered "METHOD /path" set. All files, not just server.go: if routes
+// ever split across files, a single-file read would keep passing while
+// missing the new ones (partial-parse rot). The contract is HandleFunc
+// registrations — a bare mux.Handle (none exists today) would need this
+// parser AND the api.md table widened together.
 func codeRoutes(t *testing.T) map[string]bool {
 	t.Helper()
-	src, err := os.ReadFile("server.go")
+	des, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
+	var src strings.Builder
+	for _, de := range des {
+		if de.IsDir() || !strings.HasSuffix(de.Name(), ".go") || strings.HasSuffix(de.Name(), "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(de.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		src.Write(b)
+		src.WriteByte('\n')
+	}
 	out := map[string]bool{}
-	for _, m := range codeRouteRe.FindAllStringSubmatch(string(src), -1) {
+	for _, m := range codeRouteRe.FindAllStringSubmatch(src.String(), -1) {
 		out[m[1]+" "+m[2]] = true
 	}
 	if len(out) == 0 {
-		t.Fatal("no HandleFunc registrations parsed from server.go — parser rotted?")
+		t.Fatal("no HandleFunc registrations parsed from this package's sources — parser rotted?")
 	}
 	return out
 }

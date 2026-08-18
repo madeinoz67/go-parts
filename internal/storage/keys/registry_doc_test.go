@@ -32,12 +32,27 @@ func normalize(h string) string {
 }
 
 func TestRegistryDocMatchesPrefixes(t *testing.T) {
-	src, err := os.ReadFile("keys.go")
+	// All non-test .go files in the package, not just keys.go: if prefixes
+	// ever split across files, a single-file read would keep passing while
+	// missing the new ones (partial-parse rot).
+	des, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
+	var buf strings.Builder
+	for _, de := range des {
+		if de.IsDir() || !strings.HasSuffix(de.Name(), ".go") || strings.HasSuffix(de.Name(), "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(de.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
 	code := map[string]string{} // byte -> const name
-	for _, m := range codePrefixRe.FindAllStringSubmatch(string(src), -1) {
+	for _, m := range codePrefixRe.FindAllStringSubmatch(buf.String(), -1) {
 		if prev, dup := code[normalize(m[2])]; dup {
 			t.Fatalf("keys.go: %s and %s both claim %s — the disjointness test owns this, but doc-drift cannot proceed", prev, m[1], m[2])
 		}
