@@ -131,9 +131,9 @@ func toolDefs() []map[string]any {
 				"type": "object",
 				"properties": map[string]any{
 					"query": map[string]any{"type": "string", "description": "free-text search (mpn, description, specs...)"},
-					"tag":   map[string]any{"type": "string"},
+					"tag":   map[string]any{"type": "string", "description": "exact tag match; tags are stored lowercase"},
 					"low":   map[string]any{"type": "boolean", "description": "keep only parts at/below their reorder point"},
-					"limit": map[string]any{"type": "integer", "default": 20, "maximum": 100},
+					"limit": map[string]any{"type": "integer", "default": 20, "maximum": 100, "description": "max results returned; with a query the search fetches the top 20 BM25 hits before tag/low filters, so limit only caps the returned list (it cannot deepen the query)"},
 				},
 			},
 		},

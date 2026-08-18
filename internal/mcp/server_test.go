@@ -161,3 +161,42 @@ func TestNotificationHasNoBody(t *testing.T) {
 		t.Fatalf("notification got a response body: %q", rec.Body.String())
 	}
 }
+
+// F3: /mcp is a mutating endpoint with an Origin same-origin guard
+// (ui.Server.auth parity): a browser ALWAYS sends Origin on a POST, so a
+// mismatched Origin is a blind cross-origin form fire → 403. A matching or
+// ABSENT Origin passes (curl and `claude mcp add --transport http` send no
+// Origin — they are not CSRF vectors).
+func TestOriginGuardBlocksCrossOriginPost(t *testing.T) {
+	srv := newTestServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+	req.Header.Set("Origin", "http://evil.example")
+	rec := httptest.NewRecorder()
+	srv.HTTPHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (cross-origin POST blocked)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "cross-origin request blocked") {
+		t.Fatalf("body should name the block: %q", rec.Body.String())
+	}
+}
+
+func TestOriginGuardAllowsSameOriginAndNoOriginPost(t *testing.T) {
+	srv := newTestServer(t)
+	// Same-origin: httptest.NewRequest defaults the host to example.com,
+	// scheme http (r.TLS nil) — expected Origin is "http://example.com".
+	same := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+	same.Header.Set("Origin", "http://example.com")
+	rec := httptest.NewRecorder()
+	srv.HTTPHandler().ServeHTTP(rec, same)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("same-origin POST status = %d, want 200", rec.Code)
+	}
+	// No Origin header at all (curl, claude mcp http): allowed.
+	none := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+	rec2 := httptest.NewRecorder()
+	srv.HTTPHandler().ServeHTTP(rec2, none)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("no-origin POST status = %d, want 200", rec2.Code)
+	}
+}

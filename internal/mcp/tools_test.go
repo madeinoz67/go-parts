@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/madeinoz67/go-parts/internal/locations"
 	"github.com/madeinoz67/go-parts/internal/parts"
@@ -352,5 +353,106 @@ func TestAdjustStockRequiresAllArguments(t *testing.T) {
 	errTxt := toolError(t, srv, "adjust_stock", `{"part":"M1","location":"x","delta":1}`)
 	if !strings.Contains(errTxt, "required") {
 		t.Fatalf("missing reason is a usage error: %q", errTxt)
+	}
+}
+
+// --- final-review fix wave (F1, F2, M4, M5) ---
+
+// F1: a fractional delta must be a USAGE ERROR naming the argument, never a
+// silently truncated movement (argInt's int(f) recorded 2 for {"delta":2.5}
+// with no signal — the never-silently-wrong constitution).
+func TestAdjustStockFractionalDeltaRejected(t *testing.T) {
+	srv := newTestServer(t)
+	part := mustCreate(t, srv, &parts.Part{MPN: "M1", QtyOnHand: 5})
+	loc := &locations.Location{Label: "Bin A3"}
+	if err := srv.locations.Create(loc); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.components.Add(loc.ID, part.ID, 5, nil); err != nil {
+		t.Fatal(err)
+	}
+	errTxt := toolError(t, srv, "adjust_stock", `{"part":"M1","location":"Bin A3","delta":2.5,"reason":"found two and a half"}`)
+	if !strings.Contains(errTxt, "delta must be an integer") {
+		t.Fatalf("fractional delta must name the problem: %q", errTxt)
+	}
+	// And nothing was written: quantity and movement history unchanged
+	// (components.Add appends the one initial movement).
+	comp, err := srv.components.Get(loc.ID, part.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comp.Quantity != 5 || len(comp.History) != 1 {
+		t.Fatalf("rejected delta must not record a movement: qty=%d history=%d", comp.Quantity, len(comp.History))
+	}
+}
+
+// F1 sibling (confirm, don't change): upsert_part unmarshals the part body
+// into int struct fields directly, so a fractional number is already a LOUD
+// unmarshal error — pin it so the two write paths can't drift apart.
+func TestUpsertPartFractionalIntRejectedLoudly(t *testing.T) {
+	srv := newTestServer(t)
+	errTxt := toolError(t, srv, "upsert_part", `{"part":{"MPN":"FRAC","QtyOnHand":2.5}}`)
+	if !strings.Contains(errTxt, "part fields") || !strings.Contains(errTxt, "2.5") {
+		t.Fatalf("fractional int must surface the unmarshal error verbatim: %q", errTxt)
+	}
+	if got := srv.store.Count(); got != 0 {
+		t.Fatalf("rejected create must not write: count=%d", got)
+	}
+}
+
+// F2: the create branch zeroes audit fields (rest.handleCreate parity) — a
+// spoofed CreatedBy must not survive into the stored record.
+func TestUpsertPartCreateZeroesAuditFields(t *testing.T) {
+	srv := newTestServer(t)
+	txt := toolText(t, srv, "upsert_part", `{"part":{"MPN":"SPOOF","CreatedBy":"attacker","UpdatedBy":"attacker","CreatedAt":"2020-01-01T00:00:00Z","UpdatedAt":"2020-01-01T00:00:00Z","Version":99}}`)
+	var rec map[string]any
+	if err := json.Unmarshal([]byte(txt), &rec); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := rec["ID"].(string)
+	stored, err := srv.store.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.CreatedBy != "local" {
+		t.Fatalf("CreatedBy = %q, want \"local\" (server-assigned; a caller must not spoof the audit trail)", stored.CreatedBy)
+	}
+	spoofed := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	if !stored.CreatedAt.After(spoofed) {
+		t.Fatalf("CreatedAt = %v, want store-assigned now (not caller-supplied)", stored.CreatedAt)
+	}
+	if stored.Version != 1 {
+		t.Fatalf("Version = %d, want store-assigned 1", stored.Version)
+	}
+}
+
+// M4: a part with ZERO components says "not stocked anywhere yet" — not an
+// empty "stocked at: " list.
+func TestAdjustStockNotStockedAnywhere(t *testing.T) {
+	srv := newTestServer(t)
+	mustCreate(t, srv, &parts.Part{MPN: "M1"})
+	if err := srv.locations.Create(&locations.Location{Label: "Bin A3"}); err != nil {
+		t.Fatal(err)
+	}
+	errTxt := toolError(t, srv, "adjust_stock", `{"part":"M1","location":"Bin A3","delta":1,"reason":"x"}`)
+	if !strings.Contains(errTxt, "not stocked anywhere yet") {
+		t.Fatalf("zero-component part must say so: %q", errTxt)
+	}
+}
+
+// M5: adjust_stock's multi-match error carries the candidate list in
+// get_part's "id (mpn)" formatting — an agent disambiguates in one round-trip.
+func TestAdjustStockAmbiguousPartListsCandidates(t *testing.T) {
+	srv := newTestServer(t)
+	a := mustCreate(t, srv, &parts.Part{MPN: "X1"})
+	b := mustCreate(t, srv, &parts.Part{MPN: "other", LocalNumber: "X1"})
+	errTxt := toolError(t, srv, "adjust_stock", `{"part":"X1","location":"x","delta":1,"reason":"r"}`)
+	if !strings.Contains(errTxt, "matches 2 parts") {
+		t.Fatalf("multi-match must say the count: %q", errTxt)
+	}
+	for _, id := range []string{a.ID, b.ID} {
+		if !strings.Contains(errTxt, id+" (") {
+			t.Fatalf("multi-match error must list candidate %s as \"id (mpn)\": %q", id, errTxt)
+		}
 	}
 }

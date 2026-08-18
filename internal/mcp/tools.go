@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/madeinoz67/go-parts/internal/components"
 	"github.com/madeinoz67/go-parts/internal/locations"
@@ -24,12 +26,23 @@ func argStr(args map[string]any, key string) string {
 	return s
 }
 
-func argInt(args map[string]any, key string) (int, bool) {
-	f, ok := args[key].(float64)
-	if !ok {
-		return 0, false
+// argInt reads an integer argument. A PRESENT but non-integral value (a
+// fractional float, or a non-number) is a usage error naming the argument —
+// never a silent truncation ({"delta":2.5} recording 2 is silently-wrong) and
+// never a silent fall-back to "absent". ok=false means genuinely absent.
+func argInt(args map[string]any, key string) (int, bool, error) {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return 0, false, nil
 	}
-	return int(f), true
+	f, isNum := v.(float64)
+	if !isNum {
+		return 0, true, fmt.Errorf("%s must be an integer (got %T)", key, v)
+	}
+	if f != math.Trunc(f) {
+		return 0, true, fmt.Errorf("%s must be an integer (got %v)", key, f)
+	}
+	return int(f), true, nil
 }
 
 func argBool(args map[string]any, key string) bool {
@@ -116,7 +129,9 @@ func (s *Server) resolvePart(sel string) ([]*parts.Part, error) {
 func (s *Server) toolSearchParts(args map[string]any) (string, error) {
 	q := argStr(args, "query")
 	limit := 20
-	if v, ok := argInt(args, "limit"); ok && v > 0 && v <= 100 {
+	if v, ok, err := argInt(args, "limit"); err != nil {
+		return "", err
+	} else if ok && v > 0 && v <= 100 {
 		limit = v
 	}
 	var pts []*parts.Part
@@ -286,6 +301,18 @@ func (s *Server) toolUpsertPart(args map[string]any) (string, error) {
 		return "", fmt.Errorf("part fields: %v (PascalCase keys, same as REST)", err)
 	}
 	if p.ID == "" {
+		// Create-branch audit zeroing (rest.handleCreate parity, F2): a caller
+		// MUST NOT set ID/Version/audit fields — they are server-assigned.
+		// Zeroing them defensively keeps a caller-supplied CreatedBy from
+		// spoofing the audit trail (Store.Create's "local" default is
+		// authoritative) and guards the timestamps/Version against any future
+		// drift in the store's create contract.
+		p.ID = ""
+		p.Version = 0
+		p.CreatedBy = ""
+		p.UpdatedBy = ""
+		p.CreatedAt = time.Time{}
+		p.UpdatedAt = time.Time{}
 		if err := s.store.Create(&p); err != nil {
 			return "", err
 		}
@@ -313,7 +340,10 @@ func (s *Server) toolAdjustStock(args map[string]any) (string, error) {
 	partSel := argStr(args, "part")
 	locSel := argStr(args, "location")
 	reason := argStr(args, "reason")
-	delta, haveDelta := argInt(args, "delta")
+	delta, haveDelta, err := argInt(args, "delta")
+	if err != nil {
+		return "", err
+	}
 	if partSel == "" || locSel == "" || reason == "" || !haveDelta {
 		return "", errors.New("part, location, delta, and reason are all required")
 	}
@@ -322,7 +352,13 @@ func (s *Server) toolAdjustStock(args map[string]any) (string, error) {
 		return "", err
 	}
 	if len(matches) > 1 {
-		return "", fmt.Errorf("part selector matches %d parts — pass the exact id", len(matches))
+		// Same candidate formatting as get_part — an agent disambiguates in
+		// one round-trip instead of re-issuing get_part.
+		names := make([]string, len(matches))
+		for i, p := range matches {
+			names[i] = p.ID + " (" + p.MPN + ")"
+		}
+		return "", fmt.Errorf("part selector %q matches %d parts — pass the exact id: %s", partSel, len(matches), strings.Join(names, ", "))
 	}
 	p := matches[0]
 	loc, err := s.resolveLocation(locSel)
@@ -330,8 +366,12 @@ func (s *Server) toolAdjustStock(args map[string]any) (string, error) {
 		return "", err
 	}
 	if _, err := s.components.Get(loc.ID, p.ID); err != nil {
-		return "", fmt.Errorf("part %s (%s) is not stocked at %s — stocked at: %s",
-			p.MPN, p.ID, loc.Label, strings.Join(s.stockedLabelList(p.ID), ", "))
+		if at := s.stockedLabelList(p.ID); len(at) == 0 {
+			return "", fmt.Errorf("part %s (%s) is not stocked anywhere yet — stock it at a location first", p.MPN, p.ID)
+		} else {
+			return "", fmt.Errorf("part %s (%s) is not stocked at %s — stocked at: %s",
+				p.MPN, p.ID, loc.Label, strings.Join(at, ", "))
+		}
 	}
 	if err := s.components.AdjustQty(loc.ID, p.ID, delta, reason); err != nil {
 		return "", err

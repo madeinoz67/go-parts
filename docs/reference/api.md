@@ -178,7 +178,7 @@ PascalCase Go field names as REST bodies.
 
 | Tool | Input | Notes |
 |---|---|---|
-| `search_parts` | `query?`, `tag?`, `low?`, `limit?` (≤100, default 20) | same pipeline as the UI live filter (FTS or list → tag → low) |
+| `search_parts` | `query?`, `tag?` (lowercase — tags are stored lowercased), `low?`, `limit?` (≤100, default 20) | same filters as the UI live filter (FTS or list → tag → low), with one depth difference: a query fetches the top **20** BM25 hits (the REST `GET /parts` depth) before tag/low filtering, where the UI's live filter fetches 500 |
 | `get_part` | one of `id` / `mpn` / `local_number` (also `P-` via-code as `id`) | full record + per-location stock + 10 most recent movements; an ambiguous selector errors listing every match |
 | `upsert_part` | `part` (full record, PascalCase fields) | empty `ID` creates; otherwise the record's `Version` is the optimistic-concurrency token — a stale `Version` is rejected with the conflict error, never a silent overwritten write. `QtyOnHand` is honored only at create; stock moves go through `adjust_stock` |
 | `adjust_stock` | `part`, `location` (label or `L-` via-code), `delta`, `reason` — all required | appends a movement and re-derives part qty; a location the part isn't stocked at is an error listing where it IS stocked |
