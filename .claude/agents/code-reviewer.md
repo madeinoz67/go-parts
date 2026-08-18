@@ -130,7 +130,13 @@ A change often touches more than one. Apply every group whose files appear in th
   a new REST/MCP surface needs `docs/reference/api.md`; a Tier-3 fork needs a decision in the
   go-parts memory vault; a new invariant needs `CLAUDE.md` or the PRD. A missing or stale doc
   update is **blocking** — same severity as a cross-surface obligation, not a nit. A page that
-  does not yet exist must be created by the change that first needs it.
+  does not yet exist must be created by the change that first needs it. The mechanical half
+  runs as ordinary tests — `cmd/go-parts/docs_cli_test.go` (the real cobra tree vs
+  `docs/guide/cli.md`), `internal/rest/routes_doc_test.go` (the registered routes vs
+  `docs/reference/api.md`), and `internal/storage/keys/registry_doc_test.go` (the prefix
+  consts vs the registry's Allocated line). If one is red, the change shipped without its
+  doc update — blocking on its own, no judgment needed. The tests read tables, not meaning:
+  prose truthfulness is still yours.
 
 ## What to produce
 

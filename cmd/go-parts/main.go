@@ -32,6 +32,19 @@ import (
 var version = "dev"
 
 func main() {
+	root, _ := newRootCmd()
+	if err := root.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// newRootCmd builds the cobra root (version flag, the persistent --data-dir,
+// and every subcommand), returning it plus the dataDir binding the
+// subcommands share. Factored out of main so docs_cli_test.go can walk the
+// REAL command tree and diff it against docs/guide/cli.md — construction is
+// side-effect-free (stores open at RunE time, never at wiring time).
+func newRootCmd() (*cobra.Command, *string) {
 	var dataDir string
 
 	root := &cobra.Command{
@@ -42,18 +55,15 @@ func main() {
 	root.PersistentFlags().StringVar(&dataDir, "data-dir", "", "data directory (default ~/.go-parts)")
 
 	root.AddCommand(newStartCmd(&dataDir))
-	root.AddCommand(newStopCmd(&dataDir))
-	root.AddCommand(newStatusCmd(&dataDir))
 	root.AddCommand(newLocationsCmd(&dataDir))
 	root.AddCommand(newViaCmd(&dataDir))          // Slice 4: generic Via resolver (§5.17)
 	root.AddCommand(newReindexCmd(&dataDir))      // RedTeam: FTS reindex recovery
 	root.AddCommand(newDedupeReportCmd(&dataDir)) // identity uniqueness: collision report (read-only)
 	root.AddCommand(newFixQtyCmd(&dataDir))       // Flat-locations: QtyOnHand re-derive
+	root.AddCommand(newStopCmd(&dataDir))
+	root.AddCommand(newStatusCmd(&dataDir))
 
-	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	return root, &dataDir
 }
 
 // newStartCmd builds the `start` subcommand. start runs the foreground server

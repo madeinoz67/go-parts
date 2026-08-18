@@ -246,11 +246,15 @@ go-parts locations add-component <locID|via> <partID|via> <qty> [--tag ...]
 ### `go-parts locations list-components`
 
 Lists the components at a location — the bin's contents: part id, quantity,
-tags. `--json` emits the record array.
+tags.
 
 ```
 go-parts locations list-components <locID|via> [--json]
 ```
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--json` | `false` | machine-readable JSON array |
 
 ### `go-parts locations adjust`
 
@@ -261,6 +265,10 @@ last-used timestamps).
 ```
 go-parts locations adjust <locID|via> <partID|via> <delta> [--reason "..."]
 ```
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--reason` | `""` | reason for the adjustment (recorded in history) |
 
 ### `go-parts locations remove-component`
 
@@ -273,6 +281,8 @@ go-parts locations remove-component <locID|via> <partID|via>
 ```
 
 ## Via
+
+### `go-parts via`
 
 `go-parts via` resolves a Via code (§5.17) — the generic resolver at the CLI.
 A `P-` code resolves to its part; an `L-` code resolves to its location **with

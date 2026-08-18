@@ -67,6 +67,12 @@ services, multiple protocol surfaces over a shared embedded store.
 - **RED-sanity-check bug fixes.** A test for a fixed bug must be shown to fail
   without the fix; a test that passes both ways proves nothing.
 - **Keep the full CI gate fast** (§5.20): build → vet/gofmt → `go test -race`.
+- **Docs-vs-code drift is tested, not remembered.** `docs_cli_test.go`, `routes_doc_test.go`,
+  and `registry_doc_test.go` diff the real cobra tree, route registrations, and prefix consts
+  against `docs/guide/cli.md`, `docs/reference/api.md`, and
+  `docs/internals/keyspace-registry.md` — a red drift test means the change shipped without
+  its doc update (see `docs/development/doc-obligations.md`). Fix the doc, never skip the
+  test.
 - **CLI conventions match go-rag / MuninnDB (§5.12):** `start`/`stop`/`status`
   top-level verbs; `<area> <subsystem> <verb>` for feature areas; guided `init`
   wizards with `--non-interactive`; `--dry-run` on anything that mutates;
