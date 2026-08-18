@@ -165,7 +165,7 @@ func (s *Server) routes() {
 // by the tag-nav.html partial into #tag-nav. Empty until the operator starts
 // tagging parts; the partial handles an empty .Tags range as a bare "Tags"
 // eyebrow with no items.
-func (s *Server) handleShell(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleShell(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "layout.html", map[string]any{
 		"Version":   "dev",

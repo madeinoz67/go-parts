@@ -27,7 +27,7 @@ RECORDS are never modified, but opening the store runs the normal open
 path (schema migration + the idempotent identity-index backfill) — this is
 not a read-only open. Fix a collision by editing the losing part's MPN or
 local number (the store re-reserves identities on Update).`,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			ps, _, _, _, cleanup, err := openStores(*dataDir)
 			if err != nil {
 				return err

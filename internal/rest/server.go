@@ -161,14 +161,14 @@ func (s *Server) auth(h http.HandlerFunc) http.HandlerFunc {
 // handleHealthz is the liveness probe. Cheap, no store touch, returns "ok".
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
 
 // handleStats returns the parts-row count. Goes through Store.Count() so the
 // REST layer never imports the Pebble keyspace directly.
 func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]int{"parts_total": s.store.Count()})
+	_ = json.NewEncoder(w).Encode(map[string]int{"parts_total": s.store.Count()})
 }
 
 // handleCreate accepts a Part JSON body (Go field names — no json tags on the
@@ -419,7 +419,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		out = append(out, *p)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 // writePart sets ETag + Content-Type, status, and writes the JSON body. ETag
@@ -429,7 +429,7 @@ func writePart(w http.ResponseWriter, status int, p *parts.Part) {
 	w.Header().Set("ETag", fmt.Sprintf(`"%d"`, p.Version))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(p)
+	_ = json.NewEncoder(w).Encode(p)
 }
 
 // parseETagVersion parses an If-Match header value of the form `"<int>"`,
@@ -487,7 +487,7 @@ func (s *Server) handleVia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(res)
+	_ = json.NewEncoder(w).Encode(res)
 }
 
 // handlePartLabel is POST /parts/{id}/label — renders the part's scannable SVG
@@ -575,13 +575,13 @@ func (s *Server) writeLabel(w http.ResponseWriter, code, title string, r *http.R
 // --- RedTeam: REST locations CRUD (the §5.2 peer-surface promise) ----------
 
 // handleLocationList is GET /locations — every location in JSON array order.
-func (s *Server) handleLocationList(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleLocationList(w http.ResponseWriter, _ *http.Request) {
 	out := s.locations.List()
 	if out == nil {
 		out = []*locations.Location{} // emit [] not null (jq-friendly)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 // handleLocationGet is GET /locations/{id} — one location by id. 404 on miss.
@@ -699,7 +699,7 @@ func writeLocation(w http.ResponseWriter, status int, l *locations.Location) {
 	w.Header().Set("ETag", fmt.Sprintf(`"%d"`, l.Version))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(l)
+	_ = json.NewEncoder(w).Encode(l)
 }
 
 // --- Flat-locations: component management (stock-at-location junction) -------
@@ -713,7 +713,7 @@ func (s *Server) handleComponentList(w http.ResponseWriter, r *http.Request) {
 		out = []*components.Component{}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 // handleComponentAdd is POST /locations/{id}/components — add a part to a bin
@@ -745,7 +745,7 @@ func (s *Server) handleComponentAdd(w http.ResponseWriter, r *http.Request) {
 	c, _ := s.components.Get(locID, body.PartID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(c)
+	_ = json.NewEncoder(w).Encode(c)
 }
 
 // handleComponentPatch is PATCH /locations/{id}/components/{partId} — adjust
@@ -772,7 +772,7 @@ func (s *Server) handleComponentPatch(w http.ResponseWriter, r *http.Request) {
 	c, _ := s.components.Get(locID, partID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(c)
+	_ = json.NewEncoder(w).Encode(c)
 }
 
 // handleComponentDelete is DELETE /locations/{id}/components/{partId} — remove a

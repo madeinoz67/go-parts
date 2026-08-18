@@ -392,12 +392,12 @@ func (s *Server) toolAdjustStock(args map[string]any) (string, error) {
 		return "", err
 	}
 	if _, err := s.components.Get(loc.ID, p.ID); err != nil {
-		if at := s.stockedLabelList(p.ID); len(at) == 0 {
+		at := s.stockedLabelList(p.ID)
+		if len(at) == 0 {
 			return "", fmt.Errorf("part %s (%s) is not stocked anywhere yet — stock it at a location first", p.MPN, p.ID)
-		} else {
-			return "", fmt.Errorf("part %s (%s) is not stocked at %s — stocked at: %s",
-				p.MPN, p.ID, loc.Label, strings.Join(at, ", "))
 		}
+		return "", fmt.Errorf("part %s (%s) is not stocked at %s — stocked at: %s",
+			p.MPN, p.ID, loc.Label, strings.Join(at, ", "))
 	}
 	if err := s.components.AdjustQty(loc.ID, p.ID, delta, reason); err != nil {
 		return "", err

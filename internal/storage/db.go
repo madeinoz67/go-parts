@@ -42,7 +42,7 @@ func Open(dataDir string) (*Store, error) {
 	}
 	db, err := pebble.Open(dbPath, &pebble.Options{})
 	if err != nil {
-		fl.Unlock()
+		_ = fl.Unlock()
 		return nil, fmt.Errorf("storage: open pebble: %w", err)
 	}
 	if err := bootstrapOrMigrate(db, dataDir); err != nil {

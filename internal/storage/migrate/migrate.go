@@ -79,7 +79,7 @@ func RegisterMigrations(r *Runner) {
 	r.Register(Migration{
 		Version:     2,
 		Description: "Locations: Part gains additive DefaultLocationID/DefaultLocationMandatory (no-op; re-arms refuse-newer for older binaries)",
-		Up:          func(db *pebble.DB) error { return nil },
+		Up:          func(_ *pebble.DB) error { return nil },
 	})
 	// v3 (Flat Locations redesign + components keyspace): the restructured
 	// Location/Part structs are additive JSON-compatible — old records decode
@@ -96,7 +96,7 @@ func RegisterMigrations(r *Runner) {
 	r.Register(Migration{
 		Version:     3,
 		Description: "Flat Locations redesign: Location loses ParentID/SinglePartOnly (gains Tags); Part loses DefaultLocationID/Mandatory; new components keyspace 0x13 (no-op; re-arms refuse-newer)",
-		Up:          func(db *pebble.DB) error { return nil },
+		Up:          func(_ *pebble.DB) error { return nil },
 	})
 	// v4 (Archive): Location gains the additive Archived bool. Same refuse-newer
 	// rationale as v2/v3 — a pre-archive binary (LatestVersion 3) would decode
@@ -106,7 +106,7 @@ func RegisterMigrations(r *Runner) {
 	r.Register(Migration{
 		Version:     4,
 		Description: "Archive: Location gains additive Archived bool (no-op; re-arms refuse-newer)",
-		Up:          func(db *pebble.DB) error { return nil },
+		Up:          func(_ *pebble.DB) error { return nil },
 	})
 	// v5 (Part identity uniqueness): Part gains the additive LocalNumber field
 	// and the new 0x14 identity index keyspace (MPN + LocalNumber uniqueness).
@@ -117,7 +117,7 @@ func RegisterMigrations(r *Runner) {
 	r.Register(Migration{
 		Version:     5,
 		Description: "Part identity: additive LocalNumber field + 0x14 ident index (backfill at Store open; re-arms refuse-newer)",
-		Up:          func(db *pebble.DB) error { return nil },
+		Up:          func(_ *pebble.DB) error { return nil },
 	})
 }
 
@@ -130,13 +130,13 @@ func RegisterMigrations(r *Runner) {
 func MaxRegisteredVersion() int {
 	r := &Runner{}
 	RegisterMigrations(r)
-	max := 0
+	maxVer := 0
 	for _, m := range r.migrations {
-		if m.Version > max {
-			max = m.Version
+		if m.Version > maxVer {
+			maxVer = m.Version
 		}
 	}
-	return max
+	return maxVer
 }
 
 // LatestVersion returns the schema version this binary writes on a fresh
@@ -145,8 +145,8 @@ func MaxRegisteredVersion() int {
 // written by a newer binary (stored > LatestVersion ⇒ hard fail), and (c)
 // detect when migrations must be applied (stored < LatestVersion).
 func LatestVersion() int {
-	if max := MaxRegisteredVersion(); max > BaselineVersion {
-		return max
+	if maxRegistered := MaxRegisteredVersion(); maxRegistered > BaselineVersion {
+		return maxRegistered
 	}
 	return BaselineVersion
 }

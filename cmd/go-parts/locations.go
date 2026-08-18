@@ -86,7 +86,7 @@ func newLocationsAddCmd(dataDir *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add --label \"Bin A3\" [--tag garage --tag workbench] [--notes ...]",
 		Short: "Create a single location",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			label, _ := cmd.Flags().GetString("label")
 			if label == "" {
 				return fmt.Errorf("--label is required")
@@ -135,7 +135,7 @@ func newLocationsBulkCmd(dataDir *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bulk --method row|grid|3d --prefix box [--from/--to|--row-from/--row-to/--col-from/--col-to|--level-from/--level-to]",
 		Short: "Create many locations at once (row/grid/3d-grid, §7.1)",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			// Case-fold before the 3d→3d_grid alias so --method ROW / 3D / Row
 			// all work (Fix C / O4).
 			canonical := strings.ToLower(method)
@@ -196,9 +196,9 @@ func newLocationsBulkCmd(dataDir *string) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&method, "method", "", "creation method: row, grid, or 3d (single uses 'go-parts locations add')")
-	cmd.MarkFlagRequired("method")
+	_ = cmd.MarkFlagRequired("method")
 	cmd.Flags().StringVar(&prefix, "prefix", "", "label prefix (e.g. box, shelf, rack)")
-	cmd.MarkFlagRequired("prefix")
+	_ = cmd.MarkFlagRequired("prefix")
 	cmd.Flags().IntVar(&from, "from", 0, "row: numeric range start (inclusive)")
 	cmd.Flags().IntVar(&to, "to", 0, "row: numeric range end (inclusive)")
 	cmd.Flags().StringVar(&rowFrom, "row-from", "", "grid/3d: first row letter (A-Z)")
@@ -219,7 +219,7 @@ func newLocationsListCmd(dataDir *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list [--json]",
 		Short: "List all locations",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			s, cleanup, err := openLocations(*dataDir)
 			if err != nil {
 				return err
@@ -250,7 +250,7 @@ func newLocationsRemoveCmd(dataDir *string) *cobra.Command {
 		Use:   "remove <id|viacode>",
 		Short: "Remove a location (refuses if it still holds stock)",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			// remove composes stores: the has-components refusal needs
 			// components.List, so open both (locations.Store can't see the
 			// components keyspace, §5.1).
@@ -306,7 +306,7 @@ func newLocationsLabelCmd(dataDir *string) *cobra.Command {
 		Use:   "label <id|viacode>",
 		Short: "Render the location's scannable label SVG to stdout (§5.17)",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			_, ls, _, vs, cleanup, err := openStores(*dataDir)
 			if err != nil {
 				return err
@@ -356,7 +356,7 @@ func newLocationsAddComponentCmd(dataDir *string) *cobra.Command {
 		Use:   "add-component <locID|via> <partID|via> <qty>",
 		Short: "Add a part to a location with an initial quantity",
 		Args:  cobra.ExactArgs(3),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			_, _, cs, vs, cleanup, err := openStores(*dataDir)
 			if err != nil {
 				return err
@@ -392,7 +392,7 @@ func newLocationsListComponentsCmd(dataDir *string) *cobra.Command {
 		Use:   "list-components <locID|via>",
 		Short: "List components at a location",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			_, _, cs, vs, cleanup, err := openStores(*dataDir)
 			if err != nil {
 				return err
@@ -425,7 +425,7 @@ func newLocationsAdjustCmd(dataDir *string) *cobra.Command {
 		Use:   "adjust <locID|via> <partID|via> <delta>",
 		Short: "Adjust a component's quantity (stock in/out with history)",
 		Args:  cobra.ExactArgs(3),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			_, _, cs, vs, cleanup, err := openStores(*dataDir)
 			if err != nil {
 				return err
@@ -461,7 +461,7 @@ func newLocationsRemoveComponentCmd(dataDir *string) *cobra.Command {
 		Use:   "remove-component <locID|via> <partID|via>",
 		Short: "Remove a component from a location",
 		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			_, _, cs, vs, cleanup, err := openStores(*dataDir)
 			if err != nil {
 				return err

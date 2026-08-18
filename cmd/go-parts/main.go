@@ -74,7 +74,7 @@ func newStartCmd(dataDir *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the go-parts foreground server (Ctrl-C to stop)",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			cfg, err := config.Load(*dataDir)
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
@@ -96,7 +96,7 @@ func newStopCmd(dataDir *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the running go-parts daemon",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			return daemon.Stop(*dataDir)
 		},
 	}
@@ -110,7 +110,7 @@ func newStatusCmd(dataDir *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Report the daemon's running state, bind address, and PID",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			st, err := daemon.Status(*dataDir)
 			if err != nil {
 				return err
@@ -131,7 +131,7 @@ func newReindexCmd(dataDir *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "reindex",
 		Short: "Rebuild the BM25 search index from the parts store",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			ps, _, _, _, cleanup, err := openStores(*dataDir)
 			if err != nil {
 				return err
@@ -154,7 +154,7 @@ func newFixQtyCmd(dataDir *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "fix-qty",
 		Short: "Re-derive all parts' QtyOnHand from component quantities",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			ps, _, cs, _, cleanup, err := openStores(*dataDir)
 			if err != nil {
 				return err

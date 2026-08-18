@@ -335,7 +335,7 @@ func (s *Server) handlePartExpansion(w http.ResponseWriter, r *http.Request) {
 // button's target). The form POSTs to /ui/parts (handleCreate). Renders into
 // the detail panel — same target as row-select, so the create form and the
 // detail view share one swap surface by design.
-func (s *Server) handleCreateForm(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleCreateForm(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "create.html", map[string]any{
 		"Footprints": mergeFootprints(commonFootprints, s.store.DistinctFootprints()),
@@ -383,13 +383,13 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		Tags:          parseTags(r.PostFormValue("tags")),
 	}
 	if v := r.PostFormValue("qty"); v != "" {
-		fmt.Sscanf(v, "%d", &p.QtyOnHand)
+		_, _ = fmt.Sscanf(v, "%d", &p.QtyOnHand)
 	}
 	if v := r.PostFormValue("reorder_threshold"); v != "" {
-		fmt.Sscanf(v, "%d", &p.ReorderPoint)
+		_, _ = fmt.Sscanf(v, "%d", &p.ReorderPoint)
 	}
 	if v := r.PostFormValue("package_qty"); v != "" {
-		fmt.Sscanf(v, "%d", &p.PackageQty)
+		_, _ = fmt.Sscanf(v, "%d", &p.PackageQty)
 	}
 	if err := s.store.Create(p); err != nil {
 		// Identity uniqueness (schema v5): a taken MPN/local number re-renders
@@ -483,10 +483,10 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 	cur.Specs = parseKV(r.PostFormValue("specs"))
 	cur.CustomFields = parseKV(r.PostFormValue("custom_fields"))
 	if v := r.PostFormValue("reorder_threshold"); v != "" {
-		fmt.Sscanf(v, "%d", &cur.ReorderPoint)
+		_, _ = fmt.Sscanf(v, "%d", &cur.ReorderPoint)
 	}
 	if v := r.PostFormValue("package_qty"); v != "" {
-		fmt.Sscanf(v, "%d", &cur.PackageQty)
+		_, _ = fmt.Sscanf(v, "%d", &cur.PackageQty)
 	}
 	if err := s.store.Update(cur, expected); err != nil {
 		// Identity uniqueness (schema v5): a taken MPN/local number re-renders
@@ -954,7 +954,7 @@ func (s *Server) handleLocationBulkArchive(w http.ResponseWriter, r *http.Reques
 // create-single form is no longer inline above the table — it opens in the
 // detail panel via the header "+ new" button (handleLocationCreateForm). List
 // rows hx-get the detail fragment into #loc-detail on click (htmx).
-func (s *Server) handleLocationsPage(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleLocationsPage(w http.ResponseWriter, _ *http.Request) {
 	// One List() pass feeds the list, the contents counts, and the footer —
 	// the tag facet is a Store method (its own single scan, mirroring the
 	// Parts shell's handleSearch + store.TagCounts pairing).
@@ -1036,7 +1036,7 @@ func (s *Server) componentList(id string) []*components.Component {
 // Storage header "+ new" button's target — mirrors Parts' handleCreateForm at
 // /ui/parts/new). The form POSTs to /ui/locations (handleLocationCreate) and
 // renders into the detail panel, the same surface as row-select.
-func (s *Server) handleLocationCreateForm(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleLocationCreateForm(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "location-create.html", map[string]any{}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1053,7 +1053,7 @@ func formInt(v string) int {
 // handleLocationBulkForm renders the bulk-create form (the "+ bulk" header
 // button's target): method + prefix + per-method ranges + notes + the sanity
 // cap, over the SAME GenerateLabels/CreateBulk engine the CLI drives.
-func (s *Server) handleLocationBulkForm(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleLocationBulkForm(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "location-bulk.html", bulkFormOptions()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1276,7 +1276,7 @@ func (s *Server) handleComponentAddUI(w http.ResponseWriter, r *http.Request) {
 	}
 	partID := r.PostFormValue("part_id")
 	qty := 0
-	fmt.Sscanf(r.PostFormValue("qty"), "%d", &qty)
+	_, _ = fmt.Sscanf(r.PostFormValue("qty"), "%d", &qty)
 	if partID == "" {
 		s.renderLocationDetailError(w, r, id, "select a part to add")
 		return

@@ -19,7 +19,7 @@ func newViaCmd(dataDir *string) *cobra.Command {
 		Use:   "via <code>",
 		Short: "Resolve a Via code (P-/L-) to its entity — scan-to-find (§5.17)",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			ps, ls, cs, vs, cleanup, err := openStores(*dataDir)
 			if err != nil {
 				return err
