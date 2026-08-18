@@ -49,3 +49,6 @@ Thumbs.db
 # Secrets — env-var only, never on disk; a .env here is gitignored as a backstop
 .env
 .env.*
+
+# Playwright MCP verification artifacts — session-local, never commit
+/.playwright-mcp/
