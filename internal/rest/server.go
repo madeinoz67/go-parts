@@ -32,6 +32,7 @@ import (
 	"github.com/madeinoz67/go-parts/internal/label"
 	"github.com/madeinoz67/go-parts/internal/link"
 	"github.com/madeinoz67/go-parts/internal/locations"
+	"github.com/madeinoz67/go-parts/internal/origin"
 	"github.com/madeinoz67/go-parts/internal/parts"
 	"github.com/madeinoz67/go-parts/internal/via"
 )
@@ -147,15 +148,19 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /locations/{id}/components/{partId}", s.auth(s.handleComponentDelete))
 }
 
-// auth is the §5.8 single interceptor point. v1 is a no-op: every request
-// passes straight through to h. Real auth (makerspace tokens, etc.) lands
-// here, in this function only, when added — every handler then benefits
-// without a single change to its code. This is the "single-operator in v1,
-// shaped for multi-user later" invariant.
+// auth is the §5.8 single interceptor point. v1 is a no-op for IDENTITY plus
+// the repo-wide CSRF posture (final-review follow-up (b)): origin.Guard
+// blocks mutating requests whose browser-issued Origin is not the request's
+// own scheme://host. The old "REST is unaffected — JSON bodies trigger a CORS
+// preflight" exemption did not hold: REST never enforced Content-Type, so a
+// CORS-"simple" fetch (text/plain) or <form> POST carries an arbitrary JSON
+// body straight into the decoder — a drive-by page could mutate inventory
+// blind. Real identity auth (makerspace tokens, etc.) lands here, in this
+// function only, when added — every handler then benefits without a single
+// change to its code. This is the "single-operator in v1, shaped for
+// multi-user later" invariant.
 func (s *Server) auth(h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		h(w, r)
-	}
+	return origin.Guard(h)
 }
 
 // handleHealthz is the liveness probe. Cheap, no store touch, returns "ok".

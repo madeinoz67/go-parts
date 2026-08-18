@@ -5,9 +5,28 @@ one field-weighted BM25 FTS, the locations/components stores, and the shared
 via index (`internal/rest/server.go`). Go 1.26 method-patterns make the
 routing table executable documentation; `{id}` is read via `r.PathValue`.
 
-v1 has a **no-op auth middleware seam** (`Server.auth`, PRD §5.8): every
-request passes through one interceptor point so makerspace auth is additive
-later rather than a rewrite. There is no auth in v1.
+v1 has a **no-op identity seam plus a uniform CSRF posture** (`Server.auth`
+composes `internal/origin.Guard`, PRD §5.8): every request passes through one
+interceptor point so makerspace auth is additive later rather than a rewrite.
+There is no identity auth in v1.
+
+**CSRF posture (all surfaces — REST, UI, MCP):** every mutating endpoint
+(`POST`/`PUT`/`PATCH`/`DELETE`) returns `403 cross-origin request blocked`
+when the request carries a browser-issued `Origin` header that does not match
+the request's own `scheme://host`. Requests without an `Origin` header
+(curl, scripts, `claude mcp http`) pass — they are not CSRF vectors; v1 has no
+cookies or ambient credentials for a forged request to ride. Reads are
+unguarded. This exists because the daemon binds loopback and CORS-"simple"
+requests (`<form>` POSTs, `fetch` with `Content-Type: text/plain`) reach it
+from any web page you visit — and REST never enforced Content-Type, so such a
+request can carry a JSON body the decoder accepts. The one authority for the
+rule is `internal/origin`. Two known accepted limitations, both closed by the
+future auth layer's configured-scheme/host check: DNS rebinding (an `Origin`
+matching a rebound `Host`), and a TLS-terminating reverse proxy (the daemon
+sees plain HTTP and expects an `http` Origin, so browser mutations fail
+**closed** behind a proxy — v1's default loopback posture is unaffected).
+`X-Forwarded-Proto` is deliberately not honored (spoofable on a non-loopback
+bind).
 
 ## Routes
 
@@ -190,4 +209,6 @@ Domain failures (not-found, version conflict, duplicate identity, bad
 location) return tool results with `isError: true` carrying the engine
 sentinel's message verbatim — the same strings REST surfaces. Only
 protocol-level failures (malformed JSON-RPC, unknown method, unknown tool)
-are JSON-RPC errors. No auth in v1 (§5.8 loopback posture).
+are JSON-RPC errors. No identity auth in v1; the endpoint is behind the
+uniform CSRF posture (`internal/origin` — a cross-origin browser `POST` gets
+`403`, no-`Origin` clients pass).

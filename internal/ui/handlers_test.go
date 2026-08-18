@@ -1748,3 +1748,53 @@ func TestLocationEditWithComponents(t *testing.T) {
 		t.Errorf("refreshed sidebar should list the new tag; body=%s", b)
 	}
 }
+
+// TestAuthUIOriginGuard pins the UI surface's CSRF wiring (adversary Finding 1,
+// follow-up (b)): the original TestAuthUI_CSRFOriginCheck (8ed4dc1) died with
+// the flat-locations redesign's route changes (00e09cf) and nothing restored
+// it — with origin.Guard neutered the ENTIRE ui package stayed green, so a
+// future route registered without s.auth would ship silently on the one
+// surface whose original CSRF hole was rated CRITICAL. Mirror of REST's
+// TestOriginGuard trio.
+func TestAuthUIOriginGuard(t *testing.T) {
+	srv := newTestServer(t)
+	// Foreign browser Origin on the parts-create route → 403, no write.
+	req := postForm("POST", "/ui/parts", url.Values{"mpn": {"EVIL"}, "footprint": {"0805"}}.Encode())
+	req.Header.Set("Origin", "http://evil.example")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin POST /ui/parts = %d, want 403", rr.Code)
+	}
+	if got := srv.store.Count(); got != 0 {
+		t.Fatalf("blocked cross-origin create must not write: count=%d", got)
+	}
+	// Storage flank of the same wrapper: POST /ui/locations is guarded too.
+	req = postForm("POST", "/ui/locations", url.Values{"label": {"EVILBIN"}}.Encode())
+	req.Header.Set("Origin", "http://evil.example")
+	rr = httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin POST /ui/locations = %d, want 403", rr.Code)
+	}
+	// No Origin (curl, non-browser) → the create lands.
+	rr = httptest.NewRecorder()
+	srv.ServeHTTP(rr, postForm("POST", "/ui/parts", url.Values{"mpn": {"OK-NO-ORIGIN"}, "footprint": {"0805"}}.Encode()))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("no-Origin POST = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if got := srv.store.Count(); got != 1 {
+		t.Fatalf("no-Origin create must write: count=%d", got)
+	}
+	// Same-origin browser Origin (httptest defaults host example.com, http) → passes.
+	req = postForm("POST", "/ui/parts", url.Values{"mpn": {"OK-SAME-ORIGIN"}, "footprint": {"0805"}}.Encode())
+	req.Header.Set("Origin", "http://example.com")
+	rr = httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("same-Origin POST = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if got := srv.store.Count(); got != 2 {
+		t.Fatalf("same-Origin create must write: count=%d", got)
+	}
+}

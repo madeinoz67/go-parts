@@ -703,3 +703,73 @@ func TestLocationDeleteREST(t *testing.T) {
 		t.Fatalf("delete after remove = %d, want 204; body: %s", rr2.Code, rr2.Body.String())
 	}
 }
+
+// --- repo-wide CSRF posture: uniform same-origin Origin guard (follow-up (b)) ---
+
+// originReq drives srv with a request carrying an Origin header — the drive-by
+// browser shape the guard exists for (attacker page, CORS-"simple" request).
+func originReq(srv *Server, method, path, body, origin string) *httptest.ResponseRecorder {
+	var req *http.Request
+	if body == "" {
+		req = httptest.NewRequest(method, path, nil)
+	} else {
+		req = httptest.NewRequest(method, path, strings.NewReader(body))
+	}
+	req.Header.Set("Origin", origin)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	return rr
+}
+
+// TestOriginGuardBlocksCrossOriginMutations pins the repo-wide CSRF posture on
+// REST (final-review follow-up (b)): a browser-issued Origin that is not the
+// request's own scheme://host is a drive-by cross-site fire and gets 403 on
+// every mutating route. This closes the text/plain-fetch vector — REST never
+// enforced Content-Type, so a CORS-"simple" request can carry a JSON body the
+// decoder happily parses; the ui.auth comment's old "REST is unaffected —
+// JSON triggers preflight" rationale had exactly this hole. The guard fires
+// before the handler, so placeholder ids suffice for the id-bearing rows.
+func TestOriginGuardBlocksCrossOriginMutations(t *testing.T) {
+	srv := newTestServer(t)
+	cases := []struct{ method, path, body string }{
+		{http.MethodPost, "/parts", `{"MPN":"EVIL"}`},
+		{http.MethodPatch, "/parts/01PLACEHOLDER", `{"Description":"evil"}`},
+		{http.MethodDelete, "/parts/01PLACEHOLDER", ""},
+		{http.MethodPost, "/locations", `{"Label":"EVIL"}`},
+		{http.MethodDelete, "/locations/01PLACEHOLDER", ""},
+		{http.MethodPost, "/locations/01PLACEHOLDER/components", `{"PartID":"x","Quantity":1}`},
+	}
+	for _, tc := range cases {
+		rr := originReq(srv, tc.method, tc.path, tc.body, "http://evil.example")
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("%s %s with foreign Origin = %d, want 403", tc.method, tc.path, rr.Code)
+		}
+	}
+	// And nothing was written by the blocked POST.
+	if got := srv.store.Count(); got != 0 {
+		t.Fatalf("blocked cross-origin create must not write: count=%d", got)
+	}
+}
+
+// TestOriginGuardAllowsNoOriginAndSameOrigin pins the pass side: curl/scripts
+// send no Origin (pass — not CSRF vectors), and a legitimate same-origin
+// browser client's Origin equals the request's scheme://host (httptest
+// defaults the host to example.com, scheme http).
+func TestOriginGuardAllowsNoOriginAndSameOrigin(t *testing.T) {
+	srv := newTestServer(t)
+	if rr := post(srv, "/parts", `{"MPN":"NOORIGIN"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("no-Origin POST = %d, want 201 (not a CSRF vector)", rr.Code)
+	}
+	if rr := originReq(srv, http.MethodPost, "/parts", `{"MPN":"SAMEORIGIN"}`, "http://example.com"); rr.Code != http.StatusCreated {
+		t.Fatalf("same-Origin POST = %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestOriginGuardGETUnaffected: reads are not mutations — a foreign Origin on
+// a GET passes (same posture as ui/mcp: nothing to forge on a read).
+func TestOriginGuardGETUnaffected(t *testing.T) {
+	srv := newTestServer(t)
+	if rr := originReq(srv, http.MethodGet, "/parts", "", "http://evil.example"); rr.Code != http.StatusOK {
+		t.Fatalf("GET with foreign Origin = %d, want 200 (reads unguarded)", rr.Code)
+	}
+}

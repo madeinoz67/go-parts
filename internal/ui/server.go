@@ -12,6 +12,7 @@ import (
 	"github.com/madeinoz67/go-parts/internal/components"
 	"github.com/madeinoz67/go-parts/internal/index"
 	"github.com/madeinoz67/go-parts/internal/locations"
+	"github.com/madeinoz67/go-parts/internal/origin"
 	"github.com/madeinoz67/go-parts/internal/parts"
 )
 
@@ -79,51 +80,19 @@ func (s *Server) locationOptions() []*locations.Location {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
 
 // auth is the UI surface's §5.8 single interceptor point, mirroring
-// rest.Server.auth. v1: a no-op for identity + an Origin same-origin check on
-// mutating requests (the CSRF defense for the form-urlencoded UI surface —
-// RedTeam critical finding). Real identity auth (makerspace tokens) lands here
-// OR at the daemon's top-level mux wrapping both uiSrv and restSrv.
+// rest.Server.auth. v1: a no-op for identity + the repo-wide CSRF posture
+// (origin.Guard — same rule as REST and MCP since follow-up (b); the UI's
+// original RedTeam-critical guard, now the shared package). Real identity
+// auth (makerspace tokens) lands here OR at the daemon's top-level mux
+// wrapping every surface.
 //
 // CSRF: the UI mutates via application/x-www-form-urlencoded POSTs, which are
 // CORS-"simple" (no preflight), so a cross-origin <form method=POST> fires
-// blind. A browser ALWAYS sends an Origin header on a POST; we require it to
-// match the request's own scheme://host (same-origin). A request with no Origin
-// (curl, a non-browser client) is allowed — it is not a CSRF vector. REST is
-// unaffected: its JSON bodies trigger a CORS preflight the server must allow,
-// so cross-origin JSON POSTs are already browser-blocked. (The static asset
-// handler is intentionally unwrapped — read-only CSS/JS/fonts.)
+// blind. Guard requires a browser-issued Origin to match the request's own
+// scheme://host; no Origin (curl, a non-browser client) passes. (The static
+// asset handler is intentionally unwrapped — read-only CSS/JS/fonts.)
 func (s *Server) auth(h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if isMutating(r.Method) {
-			if origin := r.Header.Get("Origin"); origin != "" {
-				expected := schemeOf(r) + "://" + r.Host
-				if origin != expected {
-					http.Error(w, "cross-origin request blocked", http.StatusForbidden)
-					return
-				}
-			}
-		}
-		h(w, r)
-	}
-}
-
-// isMutating reports whether the method can change server state (the CSRF
-// check applies only to these — GETs are not CSRF vectors for this surface).
-func isMutating(method string) bool {
-	switch method {
-	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
-		return true
-	}
-	return false
-}
-
-// schemeOf returns the request's URL scheme: "https" when TLS-terminated,
-// else "http" (the loopback default). Used for the CSRF same-origin comparison.
-func schemeOf(r *http.Request) string {
-	if r.TLS != nil {
-		return "https"
-	}
-	return "http"
+	return origin.Guard(h)
 }
 
 func (s *Server) routes() {
