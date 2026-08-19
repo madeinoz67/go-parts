@@ -817,3 +817,89 @@ func TestSearchBareStillEmpty(t *testing.T) {
 		t.Fatalf("bare GET /parts behavior must be unchanged (empty), got %q", body)
 	}
 }
+
+// TestSearchQLowComposition (Task-1 review carry-in): low composes with q —
+// the query narrows to its hit set, THEN low keeps only QtyOnHand <=
+// ReorderPoint within it, so q=<low part's MPN> keeps its one hit and
+// q=<high part's MPN> drops it to zero.
+func TestSearchQLowComposition(t *testing.T) {
+	srv := newTestServer(t)
+	post(srv, "/parts", `{"MPN":"QLOWONE","PartType":"local","QtyOnHand":2,"ReorderPoint":5}`)  // low
+	post(srv, "/parts", `{"MPN":"QLOWTEN","PartType":"local","QtyOnHand":50,"ReorderPoint":5}`) // fine
+	rr := get(srv, "/parts?q=QLOWONE&low=1")
+	var pts []parts.Part
+	if err := json.Unmarshal(rr.Body.Bytes(), &pts); err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 1 || pts[0].MPN != "QLOWONE" {
+		t.Fatalf("q=low-part&low=1 must return exactly the low hit, got %d: %s", len(pts), rr.Body.String())
+	}
+	rr = get(srv, "/parts?q=QLOWTEN&low=1")
+	var again []parts.Part
+	if err := json.Unmarshal(rr.Body.Bytes(), &again); err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("q=high-part&low=1 must return 0 hits, got %d: %s", len(again), rr.Body.String())
+	}
+}
+
+// TestSearchZeroHitRendersNull (Task-1 review carry-in): a q matching nothing
+// renders body "null" (nil slice through Encode) — pinned exactly, so a future
+// switch to "[]" is a conscious shape change, not an accident.
+func TestSearchZeroHitRendersNull(t *testing.T) {
+	srv := newTestServer(t)
+	rr := get(srv, "/parts?q=definitelynomatch")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("zero-hit q = %d, want 200", rr.Code)
+	}
+	if got := strings.TrimSpace(rr.Body.String()); got != "null" {
+		t.Fatalf("zero-hit body = %q, want %q (today's shape)", got, "null")
+	}
+}
+
+// --- TUI companion: stock aggregate (spec 2026-08-19-tui §3) ---------------
+
+func TestPartStockAggregate(t *testing.T) {
+	srv, ls := newTestServerWithLocations(t)
+	bin := &locations.Location{Label: "Drawer A1"}
+	if err := ls.Create(bin); err != nil {
+		t.Fatal(err)
+	}
+	p := restCreate(t, srv, `{"MPN":"STK1","PartType":"local","Description":"agg"}`)
+	if err := srv.components.Add(bin.ID, p.ID, 50, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.components.AdjustQty(bin.ID, p.ID, -5, "bench"); err != nil {
+		t.Fatal(err)
+	}
+	rr := get(srv, "/parts/"+p.ID+"/stock")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("stock = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	b := rr.Body.String()
+	for _, want := range []string{`"MPN":"STK1"`, `"Label":"Drawer A1"`, `"Quantity":45`, `"Delta":-5`, `"Reason":"bench"`, `"Reason":"initial"`} {
+		if !strings.Contains(b, want) {
+			t.Errorf("stock aggregate missing %s: %s", want, b)
+		}
+	}
+	// newest-first: bench (-5) appears before initial (+50).
+	if strings.Index(b, `"Reason":"bench"`) > strings.Index(b, `"Reason":"initial"`) {
+		t.Errorf("movements must be newest-first: %s", b)
+	}
+	// Via-code resolution: the bin's L- code rides the stock entry.
+	if !strings.Contains(b, bin.ViaCode) {
+		t.Errorf("stock entry must carry the location via-code: %s", b)
+	}
+}
+
+func TestPartStockByViaCodeAnd404(t *testing.T) {
+	srv, _ := newTestServerWithLocations(t)
+	p := restCreate(t, srv, `{"MPN":"STK2","PartType":"local"}`)
+	if rr := get(srv, "/parts/"+p.ViaCode+"/stock"); rr.Code != http.StatusOK {
+		t.Fatalf("stock by P- via-code = %d, want 200", rr.Code)
+	}
+	if rr := get(srv, "/parts/nope/stock"); rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown = %d, want 404", rr.Code)
+	}
+}

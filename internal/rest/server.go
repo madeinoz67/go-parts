@@ -23,6 +23,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -129,6 +130,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /parts", s.auth(s.handleSearch)) // ?q=… (FTS); absent q → empty list
 	s.mux.HandleFunc("POST /parts", s.auth(s.handleCreate))
 	s.mux.HandleFunc("GET /parts/{id}", s.auth(s.handleGet))
+	s.mux.HandleFunc("GET /parts/{id}/stock", s.auth(s.handlePartStock)) // TUI companion: a part's cross-location stock + movements
 	s.mux.HandleFunc("PATCH /parts/{id}", s.auth(s.handlePatch))
 	s.mux.HandleFunc("DELETE /parts/{id}", s.auth(s.handleDelete))
 	// Slice 4 — generic Via resolver + per-entity label endpoints (§5.17, §8).
@@ -456,6 +458,55 @@ func filterLowREST(pts []parts.Part) []parts.Part {
 		}
 	}
 	return out
+}
+
+// stockEntry is one (location, part) stock row rendered for humans/clients:
+// the bin's LABEL and via-code, not its ULID.
+type stockEntry struct {
+	Label    string
+	ViaCode  string
+	Quantity int
+}
+
+// partStockResponse is the GET /parts/{id}/stock aggregate — the REST twin of
+// MCP get_part's payload (spec 2026-08-19-tui §3). PascalCase, no json tags.
+type partStockResponse struct {
+	Part            parts.Part
+	Stock           []stockEntry
+	RecentMovements []components.Movement
+}
+
+// handlePartStock is GET /parts/{id}/stock — a part's full record, its
+// per-location stock (label + via-code + qty), and its 10 most recent
+// movements (newest-first), composed in-process from the same stores the MCP
+// get_part tool reads (identical aggregation by construction).
+func (s *Server) handlePartStock(w http.ResponseWriter, r *http.Request) {
+	p, err := s.partFromPath(r)
+	if err != nil {
+		if errors.Is(err, parts.ErrNotFound) || errors.Is(err, via.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "part stock: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	comps := s.components.FindByPart(p.ID)
+	stock := make([]stockEntry, 0, len(comps))
+	movs := []components.Movement{}
+	for _, c := range comps {
+		label, code := c.LocationID, ""
+		if loc, err := s.locations.Get(c.LocationID); err == nil {
+			label, code = loc.Label, loc.ViaCode
+		}
+		stock = append(stock, stockEntry{Label: label, ViaCode: code, Quantity: c.Quantity})
+		movs = append(movs, c.History...)
+	}
+	sort.Slice(movs, func(i, j int) bool { return movs[i].Timestamp.After(movs[j].Timestamp) })
+	if len(movs) > 10 {
+		movs = movs[:10]
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(partStockResponse{Part: *p, Stock: stock, RecentMovements: movs})
 }
 
 // writePart sets ETag + Content-Type, status, and writes the JSON body. ETag
