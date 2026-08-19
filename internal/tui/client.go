@@ -5,6 +5,7 @@
 package tui
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -83,4 +84,59 @@ func (c *Client) getJSON(path string, out any) error {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// StockEntry is one bin's stock of a part (label + via-code + qty).
+type StockEntry struct {
+	Label    string
+	ViaCode  string
+	Quantity int
+}
+
+// Movement is one stock movement, decoded from the PascalCase wire.
+type Movement struct {
+	Timestamp time.Time
+	Delta     int
+	Reason    string
+}
+
+// PartDetail is the GET /parts/{id}/stock aggregate the detail pane renders.
+type PartDetail struct {
+	Part            PartRow
+	Stock           []StockEntry
+	RecentMovements []Movement
+}
+
+// GetPart fetches GET /parts/{id}/stock — full detail for the bottom pane.
+func (c *Client) GetPart(id string) (PartDetail, error) {
+	var out PartDetail
+	if err := c.getJSON("/parts/"+url.PathEscape(id)+"/stock", &out); err != nil {
+		return PartDetail{}, err
+	}
+	return out, nil
+}
+
+// Adjust PATCHes the component at (locID, partID) with a signed delta and the
+// required reason (the movement-history audit trail). A non-200 returns the
+// response body verbatim (e.g. "404 page not found" on an un-stocked pair)
+// so the adjust form can show it and the user can fix and retry.
+func (c *Client) Adjust(locID, partID string, delta int, reason string) error {
+	body, _ := json.Marshal(map[string]any{"Delta": delta, "Reason": reason})
+	req, err := http.NewRequest(http.MethodPatch,
+		c.base+"/locations/"+url.PathEscape(locID)+"/components/"+url.PathEscape(partID),
+		bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("go-parts server unreachable at %s: %w", c.base, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		var b []byte
+		b, _ = io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
 }
