@@ -220,11 +220,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View is Task 9's deliverable (the render pass). The root model must satisfy
-// tea.Model from day one — Update returns the model boxed as tea.Model — so a
-// minimal View stands in until Task 9 replaces it.
-func (m model) View() string { return "" }
-
 // debounce re-arms the 200ms timer. The timer's Send lands as searchTickMsg;
 // tests deliver searchTickMsg directly (deterministic), so debounce itself is
 // never on the critical test path.

@@ -20,6 +20,7 @@ package tui
 import (
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -77,8 +78,10 @@ type adjustModel struct {
 func newAdjustModel(d PartDetail) *adjustModel {
 	dl := textinput.New()
 	dl.Placeholder = "-5"
+	dl.Prompt = "" // the form's own "delta:" label is the prompt; no stray "> "
 	rs := textinput.New()
 	rs.Placeholder = "why (required)"
+	rs.Prompt = ""
 	a := &adjustModel{part: d, delta: dl, reason: rs}
 	a.syncFocus()
 	return a
@@ -204,4 +207,43 @@ func (a *adjustModel) submitWith(c *Client) tea.Cmd {
 	return func() tea.Msg {
 		return adjustDoneMsg{err: c.Adjust(loc.LocationID, a.part.Part.ID, delta, a.reason.Value())}
 	}
+}
+
+// view renders the form box (Task 9): an `adjust <MPN>` title, the location
+// picker `◂ Label ▸`, the delta and reason inputs with their labels, and
+// Tab/⏎/Esc hints. The focused field's label takes the copper focus ring —
+// copper is the styleguide's "a thing you can do"; unfocused labels render as
+// faint chrome. An in-form error renders phosphor: live data is the engine's
+// own message, never TUI-invented copy. Boxed with the styleBorder hairline
+// token, capped at 60 content columns so the form fits the default 80-col
+// split screen.
+func (a *adjustModel) view(width int) string {
+	w := width - 8
+	if w > 60 {
+		w = 60
+	}
+	if w < 34 {
+		w = 34
+	}
+	label := func(focused bool, name string) string {
+		if focused {
+			return styleCopper.Render("▸ " + name)
+		}
+		return styleDim.Render("  " + name)
+	}
+	var b strings.Builder
+	b.WriteString(styleCopperB.Render("adjust "+a.part.Part.MPN) + "\n\n")
+	if len(a.part.Stock) > 0 {
+		loc := a.part.Stock[a.locIdx%len(a.part.Stock)]
+		b.WriteString(label(a.focus == 0, "location:") + " ◂ " + loc.Label + " ▸\n")
+	} else {
+		b.WriteString(label(a.focus == 0, "location:") + " (none — not stocked anywhere)\n")
+	}
+	b.WriteString(label(a.focus == 1, "delta:") + " " + a.delta.View() + "\n")
+	b.WriteString(label(a.focus == 2, "reason:") + " " + a.reason.View() + "\n\n")
+	b.WriteString(styleDim.Render("Tab cycle · ⏎ submit · Esc cancel"))
+	if a.err != nil {
+		b.WriteString("\n" + stylePhosphr.Render(a.err.Error()))
+	}
+	return styleBorder.Width(w).Render(b.String())
 }
