@@ -159,7 +159,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.hasDetail = false // the detail is stale by construction after a write
 		return m, tea.Batch(tea.Cmd(func() tea.Msg { return forceDetailMsg{} }), fetchAll(m.c, m.low))
 	case tea.KeyMsg:
-		if k := msg.String(); k == "q" || (k == "esc" && m.overlay == nil) {
+		// q/esc quit only at the ROOT: with the overlay open, both keys route
+		// INTO it (its update closes on Esc; "q" is typed text in the focused
+		// field). Checking q before the overlay routing would destroy a
+		// half-typed reason ("seq", "req"…) on its first keystroke.
+		if k := msg.String(); (k == "q" || k == "esc") && m.overlay == nil {
 			return m, tea.Quit
 		}
 		if m.overlay != nil {

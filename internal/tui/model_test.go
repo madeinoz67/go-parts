@@ -234,3 +234,44 @@ func TestSessionLoadedClearsStaleDetail(t *testing.T) {
 		t.Fatal("sessionLoadedMsg must clear hasDetail — the pane must not keep the stale part")
 	}
 }
+
+// --- Task 8 review findings -------------------------------------------------
+
+// TestOverlayQTypesIntoReasonNotQuit pins the F1 fix: with the overlay open,
+// "q" is INPUT, not a quit key. The quit check must not precede overlay
+// routing — otherwise any reason containing a q ("seq", "req"…) destroys the
+// form on its first keystroke.
+func TestOverlayQTypesIntoReasonNotQuit(t *testing.T) {
+	m := testModel(nil)
+	m.overlay = newAdjustModel(formDetail())
+	m.overlay, _ = m.overlay.update(tea.KeyMsg{Type: tea.KeyTab}) // focus 1 (delta)
+	m.overlay, _ = m.overlay.update(tea.KeyMsg{Type: tea.KeyTab}) // focus 2 (reason)
+	m2, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	if m2.(model).overlay == nil {
+		t.Fatal("\"q\" with the overlay open must not quit or close it")
+	}
+	if got := m2.(model).overlay.reason.Value(); got != "q" {
+		t.Fatalf("\"q\" must land in the focused reason field, got %q", got)
+	}
+	if cmd != nil {
+		if _, ok := cmd().(tea.QuitMsg); ok {
+			t.Fatal("no cmd from the overlay path may execute to a quit")
+		}
+	}
+}
+
+// TestSessionLoadedRearmsDetailFetch pins the OTHER half of the stale-detail
+// fix: a successful session load does not just clear the pane — the returned
+// cmd must EXECUTE to forceDetailMsg so the pane repopulates for the
+// (possibly clamped) cursor row without waiting for a cursor move.
+func TestSessionLoadedRearmsDetailFetch(t *testing.T) {
+	m := testModel(nil)
+	_, cmd := m.Update(sessionLoadedMsg{rows: []PartRow{{ID: "n1"}, {ID: "n2"}}})
+	if cmd == nil {
+		t.Fatal("a successful session load must re-arm a detail fetch")
+	}
+	msg := cmd()
+	if _, ok := msg.(forceDetailMsg); !ok {
+		t.Fatalf("the re-arm cmd must execute to forceDetailMsg, got %T", msg)
+	}
+}

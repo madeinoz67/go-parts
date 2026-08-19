@@ -9,8 +9,12 @@
 // state machine: a validated Enter sets `submitted` and returns a marker cmd;
 // the ROOT model (which owns the Client) sees the flag right after routing,
 // consumes it, and dispatches submitWith(m.c) — the single submit path. That
-// is what keeps the form testable without a server and makes a double-applied
-// delta structurally impossible.
+// is what keeps the form testable without a server. What the routing actually
+// guarantees against a double-applied delta: the `submitting` latch arms on
+// the validated Enter and holds until the matching adjustDoneMsg lands, so no
+// second dispatch can go out while one is in flight, and after a FAILED
+// submit the latch releases (the old attempt cannot re-fire; the form accepts
+// edits and a fresh Enter re-validates and retries).
 package tui
 
 import (
@@ -59,7 +63,15 @@ type adjustModel struct {
 	// (cleared) by the root when it dispatches submitWith — a later key must
 	// not re-fire a submit that already went out.
 	submitted bool
-	err       error
+	// submitting is the in-flight latch for the network submit: armed on the
+	// Enter that passes validation, held while the PATCH is out, and released
+	// only by the matching adjustDoneMsg (success OR failure). While held,
+	// Enter is a no-op — without it a second Enter during the round trip
+	// re-validates and dispatches a SECOND signed PATCH, double-applying the
+	// delta. The release-on-error half is what leaves the form editable and
+	// retryable after a failed submit.
+	submitting bool
+	err        error
 }
 
 func newAdjustModel(d PartDetail) *adjustModel {
@@ -67,7 +79,29 @@ func newAdjustModel(d PartDetail) *adjustModel {
 	dl.Placeholder = "-5"
 	rs := textinput.New()
 	rs.Placeholder = "why (required)"
-	return &adjustModel{part: d, delta: dl, reason: rs}
+	a := &adjustModel{part: d, delta: dl, reason: rs}
+	a.syncFocus()
+	return a
+}
+
+// syncFocus aligns the bubbles-level focus of the two text inputs with the
+// logical focus index. An unfocused textinput silently drops runes, so
+// without this the "focused" field could never actually be typed into — and
+// the root's overlay routing (which must let a bare "q" land as text) would
+// be observable only as swallowed keys. Focus 0 (the location picker)
+// unfocuses both: the picker is not a text input. The blink cmds Focus()
+// returns are discarded; cursor rendering is Task 9's concern.
+func (a *adjustModel) syncFocus() {
+	if a.focus == 1 {
+		a.delta.Focus()
+	} else {
+		a.delta.Blur()
+	}
+	if a.focus == 2 {
+		a.reason.Focus()
+	} else {
+		a.reason.Blur()
+	}
 }
 
 // update transitions the overlay. A nil model return means CLOSED (Esc, or a
@@ -76,6 +110,10 @@ func newAdjustModel(d PartDetail) *adjustModel {
 func (a *adjustModel) update(msg tea.Msg) (*adjustModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case adjustDoneMsg:
+		// The in-flight latch releases with the result on BOTH outcomes:
+		// success closes the form (the latch is moot), failure must leave it
+		// editable and retryable.
+		a.submitting = false
 		if msg.err != nil {
 			a.err = msg.err // in-form error — fields survive for retry
 			return a, nil
@@ -87,13 +125,23 @@ func (a *adjustModel) update(msg tea.Msg) (*adjustModel, tea.Cmd) {
 			return nil, nil
 		case tea.KeyTab:
 			a.focus = (a.focus + 1) % 3
+			a.syncFocus()
 			return a, nil
 		case tea.KeyShiftTab:
 			a.focus = (a.focus + 2) % 3
+			a.syncFocus()
 			return a, nil
 		case tea.KeyEnter:
+			if a.submitting {
+				// A submit is in flight — checked FIRST, before validation:
+				// a second Enter must not re-validate and re-arm another
+				// dispatch (Adjust applies a signed delta; two dispatches
+				// double-apply it).
+				return a, nil
+			}
 			if a.validate() {
 				a.submitted = true
+				a.submitting = true
 				return a, adjustSubmitIntent
 			}
 			return a, nil
