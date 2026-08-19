@@ -80,6 +80,18 @@ func fetchSearch(c *Client, q string) tea.Cmd {
 	}
 }
 
+// forceDetailMsg (re)requests the detail for the CURRENT cursor row. Cursor
+// moves emit it automatically; it also exists as an exported seam so refresh
+// (`r`) and post-adjust reload reuse the same path.
+type forceDetailMsg struct{}
+
+func fetchDetail(c *Client, id string) tea.Cmd {
+	return func() tea.Msg {
+		d, err := c.GetPart(id)
+		return detailMsg{id: id, d: d, err: err}
+	}
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -102,6 +114,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, fetchSearch(m.c, q)
 		}
 		return m, fetchAll(m.c, m.low)
+	case forceDetailMsg:
+		if len(m.rows) == 0 {
+			return m, nil
+		}
+		id := m.rows[m.cursor].ID
+		if id == m.lastFetchedID && m.hasDetail {
+			return m, nil // unchanged selection — no refetch storm (spec §4)
+		}
+		m.lastFetchedID = id
+		return m, fetchDetail(m.c, id)
+	case detailMsg:
+		if msg.err != nil {
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.status = ""
+		m.detail = msg.d
+		m.hasDetail = true
 	case tea.KeyMsg:
 		if k := msg.String(); k == "q" || (k == "esc" && m.overlay == nil) {
 			return m, tea.Quit
@@ -116,15 +146,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor > 0 {
 				m.cursor--
 			}
+			return m, tea.Cmd(func() tea.Msg { return forceDetailMsg{} })
 		case tea.KeyDown:
 			if m.cursor < len(m.rows)-1 {
 				m.cursor++
 			}
+			return m, tea.Cmd(func() tea.Msg { return forceDetailMsg{} })
 		case tea.KeyRunes:
 			switch string(msg.Runes) {
 			case "l":
 				m.low = !m.low
 				return m, fetchAll(m.c, m.low)
+			case "a":
+				if len(m.detail.Stock) == 0 {
+					m.status = "not stocked anywhere yet — stock it first (stock_part / web UI)"
+					return m, nil
+				}
+				m.overlay = newAdjustModel(m.detail)
+				return m, textinput.Blink
+			case "r":
+				m.hasDetail = false
+				return m, tea.Batch(tea.Cmd(func() tea.Msg { return forceDetailMsg{} }), fetchAll(m.c, m.low))
 			}
 			// any other typing lands in the filter and re-arms the debounce
 			var cmd tea.Cmd

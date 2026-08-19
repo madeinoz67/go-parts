@@ -6,9 +6,13 @@ package tui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/madeinoz67/go-parts/internal/locations"
+	"github.com/madeinoz67/go-parts/internal/parts"
 )
 
 func testModel(c *Client) model { m := newModel(c); return m }
@@ -69,3 +73,99 @@ func TestSessionLoadedReplacesRows(t *testing.T) {
 }
 
 var errBoom = errors.New("boom")
+
+func TestCursorChangeFetchesDetailOnce(t *testing.T) {
+	c, ps, ls, cs := newClientServerFull(t)
+	p := &parts.Part{MPN: "D1", PartType: "local"}
+	if err := ps.Create(p); err != nil {
+		t.Fatal(err)
+	}
+	bin := &locations.Location{Label: "Bin"}
+	if err := ls.Create(bin); err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.Add(bin.ID, p.ID, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	m := testModel(c)
+	m.rows = []PartRow{{ID: p.ID, MPN: "D1"}}
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown}) // cursor 0 → stays? (no move) — force fetch path:
+	m3, cmd := m2.(model).Update(forceDetailMsg{})
+	if cmd == nil {
+		t.Fatal("a detail fetch command must be issued")
+	}
+	_ = m3
+	got := (<-waitMsg(cmd)).(detailMsg)
+	if got.id != p.ID || got.err != nil || got.d.Part.MPN != "D1" {
+		t.Fatalf("detailMsg = %+v", got)
+	}
+	m4, _ := m3.Update(got)
+	if !m4.(model).hasDetail {
+		t.Fatal("detailMsg must set hasDetail")
+	}
+}
+
+func waitMsg(cmd tea.Cmd) <-chan tea.Msg {
+	ch := make(chan tea.Msg, 1)
+	go func() { ch <- cmd() }()
+	return ch
+}
+
+func TestDetailSkipsUnchangedSelection(t *testing.T) {
+	m := testModel(nil)
+	m.rows = []PartRow{{ID: "p1"}}
+	m.lastFetchedID = "p1"
+	m.hasDetail = true
+	m2, cmd := m.Update(forceDetailMsg{})
+	if cmd != nil {
+		t.Fatal("unchanged selection with detail shown must not refetch (spec §4)")
+	}
+	if !m2.(model).hasDetail {
+		t.Fatal("the skip must not clear the detail pane")
+	}
+}
+
+func TestAdjustRefusedWhenUnstocked(t *testing.T) {
+	c, ps, _, _ := newClientServerFull(t)
+	p := &parts.Part{MPN: "D2", PartType: "local"}
+	if err := ps.Create(p); err != nil {
+		t.Fatal(err)
+	}
+	m := testModel(c)
+	m.rows = []PartRow{{ID: p.ID, MPN: "D2"}}
+	m.detail = PartDetail{Part: PartRow{ID: p.ID}}
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	if m2.(model).overlay != nil {
+		t.Fatal("a with zero stock rows must NOT open the form")
+	}
+	if !strings.Contains(m2.(model).status, "not stocked anywhere yet") {
+		t.Fatalf("status must say why: %q", m2.(model).status)
+	}
+}
+
+// TestSearchTickReReadsFilter is the Task 6 review carry-in: each fired
+// debounce tick must re-read the CURRENT filter value, not a stale one.
+func TestSearchTickReReadsFilter(t *testing.T) {
+	c, ps := newClientServer(t)
+	if err := ps.Create(&parts.Part{MPN: "ZZ9", PartType: "local"}); err != nil {
+		t.Fatal(err)
+	}
+	m := testModel(c)
+	m.filter.SetValue("ZZ9")
+	m2, cmd := m.Update(searchTickMsg{})
+	if cmd == nil {
+		t.Fatal("searchTickMsg must issue a query command")
+	}
+	msg := cmd()
+	loaded, ok := msg.(sessionLoadedMsg)
+	if !ok {
+		t.Fatalf("cmd must produce sessionLoadedMsg, got %T", msg)
+	}
+	if loaded.err != nil {
+		t.Fatal(loaded.err)
+	}
+	m3, _ := m2.Update(loaded)
+	if len(m3.(model).rows) != 1 || m3.(model).rows[0].MPN != "ZZ9" {
+		t.Fatalf("rows = %+v; want exactly the seeded part", m3.(model).rows)
+	}
+}
