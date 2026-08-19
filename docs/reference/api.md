@@ -34,7 +34,7 @@ bind).
 |---|---|---|---|
 | `GET` | `/healthz` | `200` | liveness probe; returns text/plain `ok`, no store touch |
 | `GET` | `/stats` | `200` | `{"parts_total": N}` via `Store.Count()` |
-| `GET` | `/parts?q=…` | `200` | BM25 search (FTS); empty/absent `q` → empty list. TUI companion params: `?all=1` lists the corpus (browse); `?low=1` keeps `QtyOnHand` ≤ `ReorderPoint` (incl. 0/0); both compose with `q` |
+| `GET` | `/parts?q=…` | `200` | BM25 search (FTS); empty/absent or zero-hit `q` → JSON `null` (nil slice through Encode). TUI companion params: `?all=1` lists the corpus (browse); `?low=1` keeps `QtyOnHand` ≤ `ReorderPoint` (incl. 0/0) — it filters the fetched result set, so it composes with `all=1` or `q`; bare `?low=1` has nothing to filter and returns `200` with `null` |
 | `POST` | `/parts` | `201` (+`ETag`) / `400` / `409` / `500` | create; caller MUST NOT set `ID`/`Version`/audit. `409` if the `MPN` or `LocalNumber` is already taken (identity uniqueness, schema v5) |
 | `GET` | `/parts/{id}` | `200` (+`ETag`) / `404` | one part by ID |
 | `GET` | `/parts/{id}/stock` | `200` / `404` | the part + per-location stock (`{LocationID,Label,ViaCode,Quantity}`) + 10 most recent movements (newest-first); `{id}` accepts a part id **or** a `P-` via-code — the REST twin of MCP `get_part`'s aggregate |
@@ -144,8 +144,9 @@ rename. A `POST /parts` or `PATCH /parts/{id}` body must use PascalCase keys.
 `GET /parts?q=…` drives the query through the field-weighted BM25 FTS,
 hydrating the top 20 hits via `Store.Get`. If a hit's Part was deleted between
 the FTS read and the hydrate (a benign race — the FTS is eventually
-consistent), that hit is skipped. An empty or absent `q` returns an empty
-list (the tokenizer drops everything → search returns nil).
+consistent), that hit is skipped. An empty, absent, or zero-hit `q`
+renders JSON `null` (the tokenizer drops everything → search returns a
+nil slice → `Encode` emits `null`; pinned by `TestSearchZeroHitRendersNull`).
 
 ## Via resolver + labels (§5.17)
 

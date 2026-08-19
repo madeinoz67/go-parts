@@ -15,9 +15,8 @@ import (
 const debounceDelay = 200 * time.Millisecond
 
 type sessionLoadedMsg struct {
-	rows  []PartRow
-	total int
-	err   error
+	rows []PartRow
+	err  error
 }
 
 type searchTickMsg struct{}
@@ -202,6 +201,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.low = !m.low
 				return m, fetchAll(m.c, m.low)
 			case "a":
+				// Stale-detail guard (final review): a session load clears
+				// hasDetail and re-arms a fetch; until that detailMsg lands,
+				// m.detail still holds the PREVIOUS part — `a` must not open
+				// the adjust form against it. No-op until detail lands.
+				if !m.hasDetail {
+					return m, nil
+				}
 				if len(m.detail.Stock) == 0 {
 					m.status = "not stocked anywhere yet — stock it first (stock_part / web UI)"
 					return m, nil

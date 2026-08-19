@@ -102,7 +102,15 @@ go-parts tui --host homelab.lan:7890
 | `--host` | the configured `bind` | go-parts server address `host:port`; `http://` is prepended |
 
 Keys: type to filter (live) · `↑`/`↓` select · `a` adjust stock · `l`
-low-stock toggle · `r` refresh · `q` quit.
+low-stock toggle · `r` refresh · `q` quit · `esc` closes an open overlay,
+or quits when none is open.
+
+Because the filter box is always focused, the single-rune commands `a`,
+`l`, and `r` are intercepted **before** it — those three letters can
+never be *typed* into a filter query (a query like `relay` or `lm358`
+cannot be typed letter by letter; pasting it into the box works). `esc`
+closes the adjust overlay when one is open and quits at the root
+otherwise.
 
 ## Locations
 

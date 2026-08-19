@@ -134,12 +134,33 @@ func TestAdjustRefusedWhenUnstocked(t *testing.T) {
 	m := testModel(c)
 	m.rows = []PartRow{{ID: p.ID, MPN: "D2"}}
 	m.detail = PartDetail{Part: PartRow{ID: p.ID}}
+	m.hasDetail = true // the pane IS showing this part — the zero-stock refusal path is reachable only with detail loaded
 	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 	if m2.(model).overlay != nil {
 		t.Fatal("a with zero stock rows must NOT open the form")
 	}
 	if !strings.Contains(m2.(model).status, "not stocked anywhere yet") {
 		t.Fatalf("status must say why: %q", m2.(model).status)
+	}
+}
+
+// TestAdjustIgnoredWhileDetailInFlight pins the final-review stale-detail
+// guard: a session load clears hasDetail and re-arms a detail fetch, and
+// until that fetch lands m.detail still holds the PREVIOUS part — `a` in
+// that window must be a no-op, never an adjust form opened against the
+// previous part's stock.
+func TestAdjustIgnoredWhileDetailInFlight(t *testing.T) {
+	m := testModel(nil)
+	m.rows = []PartRow{{ID: "old"}}
+	m.detail = formDetail() // the PREVIOUS part — still stocked
+	m.hasDetail = true
+	m2, _ := m.Update(sessionLoadedMsg{rows: []PartRow{{ID: "new1"}}})
+	if m2.(model).hasDetail {
+		t.Fatal("setup: sessionLoadedMsg must clear hasDetail")
+	}
+	m3, _ := m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	if m3.(model).overlay != nil {
+		t.Fatal("\"a\" before the re-armed detail lands must not open the overlay (m.detail is still the previous part)")
 	}
 }
 
