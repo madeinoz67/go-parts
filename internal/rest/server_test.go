@@ -891,6 +891,13 @@ func TestPartStockAggregate(t *testing.T) {
 	if !strings.Contains(b, bin.ViaCode) {
 		t.Errorf("stock entry must carry the location via-code: %s", b)
 	}
+	// Task 8 (LocationID wire addition): the bin's ID rides the stock entry
+	// too — the TUI adjust overlay PATCHes
+	// /locations/{id}/components/{partId}, and that path takes the id (the
+	// label/via-code alone cannot address the write).
+	if !strings.Contains(b, `"LocationID":"`+bin.ID+`"`) {
+		t.Errorf("stock entry must carry the location id: %s", b)
+	}
 }
 
 func TestPartStockByViaCodeAnd404(t *testing.T) {

@@ -86,11 +86,14 @@ func (c *Client) getJSON(path string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-// StockEntry is one bin's stock of a part (label + via-code + qty).
+// StockEntry is one bin's stock of a part. LocationID (Task 8) is the bin's
+// ULID — the stock-adjust overlay PATCHes /locations/{id}/components/{partId},
+// which addresses the write by id, not by label/via-code.
 type StockEntry struct {
-	Label    string
-	ViaCode  string
-	Quantity int
+	LocationID string
+	Label      string
+	ViaCode    string
+	Quantity   int
 }
 
 // Movement is one stock movement, decoded from the PascalCase wire.

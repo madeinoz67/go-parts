@@ -460,12 +460,16 @@ func filterLowREST(pts []parts.Part) []parts.Part {
 	return out
 }
 
-// stockEntry is one (location, part) stock row rendered for humans/clients:
-// the bin's LABEL and via-code, not its ULID.
+// stockEntry is one (location, part) stock row rendered for humans/clients.
+// Task 8 carries the bin's LocationID alongside the LABEL and via-code: the
+// TUI's stock-adjust overlay writes back through
+// PATCH /locations/{id}/components/{partId}, which is addressed by id — a
+// client holding only the label/via-code cannot issue that write.
 type stockEntry struct {
-	Label    string
-	ViaCode  string
-	Quantity int
+	LocationID string
+	Label      string
+	ViaCode    string
+	Quantity   int
 }
 
 // partStockResponse is the GET /parts/{id}/stock aggregate — the REST twin of
@@ -498,7 +502,7 @@ func (s *Server) handlePartStock(w http.ResponseWriter, r *http.Request) {
 		if loc, err := s.locations.Get(c.LocationID); err == nil {
 			label, code = loc.Label, loc.ViaCode
 		}
-		stock = append(stock, stockEntry{Label: label, ViaCode: code, Quantity: c.Quantity})
+		stock = append(stock, stockEntry{LocationID: c.LocationID, Label: label, ViaCode: code, Quantity: c.Quantity})
 		movs = append(movs, c.History...)
 	}
 	sort.Slice(movs, func(i, j int) bool { return movs[i].Timestamp.After(movs[j].Timestamp) })

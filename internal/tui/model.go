@@ -103,12 +103,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = ""
 		m.rows = msg.rows
+		// Stale-detail fix (Task 7 review carry-in): the rows just changed
+		// under the pane (filter narrowed, refresh, low toggle) — the part the
+		// detail pane still shows may no longer be selected, or present at
+		// all. Drop hasDetail so the pane stops rendering it, and re-arm a
+		// detail fetch for the (possibly clamped) cursor row so the pane
+		// repopulates without waiting for a cursor move. The re-arm is also
+		// what keeps `r` and post-adjust refresh deterministic: whatever
+		// order the list and detail fetches land in, the LAST fetch re-settles
+		// the pane.
+		m.hasDetail = false
 		if m.cursor >= len(m.rows) {
 			m.cursor = len(m.rows) - 1
 		}
 		if m.cursor < 0 {
 			m.cursor = 0
 		}
+		return m, tea.Cmd(func() tea.Msg { return forceDetailMsg{} })
 	case searchTickMsg:
 		if q := m.filter.Value(); q != "" {
 			return m, fetchSearch(m.c, q)
@@ -132,6 +143,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		m.detail = msg.d
 		m.hasDetail = true
+	case adjustDoneMsg:
+		// The overlay's network submit settled. Failure keeps the form open —
+		// route the msg INTO it so the engine's own message renders in-form
+		// and the fields survive for fix-and-retry. Success closes it and
+		// refreshes BOTH panes through the same path `r` uses: stock changed,
+		// so the detail rows AND the table's QtyOnHand are stale.
+		if m.overlay == nil {
+			return m, nil // stray (overlay already closed) — nothing to do
+		}
+		m.overlay, _ = m.overlay.update(msg) // err → stays open; success → nil
+		if m.overlay != nil {
+			return m, nil
+		}
+		m.hasDetail = false // the detail is stale by construction after a write
+		return m, tea.Batch(tea.Cmd(func() tea.Msg { return forceDetailMsg{} }), fetchAll(m.c, m.low))
 	case tea.KeyMsg:
 		if k := msg.String(); k == "q" || (k == "esc" && m.overlay == nil) {
 			return m, tea.Quit
@@ -139,6 +165,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.overlay != nil {
 			var cmd tea.Cmd
 			m.overlay, cmd = m.overlay.update(msg)
+			if m.overlay != nil && m.overlay.submitted {
+				// The overlay validated the form and asked to submit. The
+				// ROOT owns the client, so it dispatches the real network cmd
+				// here (dropping the overlay's marker cmd) and consumes the
+				// flag — a later key must not re-fire a submit that already
+				// went out.
+				m.overlay.submitted = false
+				return m, m.overlay.submitWith(m.c)
+			}
 			return m, cmd
 		}
 		switch msg.Type {
@@ -199,10 +234,3 @@ func (m model) View() string { return "" }
 func debounce() tea.Cmd {
 	return tea.Tick(debounceDelay, func(time.Time) tea.Msg { return searchTickMsg{} })
 }
-
-// adjustModel is the stock-adjust overlay — Task 8's deliverable. This stub
-// exists so the root model's exact field set (overlay *adjustModel) and its
-// Update dispatch compile in Task 6; Task 8 replaces it with the real overlay.
-type adjustModel struct{}
-
-func (a *adjustModel) update(_ tea.Msg) (*adjustModel, tea.Cmd) { return a, nil }

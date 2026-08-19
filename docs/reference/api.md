@@ -37,7 +37,7 @@ bind).
 | `GET` | `/parts?q=…` | `200` | BM25 search (FTS); empty/absent `q` → empty list. TUI companion params: `?all=1` lists the corpus (browse); `?low=1` keeps `QtyOnHand` ≤ `ReorderPoint` (incl. 0/0); both compose with `q` |
 | `POST` | `/parts` | `201` (+`ETag`) / `400` / `409` / `500` | create; caller MUST NOT set `ID`/`Version`/audit. `409` if the `MPN` or `LocalNumber` is already taken (identity uniqueness, schema v5) |
 | `GET` | `/parts/{id}` | `200` (+`ETag`) / `404` | one part by ID |
-| `GET` | `/parts/{id}/stock` | `200` / `404` | the part + per-location stock (`{Label,ViaCode,Quantity}`) + 10 most recent movements (newest-first); `{id}` accepts a part id **or** a `P-` via-code — the REST twin of MCP `get_part`'s aggregate |
+| `GET` | `/parts/{id}/stock` | `200` / `404` | the part + per-location stock (`{LocationID,Label,ViaCode,Quantity}`) + 10 most recent movements (newest-first); `{id}` accepts a part id **or** a `P-` via-code — the REST twin of MCP `get_part`'s aggregate |
 | `PATCH` | `/parts/{id}` | `200` (+`ETag`) / `428` / `400` / `404` / `409` | edit; `If-Match` required. `409` = version conflict **or** taken identity |
 | `DELETE` | `/parts/{id}` | `204` / `404` / `409` | remove record + FTS entry; `409` if Components still reference it (`ErrHasComponents` — un-stock first) |
 | `GET` | `/via/{code}` | `200` / `303` / `404` | generic Via resolver (§5.17): location → `{Type,Location,Contents}`; part → `{Type,Part}`; browsers get `303` → UI deep-link |

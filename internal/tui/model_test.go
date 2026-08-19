@@ -169,3 +169,68 @@ func TestSearchTickReReadsFilter(t *testing.T) {
 		t.Fatalf("rows = %+v; want exactly the seeded part", m3.(model).rows)
 	}
 }
+
+// --- Task 7 review carry-ins (landed alongside Task 8's batch) --------------
+
+// TestCursorMoveEmitsDetailFetch pins the cursor-follow contract: every cursor
+// move returns a non-nil cmd that EXECUTES to a forceDetailMsg — the detail
+// pane follows the selection with no other trigger.
+func TestCursorMoveEmitsDetailFetch(t *testing.T) {
+	m := testModel(nil)
+	m.rows = []PartRow{{ID: "p1"}, {ID: "p2"}}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if cmd == nil {
+		t.Fatal("cursor move must emit a detail-fetch cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(forceDetailMsg); !ok {
+		t.Fatalf("cursor-move cmd must execute to forceDetailMsg, got %T", msg)
+	}
+}
+
+// TestDetailSkipConjunctionSides pins BOTH sides of the refetch-skip rule: the
+// skip fires only when the id is unchanged AND detail is currently shown —
+// either side false must still fetch.
+func TestDetailSkipConjunctionSides(t *testing.T) {
+	// different id + hasDetail=true → fetch.
+	m := testModel(nil)
+	m.rows = []PartRow{{ID: "p2"}}
+	m.lastFetchedID = "p1"
+	m.hasDetail = true
+	if _, cmd := m.Update(forceDetailMsg{}); cmd == nil {
+		t.Fatal("different id with detail shown must refetch")
+	}
+	// same id + hasDetail=false → fetch.
+	m2 := testModel(nil)
+	m2.rows = []PartRow{{ID: "p1"}}
+	m2.lastFetchedID = "p1"
+	m2.hasDetail = false
+	if _, cmd := m2.Update(forceDetailMsg{}); cmd == nil {
+		t.Fatal("same id with detail NOT shown must refetch")
+	}
+}
+
+// TestRefreshRRefetches pins `r`: refresh re-issues the fetch commands.
+func TestRefreshRRefetches(t *testing.T) {
+	c, _ := newClientServer(t)
+	m := testModel(c)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if cmd == nil {
+		t.Fatal("r must re-issue the fetch commands")
+	}
+}
+
+// TestSessionLoadedClearsStaleDetail pins the stale-detail fix: a successful
+// session load REPLACES the rows (filter narrowed, refresh, low toggle) — the
+// detail pane must not keep rendering the previously selected part, which may
+// no longer be selected (or even present) in the new row set.
+func TestSessionLoadedClearsStaleDetail(t *testing.T) {
+	m := testModel(nil)
+	m.rows = []PartRow{{ID: "old"}}
+	m.detail = PartDetail{Part: PartRow{ID: "old"}}
+	m.hasDetail = true
+	m2, _ := m.Update(sessionLoadedMsg{rows: []PartRow{{ID: "new1"}, {ID: "new2"}}})
+	if m2.(model).hasDetail {
+		t.Fatal("sessionLoadedMsg must clear hasDetail — the pane must not keep the stale part")
+	}
+}
