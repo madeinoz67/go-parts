@@ -62,6 +62,7 @@ func newRootCmd() (*cobra.Command, *string) {
 	root.AddCommand(newFixQtyCmd(&dataDir))       // Flat-locations: QtyOnHand re-derive
 	root.AddCommand(newStopCmd(&dataDir))
 	root.AddCommand(newStatusCmd(&dataDir))
+	root.AddCommand(newTUICmd(&dataDir)) // §5.11 TUI: REST client of the running daemon
 
 	return root, &dataDir
 }

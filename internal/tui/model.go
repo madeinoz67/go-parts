@@ -58,6 +58,11 @@ func newModel(c *Client) model {
 	return model{c: c, filter: f, width: 80, height: 24}
 }
 
+// NewProgramModel is the one cmd-surface seam into the package: tea.NewProgram
+// needs a tea.Model and `model` is deliberately unexported (the terminal stays
+// an internal implementation detail — cmd/go-parts wires it, nothing else).
+func NewProgramModel(c *Client) tea.Model { return newModel(c) }
+
 func (m model) Init() tea.Cmd { return fetchAll(m.c, m.low) }
 
 // fetchAll is the single list-fetch command for every mode (browse, filtered,

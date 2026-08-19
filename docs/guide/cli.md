@@ -84,6 +84,26 @@ A missing state file yields `running:false` with no error (the canonical
 `running:false` (stale fixture left by an unclean exit) — the file's presence
 is never trusted over the liveness probe.
 
+### `go-parts tui`
+
+Terminal UI (§5.11) — a REST client of the running daemon, never a second
+store opener: a split view with a live filter box, the parts table, and a
+detail pane (stock per bin + recent movements) with an adjust overlay.
+Requires `go-parts start` to be running; if the daemon cannot be reached it
+prints the reason and exits 1 rather than opening a blank screen.
+
+```
+go-parts tui                  # connects to the configured default bind (127.0.0.1:7890)
+go-parts tui --host homelab.lan:7890
+```
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--host` | the configured `bind` | go-parts server address `host:port`; `http://` is prepended |
+
+Keys: type to filter (live) · `↑`/`↓` select · `a` adjust stock · `l`
+low-stock toggle · `r` refresh · `q` quit.
+
 ## Locations
 
 `go-parts locations` manages physical storage locations (bins, drawers,

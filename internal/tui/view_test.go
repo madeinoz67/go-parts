@@ -39,6 +39,23 @@ func TestViewEmptyStates(t *testing.T) {
 	}
 }
 
+// TestViewNarrowNoPanic pins the degenerate-width contract (Task 9 review
+// carry-in): a 0/1/10-column WindowSizeMsg must render cramped-but-aligned
+// output, never panic — TableWidths clamps, rowLine truncates, hairline floors
+// at one rune. A panic here is a crash on terminal resize, the worst possible
+// place to first discover it.
+func TestViewNarrowNoPanic(t *testing.T) {
+	m := testModel(nil)
+	m.rows = []PartRow{{ID: "i1", MPN: "RC1", Description: "10k 0805 resistor", Footprint: "0805", QtyOnHand: 45, ReorderPoint: 10}}
+	m.cursor = 0
+	m.hasDetail = true
+	m.detail = PartDetail{Part: m.rows[0], Stock: []StockEntry{{Label: "Drawer A1", ViaCode: "L-Z", Quantity: 45}}, RecentMovements: []Movement{{Delta: -5, Reason: "bench use"}}}
+	for _, w := range []int{0, 1, 10} {
+		m.width = w
+		m.View() // the call IS the assertion: a panic fails the test
+	}
+}
+
 func TestViewAdjustOverlayCovers(t *testing.T) {
 	m := testModel(nil)
 	m.rows = []PartRow{{ID: "i1", MPN: "RC1"}}
