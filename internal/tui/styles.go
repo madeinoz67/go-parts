@@ -11,7 +11,7 @@ var (
 	styleCopper    = lipgloss.NewStyle().Foreground(lipgloss.Color("#c98a4b"))                                                              // actions/focus
 	styleCopperB   = lipgloss.NewStyle().Foreground(lipgloss.Color("#e6a868"))                                                              // emphasized action
 	stylePhosphr   = lipgloss.NewStyle().Foreground(lipgloss.Color("#6fd9c9"))                                                              // data values
-	styleDim       = lipgloss.NewStyle().Foreground(lipgloss.Color("#6b8177"))                                                              // faint chrome
+	styleDim       = lipgloss.NewStyle().Foreground(lipgloss.Color("#4d6459"))                                                              // faint chrome (styleguide --text-faint)
 	styleCursorRow = lipgloss.NewStyle().Background(lipgloss.Color("#0b1411")).BorderLeft(true).BorderForeground(lipgloss.Color("#c98a4b")) // selected row — copper left rule (web .selected)
 	styleBorder    = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("#223229"))                        // hairline panes
 )

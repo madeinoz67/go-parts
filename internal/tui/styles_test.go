@@ -17,14 +17,24 @@ func TestStyleColorRuleHolds(t *testing.T) {
 	// unset case (NoColor{}), which the original nil-check guarded.
 	got := styleCopper.Render(">")
 	_ = got // truecolor terminals escape-color; plain == unchanged is WRONG only under NO_COLOR
-	// Deterministic check instead: the style VARIABLES carry the right hex.
-	fg, ok := styleCopper.GetForeground().(lipgloss.Color)
-	if !ok || string(fg) != "#c98a4b" {
-		t.Errorf("copper = %v, want #c98a4b", styleCopper.GetForeground())
-	}
-	fg, ok = stylePhosphr.GetForeground().(lipgloss.Color)
-	if !ok || string(fg) != "#6fd9c9" {
-		t.Errorf("phosphor = %v, want #6fd9c9", stylePhosphr.GetForeground())
+	// Deterministic check instead: ALL SIX token variables carry the styleguide
+	// §2 hexes — copper/copper-bright/phosphor/dim foregrounds, the cursor
+	// row's copper left-border, and the hairline pane border.
+	pinHex(t, "copper (actions/focus)", styleCopper.GetForeground(), "#c98a4b")
+	pinHex(t, "copper-bright (emphasized action)", styleCopperB.GetForeground(), "#e6a868")
+	pinHex(t, "phosphor (data values)", stylePhosphr.GetForeground(), "#6fd9c9")
+	pinHex(t, "dim (styleguide --text-faint)", styleDim.GetForeground(), "#4d6459")
+	pinHex(t, "cursor-row left border (copper)", styleCursorRow.GetBorderLeftForeground(), "#c98a4b")
+	pinHex(t, "pane border (hairline)", styleBorder.GetBorderTopForeground(), "#223229")
+}
+
+// pinHex asserts a lipgloss TerminalColor is exactly the styleguide hex, via
+// the concrete-type assertion documented in TestStyleColorRuleHolds.
+func pinHex(t *testing.T, what string, c lipgloss.TerminalColor, want string) {
+	t.Helper()
+	hex, ok := c.(lipgloss.Color)
+	if !ok || string(hex) != want {
+		t.Errorf("%s = %v, want %s", what, c, want)
 	}
 }
 
