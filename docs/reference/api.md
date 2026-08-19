@@ -34,7 +34,7 @@ bind).
 |---|---|---|---|
 | `GET` | `/healthz` | `200` | liveness probe; returns text/plain `ok`, no store touch |
 | `GET` | `/stats` | `200` | `{"parts_total": N}` via `Store.Count()` |
-| `GET` | `/parts?q=…` | `200` | BM25 search (FTS); empty/absent `q` → empty list |
+| `GET` | `/parts?q=…` | `200` | BM25 search (FTS); empty/absent `q` → empty list. TUI companion params: `?all=1` lists the corpus (browse); `?low=1` keeps `QtyOnHand` ≤ `ReorderPoint` (incl. 0/0); both compose with `q` |
 | `POST` | `/parts` | `201` (+`ETag`) / `400` / `409` / `500` | create; caller MUST NOT set `ID`/`Version`/audit. `409` if the `MPN` or `LocalNumber` is already taken (identity uniqueness, schema v5) |
 | `GET` | `/parts/{id}` | `200` (+`ETag`) / `404` | one part by ID |
 | `PATCH` | `/parts/{id}` | `200` (+`ETag`) / `428` / `400` / `404` / `409` | edit; `If-Match` required. `409` = version conflict **or** taken identity |

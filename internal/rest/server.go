@@ -407,24 +407,55 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleSearch drives GET /parts?q=… through the field-weighted BM25 FTS,
-// hydrating the top hits via Store.Get. An empty query returns an empty list
-// (FTS.Tokenize drops everything → Search returns nil → empty slice). The
-// workspace is the zero [8]byte — v1 is single-workspace.
+// handleSearch drives GET /parts through the field-weighted BM25 FTS, hydrating
+// the top hits via Store.Get. An empty query returns an empty list (the
+// tokenizer drops everything → search returns nil → empty slice). The TUI
+// companion params (spec 2026-08-19-tui §3): ?all=1 lists the corpus (the
+// browse path — ui.filteredParts' empty-q behavior), and ?low=1 keeps parts at
+// or below their reorder point (the same <= comparison as the UI chip and
+// mcp.filterLow, including the 0/0 edge). low composes with q and all,
+// applied AFTER fetch — mirroring ui.filteredParts' list→tag→low order.
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query().Get("q")
-	var ws [8]byte
-	hits := s.fts.Search(ws, q, 20)
-	out := make([]parts.Part, 0, len(hits))
-	for _, h := range hits {
-		p, err := s.store.Get(h.ID)
-		if err != nil {
-			continue // part vanished between FTS hit and hydrate — skip
+	q := r.URL.Query()
+	text, wantAll, wantLow := q.Get("q"), q.Get("all") == "1", q.Get("low") == "1"
+	var pts []parts.Part
+	switch {
+	case wantAll && text == "":
+		// List returns []*Part; copy to values so the whole handler shares one
+		// element type (and the low filter below owns its slice outright).
+		for _, p := range s.store.List() { // browse the corpus
+			pts = append(pts, *p)
 		}
-		out = append(out, *p)
+	case text != "":
+		var ws [8]byte
+		hits := s.fts.Search(ws, text, 20)
+		for _, h := range hits {
+			p, err := s.store.Get(h.ID)
+			if err != nil {
+				continue // part vanished between FTS hit and hydrate — skip
+			}
+			pts = append(pts, *p)
+		}
+	}
+	if wantLow {
+		pts = filterLowREST(pts)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	_ = json.NewEncoder(w).Encode(pts)
+}
+
+// filterLowREST KEEPS QtyOnHand <= ReorderPoint — byte-parity with
+// ui.filteredParts' low branch and mcp.filterLow (same comparison, same 0/0
+// edge). A 4th copy by the surfaces-parity convention (each surface keeps its
+// own copy with this comment); consolidation is a named follow-up, not this arc.
+func filterLowREST(pts []parts.Part) []parts.Part {
+	out := pts[:0]
+	for _, p := range pts {
+		if p.QtyOnHand <= p.ReorderPoint {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // writePart sets ETag + Content-Type, status, and writes the JSON body. ETag

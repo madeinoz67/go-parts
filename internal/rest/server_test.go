@@ -773,3 +773,47 @@ func TestOriginGuardGETUnaffected(t *testing.T) {
 		t.Fatalf("GET with foreign Origin = %d, want 200 (reads unguarded)", rr.Code)
 	}
 }
+
+// --- TUI companion: browse-all + low filters (spec §3) ---
+
+func TestSearchAllListsCorpus(t *testing.T) {
+	srv := newTestServer(t)
+	post(srv, "/parts", `{"MPN":"A1","PartType":"local","QtyOnHand":50,"ReorderPoint":5}`)
+	post(srv, "/parts", `{"MPN":"B2","PartType":"local","QtyOnHand":2,"ReorderPoint":5}`)
+	rr := get(srv, "/parts?all=1")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("all=1 = %d, want 200", rr.Code)
+	}
+	var pts []parts.Part
+	if err := json.Unmarshal(rr.Body.Bytes(), &pts); err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 2 {
+		t.Fatalf("all=1 must list the corpus, got %d: %s", len(pts), rr.Body.String())
+	}
+}
+
+func TestSearchAllLowFilters(t *testing.T) {
+	srv := newTestServer(t)
+	post(srv, "/parts", `{"MPN":"A1","PartType":"local","QtyOnHand":50,"ReorderPoint":5}`) // fine
+	post(srv, "/parts", `{"MPN":"B2","PartType":"local","QtyOnHand":2,"ReorderPoint":5}`)  // low
+	post(srv, "/parts", `{"MPN":"C3","PartType":"local","QtyOnHand":0,"ReorderPoint":0}`)  // 0/0 = LOW
+	rr := get(srv, "/parts?all=1&low=1")
+	var pts []parts.Part
+	if err := json.Unmarshal(rr.Body.Bytes(), &pts); err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 2 || pts[0].MPN == "A1" {
+		t.Fatalf("low must keep qty<=reorder incl. 0/0 (ui/mcp parity): %s", rr.Body.String())
+	}
+}
+
+func TestSearchBareStillEmpty(t *testing.T) {
+	srv := newTestServer(t)
+	post(srv, "/parts", `{"MPN":"A1","PartType":"local"}`)
+	rr := get(srv, "/parts")
+	body := strings.TrimSpace(rr.Body.String())
+	if body != "null" && body != "[]" {
+		t.Fatalf("bare GET /parts behavior must be unchanged (empty), got %q", body)
+	}
+}
